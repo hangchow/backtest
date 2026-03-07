@@ -50,6 +50,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start", required=True, help="Start date in YYYY-MM-DD format.")
     parser.add_argument("--end", required=True, help="End date in YYYY-MM-DD format.")
     parser.add_argument("--output-dir", default="data")
+    parser.add_argument(
+        "--keep-existing",
+        action="store_true",
+        help="Keep existing CSV files outside the requested date range instead of removing them.",
+    )
     return parser.parse_args()
 
 
@@ -90,19 +95,33 @@ def fetch_history(host: str, port: int, code: str, start: str, end: str):
     return pd.concat(frames, ignore_index=True)
 
 
-def save_daily_files(history, output_root: Path) -> int:
+def remove_stale_daily_files(output_root: Path, expected_names: set[str]) -> int:
+    if not output_root.exists():
+        return 0
+
+    removed = 0
+    for path in output_root.glob("*.csv"):
+        if path.name not in expected_names:
+            path.unlink()
+            removed += 1
+    return removed
+
+
+def save_daily_files(history, output_root: Path, keep_existing: bool) -> tuple[int, int]:
     existing_columns = [column for column in MINUTE_COLUMNS if column in history.columns]
     trimmed = history.loc[:, existing_columns].copy()
     trimmed["trade_date"] = trimmed["time_key"].str.slice(0, 10)
     code = str(history["code"].iloc[0]) if "code" in history.columns and not history.empty else output_root.name
 
     output_root.mkdir(parents=True, exist_ok=True)
+    expected_names = {f"{code}_{trade_date}.csv" for trade_date in trimmed["trade_date"].unique()}
+    removed_count = 0 if keep_existing else remove_stale_daily_files(output_root, expected_names)
     count = 0
     for trade_date, daily in trimmed.groupby("trade_date", sort=True):
         daily_path = output_root / f"{code}_{trade_date}.csv"
         daily.drop(columns=["trade_date"]).to_csv(daily_path, index=False)
         count += 1
-    return count
+    return count, removed_count
 
 
 def main() -> int:
@@ -111,10 +130,14 @@ def main() -> int:
     output_root = Path(args.output_dir) / args.code
 
     history = fetch_history(args.host, args.port, args.code, start, end)
-    file_count = save_daily_files(history, output_root)
+    file_count, removed_count = save_daily_files(history, output_root, keep_existing=args.keep_existing)
 
     print(f"Fetched {len(history)} rows for {args.code} from {start} to {end}.")
     print(f"Wrote {file_count} daily files to {output_root}.")
+    if args.keep_existing:
+        print("Kept existing CSV files outside the requested date range.")
+    else:
+        print(f"Removed {removed_count} stale daily files outside the requested date range.")
     print(f"Columns: {', '.join(column for column in MINUTE_COLUMNS if column in history.columns)}")
     return 0
 

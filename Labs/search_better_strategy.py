@@ -4,8 +4,15 @@ from __future__ import annotations
 import argparse
 from itertools import product
 from pathlib import Path
+import sys
 
 import pandas as pd
+
+SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from backtest_rsi_reversion import compute_rsi, load_history
 
 
 DEFAULT_DATA_DIR = Path("data/HK.00700")
@@ -19,31 +26,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
     parser.add_argument("--initial-cash", type=float, default=DEFAULT_INITIAL_CASH)
     return parser.parse_args()
-
-
-def load_history(data_dir: Path) -> pd.DataFrame:
-    files = sorted(data_dir.glob("*.csv"))
-    if not files:
-        raise FileNotFoundError(f"No CSV files found in {data_dir}")
-
-    frames = [pd.read_csv(path) for path in files]
-    history = pd.concat(frames, ignore_index=True)
-    history["time_key"] = pd.to_datetime(history["time_key"])
-    history = history.sort_values("time_key").reset_index(drop=True)
-    history["trade_date"] = history["time_key"].dt.date
-    history["is_day_end"] = history["trade_date"] != history["trade_date"].shift(-1)
-    return history
-
-
-def compute_rsi(series: pd.Series, period: int) -> pd.Series:
-    delta = series.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.ewm(alpha=1 / period, adjust=False).mean()
-    avg_loss = loss.ewm(alpha=1 / period, adjust=False).mean()
-    rs = avg_gain / avg_loss.replace(0, pd.NA)
-    rsi = 100 - (100 / (1 + rs))
-    return rsi.fillna(50.0)
 
 
 def simulate_strategy(

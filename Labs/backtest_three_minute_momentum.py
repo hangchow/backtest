@@ -3,8 +3,15 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import sys
 
 import pandas as pd
+
+SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from backtest_rsi_reversion import load_history
 
 
 DEFAULT_DATA_DIR = Path("data/HK.00700")
@@ -25,20 +32,6 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated position ratios to sweep, for example 0.1,0.2,0.5,1.0.",
     )
     return parser.parse_args()
-
-
-def load_history(data_dir: Path) -> pd.DataFrame:
-    files = sorted(data_dir.glob("*.csv"))
-    if not files:
-        raise FileNotFoundError(f"No CSV files found in {data_dir}")
-
-    frames = [pd.read_csv(path) for path in files]
-    history = pd.concat(frames, ignore_index=True)
-    history["time_key"] = pd.to_datetime(history["time_key"])
-    history = history.sort_values("time_key").reset_index(drop=True)
-    return history
-
-
 def run_backtest(history: pd.DataFrame, initial_cash: float, position_ratio: float) -> tuple[dict, pd.DataFrame, pd.DataFrame]:
     cash = initial_cash
     shares = 0
