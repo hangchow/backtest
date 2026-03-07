@@ -18,7 +18,7 @@
 
 脚本文件：
 
-[`scripts/fetch_history_1m.py`](/Users/sean/workspace/backtest/scripts/fetch_history_1m.py)
+`scripts/fetch_history_1m.py`
 
 ## 参数
 
