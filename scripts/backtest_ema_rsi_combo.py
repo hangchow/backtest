@@ -2,14 +2,12 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 
 import pandas as pd
 
-from backtest_rsi_reversion import compute_rsi, load_history
+from backtest_rsi_reversion import add_data_source_args, compute_rsi, load_history, resolve_data_dir
 
 
-DEFAULT_DATA_DIR = Path("data/HK.00700")
 DEFAULT_INITIAL_CASH = 100_000.0
 DEFAULT_FAST_SPAN = 20
 DEFAULT_SLOW_SPAN = 240
@@ -23,7 +21,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Backtest an EMA trend filter plus RSI reversion strategy."
     )
-    parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
+    add_data_source_args(parser)
     parser.add_argument("--initial-cash", type=float, default=DEFAULT_INITIAL_CASH)
     parser.add_argument("--fast-span", type=int, default=DEFAULT_FAST_SPAN)
     parser.add_argument("--slow-span", type=int, default=DEFAULT_SLOW_SPAN)
@@ -156,7 +154,7 @@ def run_backtest(
 
 def main() -> int:
     args = parse_args()
-    history = load_history(args.data_dir)
+    history = load_history(resolve_data_dir(args.data_dir, args.code, args.data_root))
     summary, trades = run_backtest(
         history=history,
         initial_cash=args.initial_cash,

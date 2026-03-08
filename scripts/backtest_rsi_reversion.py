@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 
 
-DEFAULT_DATA_DIR = Path("data/HK.00700")
+DEFAULT_DATA_ROOT = Path("data")
 DEFAULT_INITIAL_CASH = 100_000.0
 DEFAULT_RSI_PERIOD = 6
 DEFAULT_BUY_THRESHOLD = 30.0
@@ -15,11 +15,35 @@ DEFAULT_SELL_THRESHOLD = 60.0
 DEFAULT_POSITION_RATIO = 1.0
 
 
+def add_data_source_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=None,
+        help="Directory with minute CSV files. Overrides --code when both are set.",
+    )
+    parser.add_argument("--code", help="Security code to load from --data-root, for example HK.00700.")
+    parser.add_argument(
+        "--data-root",
+        type=Path,
+        default=DEFAULT_DATA_ROOT,
+        help="Base directory for per-code datasets when using --code.",
+    )
+
+
+def resolve_data_dir(data_dir: Path | None, code: str | None, data_root: Path) -> Path:
+    if data_dir is not None:
+        return data_dir
+    if code:
+        return data_root / code
+    raise ValueError("either --data-dir or --code must be provided")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Backtest an RSI reversion strategy on minute-level K-line data."
     )
-    parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
+    add_data_source_args(parser)
     parser.add_argument("--initial-cash", type=float, default=DEFAULT_INITIAL_CASH)
     parser.add_argument("--rsi-period", type=int, default=DEFAULT_RSI_PERIOD)
     parser.add_argument("--buy-threshold", type=float, default=DEFAULT_BUY_THRESHOLD)
@@ -167,7 +191,7 @@ def run_backtest(
 
 def main() -> int:
     args = parse_args()
-    history = load_history(args.data_dir)
+    history = load_history(resolve_data_dir(args.data_dir, args.code, args.data_root))
     summary, trades = run_backtest(
         history=history,
         initial_cash=args.initial_cash,

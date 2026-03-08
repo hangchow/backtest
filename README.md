@@ -15,7 +15,7 @@
 
 - 数据目录：`data/HK.00700/`
 - 单文件格式：`HK.00700_YYYY-MM-DD.csv`
-- 字段：`time_key, open, close, high, low, volume, turnover, last_close`
+- 字段：`time_key, open, close, high, low, volume`
 
 抓取脚本和说明：
 

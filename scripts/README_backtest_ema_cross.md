@@ -31,18 +31,20 @@
 ## 基本用法
 
 ```bash
-./.venv/bin/python scripts/backtest_ema_cross.py
+./.venv/bin/python scripts/backtest_ema_cross.py --code HK.00700
 ```
 
 如果要允许隔夜持仓：
 
 ```bash
-./.venv/bin/python scripts/backtest_ema_cross.py --allow-overnight
+./.venv/bin/python scripts/backtest_ema_cross.py --code HK.00700 --allow-overnight
 ```
 
 ## 常用参数
 
-- `--data-dir`：数据目录，默认 `data/HK.00700`
+- `--code`：股票代码，脚本会从 `data/<code>/` 读取数据
+- `--data-root`：配合 `--code` 使用的数据根目录，默认 `data`
+- `--data-dir`：直接指定完整数据目录；传了以后会覆盖 `--code`
 - `--initial-cash`：初始资金
 - `--fast-span`：短周期 EMA
 - `--slow-span`：长周期 EMA

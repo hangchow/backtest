@@ -11,10 +11,9 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from backtest_rsi_reversion import load_history
+from backtest_rsi_reversion import add_data_source_args, load_history, resolve_data_dir
 
 
-DEFAULT_DATA_DIR = Path("data/HK.00700")
 DEFAULT_INITIAL_CASH = 10_000.0
 DEFAULT_POSITION_RATIO = 0.5
 
@@ -23,7 +22,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Backtest a simple 3-minute up-buy / 3-minute down-sell strategy."
     )
-    parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
+    add_data_source_args(parser)
     parser.add_argument("--initial-cash", type=float, default=DEFAULT_INITIAL_CASH)
     parser.add_argument("--position-ratio", type=float, default=DEFAULT_POSITION_RATIO)
     parser.add_argument(
@@ -186,7 +185,7 @@ def print_sweep_result(history: pd.DataFrame, initial_cash: float, ratios: list[
 
 def main() -> int:
     args = parse_args()
-    history = load_history(args.data_dir)
+    history = load_history(resolve_data_dir(args.data_dir, args.code, args.data_root))
     if args.ratio_grid:
         ratios = parse_ratio_grid(args.ratio_grid)
         print_sweep_result(history, args.initial_cash, ratios)

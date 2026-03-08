@@ -17,6 +17,9 @@ from scripts.backtest_rsi_reversion import compute_rsi
 from scripts.fetch_history_1m import remove_stale_daily_files, save_daily_files
 
 
+TEST_CODE = "TEST.00001"
+
+
 class ComputeRsiTests(unittest.TestCase):
     def test_monotonic_rise_converges_to_100(self) -> None:
         prices = pd.Series([100, 101, 102, 103, 104, 105], dtype=float)
@@ -43,28 +46,34 @@ class ComputeRsiTests(unittest.TestCase):
 
 
 class SaveDailyFilesTests(unittest.TestCase):
-    def test_save_daily_files_removes_stale_csvs_by_default(self) -> None:
-        history = pd.DataFrame(
+    def build_history(self, code: str = TEST_CODE) -> pd.DataFrame:
+        return pd.DataFrame(
             {
-                "code": ["HK.00700", "HK.00700"],
+                "code": [code, code],
                 "time_key": ["2026-03-02 09:30:00", "2026-03-03 09:30:00"],
                 "open": [1.0, 2.0],
                 "close": [1.5, 2.5],
                 "high": [1.6, 2.6],
                 "low": [0.9, 1.9],
                 "volume": [100, 200],
-                "turnover": [150.0, 500.0],
-                "last_close": [1.0, 1.5],
             }
         )
 
+    def test_save_daily_files_removes_stale_csvs_by_default(self) -> None:
+        history = self.build_history()
+
         with tempfile.TemporaryDirectory() as tmp:
-            output_root = Path(tmp) / "HK.00700"
+            output_root = Path(tmp) / TEST_CODE
             output_root.mkdir(parents=True, exist_ok=True)
-            stale_path = output_root / "HK.00700_2026-02-27.csv"
+            stale_path = output_root / f"{TEST_CODE}_2026-02-27.csv"
             stale_path.write_text("time_key,open,close\n", encoding="ascii")
 
-            written_count, removed_count = save_daily_files(history, output_root, keep_existing=False)
+            written_count, removed_count = save_daily_files(
+                history,
+                output_root,
+                keep_existing=False,
+                code=TEST_CODE,
+            )
 
             self.assertEqual(written_count, 2)
             self.assertEqual(removed_count, 1)
@@ -73,8 +82,8 @@ class SaveDailyFilesTests(unittest.TestCase):
     def test_remove_stale_daily_files_skips_expected_names(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output_root = Path(tmp)
-            keep_path = output_root / "HK.00700_2026-03-02.csv"
-            stale_path = output_root / "HK.00700_2026-02-27.csv"
+            keep_path = output_root / f"{TEST_CODE}_2026-03-02.csv"
+            stale_path = output_root / f"{TEST_CODE}_2026-02-27.csv"
             keep_path.write_text("", encoding="ascii")
             stale_path.write_text("", encoding="ascii")
 
@@ -83,6 +92,24 @@ class SaveDailyFilesTests(unittest.TestCase):
             self.assertEqual(removed_count, 1)
             self.assertTrue(keep_path.exists())
             self.assertFalse(stale_path.exists())
+
+    def test_save_daily_files_prefers_explicit_code_over_history(self) -> None:
+        history = self.build_history(code="OLD.00001")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp)
+
+            written_count, removed_count = save_daily_files(
+                history,
+                output_root,
+                keep_existing=False,
+                code=TEST_CODE,
+            )
+
+            self.assertEqual(written_count, 2)
+            self.assertEqual(removed_count, 0)
+            self.assertTrue((output_root / f"{TEST_CODE}_2026-03-02.csv").exists())
+            self.assertFalse((output_root / "OLD.00001_2026-03-02.csv").exists())
 
 
 if __name__ == "__main__":

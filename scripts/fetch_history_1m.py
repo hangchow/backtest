@@ -20,8 +20,6 @@ MINUTE_COLUMNS = [
     "high",
     "low",
     "volume",
-    "turnover",
-    "last_close",
 ]
 
 
@@ -107,18 +105,23 @@ def remove_stale_daily_files(output_root: Path, expected_names: set[str]) -> int
     return removed
 
 
-def save_daily_files(history, output_root: Path, keep_existing: bool) -> tuple[int, int]:
+def save_daily_files(
+    history, output_root: Path, keep_existing: bool, code: str | None = None
+) -> tuple[int, int]:
     existing_columns = [column for column in MINUTE_COLUMNS if column in history.columns]
     trimmed = history.loc[:, existing_columns].copy()
     trimmed["trade_date"] = trimmed["time_key"].str.slice(0, 10)
-    code = str(history["code"].iloc[0]) if "code" in history.columns and not history.empty else output_root.name
+    resolved_code = (
+        code
+        or (str(history["code"].iloc[0]) if "code" in history.columns and not history.empty else output_root.name)
+    )
 
     output_root.mkdir(parents=True, exist_ok=True)
-    expected_names = {f"{code}_{trade_date}.csv" for trade_date in trimmed["trade_date"].unique()}
+    expected_names = {f"{resolved_code}_{trade_date}.csv" for trade_date in trimmed["trade_date"].unique()}
     removed_count = 0 if keep_existing else remove_stale_daily_files(output_root, expected_names)
     count = 0
     for trade_date, daily in trimmed.groupby("trade_date", sort=True):
-        daily_path = output_root / f"{code}_{trade_date}.csv"
+        daily_path = output_root / f"{resolved_code}_{trade_date}.csv"
         daily.drop(columns=["trade_date"]).to_csv(daily_path, index=False)
         count += 1
     return count, removed_count
@@ -130,7 +133,12 @@ def main() -> int:
     output_root = Path(args.output_dir) / args.code
 
     history = fetch_history(args.host, args.port, args.code, start, end)
-    file_count, removed_count = save_daily_files(history, output_root, keep_existing=args.keep_existing)
+    file_count, removed_count = save_daily_files(
+        history,
+        output_root,
+        keep_existing=args.keep_existing,
+        code=args.code,
+    )
 
     print(f"Fetched {len(history)} rows for {args.code} from {start} to {end}.")
     print(f"Wrote {file_count} daily files to {output_root}.")

@@ -12,18 +12,17 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from backtest_rsi_reversion import compute_rsi, load_history
+from backtest_rsi_reversion import add_data_source_args, compute_rsi, load_history, resolve_data_dir
 
 
-DEFAULT_DATA_DIR = Path("data/HK.00700")
 DEFAULT_INITIAL_CASH = 100_000.0
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Search a small grid of simple strategies on minute-level Tencent data."
+        description="Search a small grid of simple strategies on minute-level K-line data."
     )
-    parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
+    add_data_source_args(parser)
     parser.add_argument("--initial-cash", type=float, default=DEFAULT_INITIAL_CASH)
     return parser.parse_args()
 
@@ -192,7 +191,7 @@ def search_breakout(history: pd.DataFrame, initial_cash: float) -> list[dict]:
 
 def main() -> int:
     args = parse_args()
-    history = load_history(args.data_dir)
+    history = load_history(resolve_data_dir(args.data_dir, args.code, args.data_root))
 
     results = [run_buy_and_hold(history, args.initial_cash)]
     results.extend(search_ema_cross(history, args.initial_cash))
