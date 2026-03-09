@@ -4,7 +4,10 @@ from __future__ import annotations
 import argparse
 
 import backtest_ema_rsi_combo as combo
-from backtest_rsi_reversion import add_data_source_args, load_history, resolve_data_dir
+try:
+    from .backtest_common import add_data_source_args, load_history, resolve_data_dir
+except ImportError:
+    from backtest_common import add_data_source_args, load_history, resolve_data_dir
 
 
 DEFAULT_INITIAL_CASH = combo.DEFAULT_INITIAL_CASH

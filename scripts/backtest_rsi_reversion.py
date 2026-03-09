@@ -2,41 +2,19 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
-
 import pandas as pd
 
+try:
+    from .backtest_common import add_data_source_args, load_history, resolve_data_dir
+except ImportError:
+    from backtest_common import add_data_source_args, load_history, resolve_data_dir
 
-DEFAULT_DATA_ROOT = Path("data")
+
 DEFAULT_INITIAL_CASH = 100_000.0
 DEFAULT_RSI_PERIOD = 6
 DEFAULT_BUY_THRESHOLD = 30.0
 DEFAULT_SELL_THRESHOLD = 60.0
 DEFAULT_POSITION_RATIO = 1.0
-
-
-def add_data_source_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--data-dir",
-        type=Path,
-        default=None,
-        help="Directory with minute CSV files. Overrides --code when both are set.",
-    )
-    parser.add_argument("--code", help="Security code to load from --data-root, for example HK.00700.")
-    parser.add_argument(
-        "--data-root",
-        type=Path,
-        default=DEFAULT_DATA_ROOT,
-        help="Base directory for per-code datasets when using --code.",
-    )
-
-
-def resolve_data_dir(data_dir: Path | None, code: str | None, data_root: Path) -> Path:
-    if data_dir is not None:
-        return data_dir
-    if code:
-        return data_root / code
-    raise ValueError("either --data-dir or --code must be provided")
 
 
 def parse_args() -> argparse.Namespace:
@@ -61,20 +39,6 @@ def parse_args() -> argparse.Namespace:
         help="How many head/tail trades to print. Use 0 to suppress trade samples.",
     )
     return parser.parse_args()
-
-
-def load_history(data_dir: Path) -> pd.DataFrame:
-    files = sorted(data_dir.glob("*.csv"))
-    if not files:
-        raise FileNotFoundError(f"No CSV files found in {data_dir}")
-
-    frames = [pd.read_csv(path) for path in files]
-    history = pd.concat(frames, ignore_index=True)
-    history["time_key"] = pd.to_datetime(history["time_key"])
-    history = history.sort_values("time_key").reset_index(drop=True)
-    history["trade_date"] = history["time_key"].dt.date
-    history["is_day_end"] = history["trade_date"] != history["trade_date"].shift(-1)
-    return history
 
 
 def compute_rsi(series: pd.Series, period: int) -> pd.Series:
