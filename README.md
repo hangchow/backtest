@@ -21,7 +21,7 @@
 
 抓取脚本和说明：
 
-- [抓取脚本说明](scripts/README_fetch_history_1m.md)
+- [抓取脚本说明](scripts/README_fetch_futu_1m.md)
 - `scripts/fetch_polygon_1m.py`：按参数抓取 Polygon 的美股分钟数据
 - `scripts/compare_backtests.py`：按参数比较多只标的的默认回测结果
 
@@ -173,7 +173,7 @@
 
 ## 目录入口
 
-- [数据抓取说明](scripts/README_fetch_history_1m.md)
+- [数据抓取说明](scripts/README_fetch_futu_1m.md)
 - `scripts/fetch_polygon_1m.py`
 - `scripts/compare_backtests.py`
 - [RSI 策略说明](scripts/README_backtest_rsi_reversion.md)
