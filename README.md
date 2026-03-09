@@ -2,26 +2,30 @@
 
 ## 项目概览
 
-这个项目基于腾讯控股 `HK.00700` 1 分钟 K 线数据，做几个简单策略的样本内回测。
+这个项目基于多只股票的 1 分钟 K 线数据，做几个简单策略的样本内回测。
 
 当前数据范围：
 
-- 标的：`HK.00700`
+- 对比标的：`HK.00700`、`HK.09988`、`HK.00005`、`US.MSFT`、`US.NVDA`、`US.GOOG`、`US.TSLA`
 - 区间：`2025-03-07 09:30:00` 到 `2026-03-06 16:00:00`
 - 数据粒度：`1 分钟`
-- 文件数量：`246` 个交易日 CSV
+- 港股样本：每只 `246` 个交易日 CSV
+- 美股样本：每只 `251` 个交易日 CSV
 
 ## 数据目录
 
-- 数据目录：`data/HK.00700/`
-- 单文件格式：`HK.00700_YYYY-MM-DD.csv`
+- 数据目录：`data/<股票代码>/`
+- 目录示例：`data/HK.00700/`、`data/HK.09988/`、`data/HK.00005/`、`data/US.MSFT/`
+- 单文件格式：`<股票代码>_YYYY-MM-DD.csv`
 - 字段：`time_key, open, close, high, low, volume`
 
 抓取脚本和说明：
 
 - [抓取脚本说明](scripts/README_fetch_history_1m.md)
+- `scripts/fetch_polygon_1m.py`：按参数抓取 Polygon 的美股分钟数据
+- `scripts/compare_backtests.py`：按参数比较多只标的的默认回测结果
 
-## 当前策略结果
+## 腾讯样本基线结果
 
 以下结果都基于同一批腾讯分钟数据、同一区间、初始资金 `100000` 港币。
 这些结果已在 `2026-03-08` 用修正后的 RSI 实现重新跑过；默认参数结果与此前一致，但仍然只是样本内结果，且未计手续费、滑点和港股整手限制。
@@ -59,13 +63,87 @@
   - 最大回撤：`-3.70%`
   - 交易次数：`3988`
 
+### 4. 优化版 EMA + RSI 牛市回撤
+
+- 脚本：`scripts/backtest_ema_rsi_bull_range.py`
+- 说明：[优化版 EMA + RSI 说明](scripts/README_backtest_ema_rsi_bull_range.md)
+- 默认参数：`EMA(15) > EMA(180)` 趋势过滤，`RSI(4)`，`buy < 46`，`sell > 52`，仓位 `100%`，允许隔夜
+- 结果：
+  - 期末总资产：`1648402.70`
+  - 总收益率：`1548.40%`
+  - 最大回撤：`-2.84%`
+  - 交易次数：`9560`
+
+## 七标的默认参数对比
+
+下面这组对比结果是 `2026-03-09` 生成的，使用的是当前 4 个回测脚本的默认参数。
+谷歌这里使用的是 `GOOG`，不是 `GOOGL`。
+
+### 数据概览
+
+| code | rows | days | start | end |
+| --- | --- | --- | --- | --- |
+| HK.00700 | 80886 | 246 | 2025-03-07 09:30:00 | 2026-03-06 16:00:00 |
+| HK.09988 | 80886 | 246 | 2025-03-07 09:30:00 | 2026-03-06 16:00:00 |
+| HK.00005 | 80886 | 246 | 2025-03-07 09:30:00 | 2026-03-06 16:00:00 |
+| US.MSFT | 97353 | 251 | 2025-03-07 09:30:00 | 2026-03-06 15:59:00 |
+| US.NVDA | 97353 | 251 | 2025-03-07 09:30:00 | 2026-03-06 15:59:00 |
+| US.GOOG | 97353 | 251 | 2025-03-07 09:30:00 | 2026-03-06 15:59:00 |
+| US.TSLA | 97353 | 251 | 2025-03-07 09:30:00 | 2026-03-06 15:59:00 |
+
+### 回测对比
+
+| code | strategy | final_value | return_pct | max_drawdown_pct | trade_count |
+| --- | --- | --- | --- | --- | --- |
+| HK.00700 | RSI reversion | 604046.80 | 504.05 | -10.19 | 3628 |
+| HK.00700 | EMA cross | 93218.80 | -6.78 | -9.24 | 786 |
+| HK.00700 | EMA + RSI | 476907.80 | 376.91 | -3.70 | 3988 |
+| HK.00700 | EMA + RSI bull range | 1648402.70 | 1548.40 | -2.84 | 9560 |
+| HK.09988 | RSI reversion | 530574.40 | 430.57 | -8.86 | 3712 |
+| HK.09988 | EMA cross | 93140.95 | -6.86 | -12.73 | 722 |
+| HK.09988 | EMA + RSI | 393132.45 | 293.13 | -5.02 | 3834 |
+| HK.09988 | EMA + RSI bull range | 774807.30 | 674.81 | -7.15 | 8770 |
+| HK.00005 | RSI reversion | 398540.57 | 298.54 | -7.91 | 3558 |
+| HK.00005 | EMA cross | 97056.80 | -2.94 | -5.95 | 852 |
+| HK.00005 | EMA + RSI | 477974.00 | 377.97 | -5.89 | 4896 |
+| HK.00005 | EMA + RSI bull range | 2388441.35 | 2288.44 | -4.34 | 11576 |
+| US.MSFT | RSI reversion | 116482.41 | 16.48 | -15.84 | 4448 |
+| US.MSFT | EMA cross | 99955.15 | -0.04 | -5.43 | 942 |
+| US.MSFT | EMA + RSI | 136895.03 | 36.90 | -5.03 | 4594 |
+| US.MSFT | EMA + RSI bull range | 123259.76 | 23.26 | -14.13 | 9736 |
+| US.NVDA | RSI reversion | 139385.44 | 39.39 | -18.86 | 4532 |
+| US.NVDA | EMA cross | 95625.18 | -4.37 | -10.70 | 1028 |
+| US.NVDA | EMA + RSI | 114412.63 | 14.41 | -16.97 | 5072 |
+| US.NVDA | EMA + RSI bull range | 126605.87 | 26.61 | -16.48 | 10578 |
+| US.GOOG | RSI reversion | 117532.53 | 17.53 | -14.30 | 4456 |
+| US.GOOG | EMA cross | 109678.82 | 9.68 | -6.43 | 988 |
+| US.GOOG | EMA + RSI | 105602.72 | 5.60 | -13.94 | 4894 |
+| US.GOOG | EMA + RSI bull range | 115981.03 | 15.98 | -16.65 | 10338 |
+| US.TSLA | RSI reversion | 92446.69 | -7.55 | -32.59 | 4395 |
+| US.TSLA | EMA cross | 118632.64 | 18.63 | -8.18 | 952 |
+| US.TSLA | EMA + RSI | 120114.39 | 20.11 | -10.53 | 4550 |
+| US.TSLA | EMA + RSI bull range | 147371.74 | 47.37 | -16.05 | 9982 |
+
+### 每个标的的最佳结果
+
+| code | strategy | final_value | return_pct | max_drawdown_pct |
+| --- | --- | --- | --- | --- |
+| HK.00005 | EMA + RSI bull range | 2388441.35 | 2288.44 | -4.34 |
+| HK.00700 | EMA + RSI bull range | 1648402.70 | 1548.40 | -2.84 |
+| HK.09988 | EMA + RSI bull range | 774807.30 | 674.81 | -7.15 |
+| US.GOOG | RSI reversion | 117532.53 | 17.53 | -14.30 |
+| US.MSFT | EMA + RSI | 136895.03 | 36.90 | -5.03 |
+| US.NVDA | RSI reversion | 139385.44 | 39.39 | -18.86 |
+| US.TSLA | EMA + RSI bull range | 147371.74 | 47.37 | -16.05 |
+
 ## 当前结论
 
-- 样本内收益最高的是 `RSI 反转`。
-- 如果同时看收益和回撤，`EMA + RSI` 组合策略更均衡：
-  - 收益显著高于纯 EMA
-  - 最大回撤明显低于纯 RSI
-- 纯 `EMA 金叉死叉` 在这批样本里表现较弱。
+- 在当前这 7 只标的、默认参数的设定下，`EMA + RSI` 和 `EMA + RSI bull range` 都能在所有标的上拿到正向收益。
+- 如果只看这批样本内结果，`EMA + RSI bull range` 的平均收益率约 `660.70%`，明显高于原版 `EMA + RSI` 的约 `160.72%`，但交易次数也大幅上升。
+- 港股这三只样本里，收益最高的默认策略都已经变成 `EMA + RSI bull range`。
+- 美股这四只样本里，`TSLA` 的最佳结果来自 `EMA + RSI bull range`，`MSFT` 仍然是原版 `EMA + RSI` 最好，`NVDA` 和 `GOOG` 仍然是 `RSI 反转` 最好。
+- 纯 `EMA 金叉死叉` 在七只标的里都不是收益最高的默认策略，但在 `HK.00005`、`GOOG` 和 `TSLA` 上的回撤控制明显好于纯 RSI。
+- `EMA + RSI bull range` 不是逐标的全面占优；它在 `MSFT`、`GOOG` 等美股上的回撤明显更深，所以更像一套样本内更激进的优化版本，而不是已经验证过的通用替代品。
 
 ## 已知缺陷
 
@@ -75,7 +153,7 @@
 - 默认按分钟收盘价成交，真实成交未必能拿到这个价格。
 - 没有处理港股整手限制，回测里允许按股数买卖。
 - 没有处理停牌、除权除息、公司行为等更复杂情况。
-- 目前只回测了单一标的 `HK.00700`。
+- 目前虽然已经扩到 7 只标的，但样本仍然偏少，结论很容易被个股风格主导。
 
 ## 风险提示
 
@@ -96,7 +174,10 @@
 ## 目录入口
 
 - [数据抓取说明](scripts/README_fetch_history_1m.md)
+- `scripts/fetch_polygon_1m.py`
+- `scripts/compare_backtests.py`
 - [RSI 策略说明](scripts/README_backtest_rsi_reversion.md)
 - [EMA 策略说明](scripts/README_backtest_ema_cross.md)
 - [EMA + RSI 策略说明](scripts/README_backtest_ema_rsi_combo.md)
-- [Labs 实验脚本](Labs/README.md)
+- [优化版 EMA + RSI 说明](scripts/README_backtest_ema_rsi_bull_range.md)
+- [labs 实验脚本](labs/README.md)
