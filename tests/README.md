@@ -8,7 +8,7 @@
 
 - `test_backtest_scripts.py`
   - 校验 RSI 在单边上涨、单边下跌、横盘时的边界输出
-  - 校验 `fetch_history_1m.py` 默认会清理请求区间之外的旧 CSV
+  - 校验 `fetch_futu_1m.py` 默认会清理请求区间之外的旧 CSV
 
 ## 推荐运行方式
 
