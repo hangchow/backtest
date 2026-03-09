@@ -5,7 +5,10 @@ import argparse
 
 import pandas as pd
 
-from backtest_rsi_reversion import add_data_source_args, load_history, resolve_data_dir
+try:
+    from .backtest_common import add_data_source_args, load_history, resolve_data_dir
+except ImportError:
+    from backtest_common import add_data_source_args, load_history, resolve_data_dir
 
 
 DEFAULT_INITIAL_CASH = 100_000.0
