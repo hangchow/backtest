@@ -14,23 +14,47 @@ def add_data_source_args(parser: argparse.ArgumentParser) -> None:
         "--data-dir",
         type=Path,
         default=None,
-        help="Directory with minute CSV files. Overrides --code when both are set.",
+        help="Directory with minute CSV files. Cannot be used with --codes.",
     )
-    parser.add_argument("--code", help="Security code to load from --data-root, for example HK.00700.")
     parser.add_argument(
         "--data-root",
         type=Path,
         default=DEFAULT_DATA_ROOT,
-        help="Base directory for per-code datasets when using --code.",
+        help="Base directory for per-code datasets when using --codes.",
+    )
+    parser.add_argument(
+        "--codes",
+        nargs="+",
+        default=None,
+        help="Optional stock pool codes under --data-root, for example US.MSFT US.NVDA.",
     )
 
 
-def resolve_data_dir(data_dir: Path | None, code: str | None, data_root: Path) -> Path:
+def resolve_data_dir(data_dir: Path | None) -> Path:
     if data_dir is not None:
         return data_dir
-    if code:
-        return data_root / code
-    raise ValueError("either --data-dir or --code must be provided")
+    raise ValueError("either --data-dir or --codes must be provided")
+
+
+def resolve_codes(data_root: Path, codes: list[str] | None) -> list[str]:
+    if not codes:
+        return []
+
+    normalized = [item.strip() for item in codes if item and item.strip()]
+    if not normalized:
+        raise ValueError("--codes must include at least one non-empty code")
+
+    missing = [code for code in normalized if not (data_root / code).is_dir()]
+    if missing:
+        missing_text = ", ".join(missing)
+        raise FileNotFoundError(f"Missing code directories under {data_root}: {missing_text}")
+    return normalized
+
+
+def load_histories(data_root: Path, codes: list[str]) -> dict[str, pd.DataFrame]:
+    if not codes:
+        raise ValueError("codes must not be empty")
+    return {code: load_history(data_root / code) for code in codes}
 
 
 def load_history(data_dir: Path) -> pd.DataFrame:

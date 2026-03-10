@@ -136,6 +136,24 @@
 | US.NVDA | RSI reversion | 139385.44 | 39.39 | -18.86 |
 | US.TSLA | EMA + RSI bull range | 147371.74 | 47.37 | -16.05 |
 
+## 美股股票池（`--codes`）默认参数回测
+
+以下结果基于同一批美股分钟数据，使用股票池模式统一资金回测：
+
+- 股票池：`US.MSFT`、`US.NVDA`、`US.GOOG`、`US.TSLA`
+- 初始资金：`100000`
+- `--max-open-positions`：`4`
+- 默认允许隔夜（仅在传入 `--flat-at-close` 时日内平仓）
+
+### 股票池回测结果
+
+| strategy | final_value | return_pct | max_drawdown_pct | trade_count |
+| --- | --- | --- | --- | --- |
+| RSI reversion | 117053.03 | 17.05 | -14.85 | 17831 |
+| EMA cross | 117372.56 | 17.37 | -14.51 | 3910 |
+| EMA + RSI | 119738.74 | 19.74 | -7.56 | 19110 |
+| EMA + RSI bull range | 129283.83 | 29.28 | -9.41 | 40634 |
+
 ## 当前结论
 
 - 在当前这 7 只标的、默认参数的设定下，`EMA + RSI` 和 `EMA + RSI bull range` 都能在所有标的上拿到正向收益。
