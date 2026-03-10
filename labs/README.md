@@ -8,6 +8,13 @@
   - 最早的三分钟连涨买入 / 连跌卖出实验
 - `search_better_strategy.py`
   - 用来批量搜索简单策略和参数组合的研究脚本
+  - 支持单标的（`--data-dir`）和股票池（`--codes`）两种模式
+  - 当前会一起扫描以下策略族：
+    - EMA 金叉死叉
+    - RSI 反转
+    - 通道突破
+    - Bollinger Band 均值回归
+    - MACD 趋势跟随
 
 正式策略脚本仍然放在 `scripts/`：
 
