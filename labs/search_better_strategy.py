@@ -12,7 +12,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.backtest_common import add_data_source_args, load_history, resolve_data_dir
+from scripts.backtest_common import (
+    add_data_source_args,
+    load_histories,
+    load_history,
+    resolve_codes,
+    resolve_data_dir,
+)
 from scripts.backtest_rsi_reversion import compute_rsi
 
 
@@ -21,7 +27,10 @@ DEFAULT_INITIAL_CASH = 100_000.0
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Search a small grid of simple strategies on minute-level K-line data."
+        description=(
+            "Search strategy grids on minute-level K-line data for a single symbol "
+            "or a stock pool."
+        )
     )
     add_data_source_args(parser)
     parser.add_argument("--initial-cash", type=float, default=DEFAULT_INITIAL_CASH)
@@ -39,7 +48,6 @@ def simulate_strategy(
     cash = initial_cash
     shares = 0
     trade_count = 0
-    equity = initial_cash
     peak = initial_cash
     max_drawdown_pct = 0.0
 
@@ -71,9 +79,6 @@ def simulate_strategy(
         "final_value": final_value,
         "total_return_pct": (final_value / initial_cash - 1) * 100,
         "trade_count": trade_count,
-        "ending_cash": cash,
-        "ending_shares": shares,
-        "last_price": last_price,
         "max_drawdown_pct": max_drawdown_pct,
     }
 
@@ -98,18 +103,10 @@ def run_buy_and_hold(history: pd.DataFrame, initial_cash: float) -> dict:
 
 def search_ema_cross(history: pd.DataFrame, initial_cash: float) -> list[dict]:
     results = []
-    ema_cache = {
-        span: history["close"].ewm(span=span, adjust=False).mean()
-        for span in [10, 20, 30, 60, 120, 240]
-    }
+    ema_cache = {span: history["close"].ewm(span=span, adjust=False).mean() for span in [10, 20, 30, 60, 120, 240]}
     for fast_span, slow_span, position_ratio, flat_at_close in product(
-        [10, 20, 30],
-        [120, 240],
-        [0.25, 0.5, 0.75, 1.0],
-        [False, True],
+        [10, 20, 30], [120, 240], [0.25, 0.5, 0.75, 1.0], [False, True]
     ):
-        if fast_span >= slow_span:
-            continue
         fast_ema = ema_cache[fast_span]
         slow_ema = ema_cache[slow_span]
         buy_signal = (fast_ema > slow_ema) & (fast_ema.shift(1) <= slow_ema.shift(1))
@@ -131,14 +128,8 @@ def search_rsi_reversion(history: pd.DataFrame, initial_cash: float) -> list[dic
     results = []
     rsi_cache = {period: compute_rsi(history["close"], period) for period in [6, 14]}
     for period, buy_threshold, sell_threshold, position_ratio, flat_at_close in product(
-        [6, 14],
-        [20, 25, 30],
-        [60, 70],
-        [0.25, 0.5, 0.75, 1.0],
-        [False, True],
+        [6, 14], [20, 25, 30], [60, 70], [0.25, 0.5, 0.75, 1.0], [False, True]
     ):
-        if buy_threshold >= sell_threshold:
-            continue
         rsi = rsi_cache[period]
         buy_signal = (rsi < buy_threshold) & (rsi.shift(1) >= buy_threshold)
         sell_signal = (rsi > sell_threshold) & (rsi.shift(1) <= sell_threshold)
@@ -157,19 +148,10 @@ def search_rsi_reversion(history: pd.DataFrame, initial_cash: float) -> list[dic
 
 def search_breakout(history: pd.DataFrame, initial_cash: float) -> list[dict]:
     results = []
-    high_cache = {
-        window: history["close"].rolling(window).max().shift(1)
-        for window in [60, 120, 240]
-    }
-    low_cache = {
-        window: history["close"].rolling(window).min().shift(1)
-        for window in [15, 30, 60]
-    }
+    high_cache = {window: history["close"].rolling(window).max().shift(1) for window in [60, 120, 240]}
+    low_cache = {window: history["close"].rolling(window).min().shift(1) for window in [15, 30, 60]}
     for entry_window, exit_window, position_ratio, flat_at_close in product(
-        [60, 120, 240],
-        [15, 30, 60],
-        [0.25, 0.5, 0.75, 1.0],
-        [False, True],
+        [60, 120, 240], [15, 30, 60], [0.25, 0.5, 0.75, 1.0], [False, True]
     ):
         if exit_window >= entry_window:
             continue
@@ -190,16 +172,108 @@ def search_breakout(history: pd.DataFrame, initial_cash: float) -> list[dict]:
     return results
 
 
+def search_bollinger_reversion(history: pd.DataFrame, initial_cash: float) -> list[dict]:
+    results = []
+    for window, std_mult, position_ratio, flat_at_close in product(
+        [20, 30, 60], [1.5, 2.0, 2.5], [0.25, 0.5, 0.75, 1.0], [False, True]
+    ):
+        mean = history["close"].rolling(window).mean()
+        std = history["close"].rolling(window).std()
+        lower = mean - std_mult * std
+        upper = mean + std_mult * std
+        buy_signal = (history["close"] < lower) & (history["close"].shift(1) >= lower.shift(1))
+        sell_signal = (history["close"] > upper) & (history["close"].shift(1) <= upper.shift(1))
+        summary = simulate_strategy(history, buy_signal, sell_signal, initial_cash, position_ratio, flat_at_close)
+        results.append(
+            {
+                "strategy": "bollinger_band_reversion",
+                "params": f"window={window}, std={std_mult}",
+                "position_ratio": position_ratio,
+                "flat_at_close": flat_at_close,
+                **summary,
+            }
+        )
+    return results
+
+
+def search_macd_trend(history: pd.DataFrame, initial_cash: float) -> list[dict]:
+    results = []
+    for fast, slow, signal_span, position_ratio, flat_at_close in product(
+        [8, 12], [21, 26, 34], [5, 9], [0.25, 0.5, 0.75, 1.0], [False, True]
+    ):
+        if fast >= slow:
+            continue
+        fast_ema = history["close"].ewm(span=fast, adjust=False).mean()
+        slow_ema = history["close"].ewm(span=slow, adjust=False).mean()
+        macd = fast_ema - slow_ema
+        signal = macd.ewm(span=signal_span, adjust=False).mean()
+        buy_signal = (macd > signal) & (macd.shift(1) <= signal.shift(1))
+        sell_signal = (macd < signal) & (macd.shift(1) >= signal.shift(1))
+        summary = simulate_strategy(history, buy_signal, sell_signal, initial_cash, position_ratio, flat_at_close)
+        results.append(
+            {
+                "strategy": "macd_signal_crossover",
+                "params": f"fast={fast}, slow={slow}, signal={signal_span}",
+                "position_ratio": position_ratio,
+                "flat_at_close": flat_at_close,
+                **summary,
+            }
+        )
+    return results
+
+
+def evaluate_history(history: pd.DataFrame, initial_cash: float) -> pd.DataFrame:
+    results = [run_buy_and_hold(history, initial_cash)]
+    results.extend(search_ema_cross(history, initial_cash))
+    results.extend(search_rsi_reversion(history, initial_cash))
+    results.extend(search_breakout(history, initial_cash))
+    results.extend(search_bollinger_reversion(history, initial_cash))
+    results.extend(search_macd_trend(history, initial_cash))
+    return pd.DataFrame(results)
+
+
 def main() -> int:
     args = parse_args()
-    history = load_history(resolve_data_dir(args.data_dir, args.code, args.data_root))
+    codes = resolve_codes(args.data_root, args.codes)
 
-    results = [run_buy_and_hold(history, args.initial_cash)]
-    results.extend(search_ema_cross(history, args.initial_cash))
-    results.extend(search_rsi_reversion(history, args.initial_cash))
-    results.extend(search_breakout(history, args.initial_cash))
+    if codes:
+        histories = load_histories(args.data_root, codes)
+        result_tables = []
+        for code, history in histories.items():
+            table = evaluate_history(history, args.initial_cash)
+            table["code"] = code
+            result_tables.append(table)
+            best = table.sort_values("final_value", ascending=False).iloc[0]
+            print(f"[{code}] best: {best['strategy']} | {best['params']} | return {best['total_return_pct']:.2f}%")
 
-    table = pd.DataFrame(results).sort_values("final_value", ascending=False).reset_index(drop=True)
+        pool_table = pd.concat(result_tables, ignore_index=True)
+        grouped = (
+            pool_table.groupby(["strategy", "params", "position_ratio", "flat_at_close"], as_index=False)
+            .agg(
+                avg_final_value=("final_value", "mean"),
+                avg_return_pct=("total_return_pct", "mean"),
+                avg_drawdown_pct=("max_drawdown_pct", "mean"),
+                total_trades=("trade_count", "sum"),
+            )
+            .sort_values("avg_final_value", ascending=False)
+            .reset_index(drop=True)
+        )
+        print("\nStock pool aggregated top 10:")
+        print(
+            grouped.head(10).to_string(
+                index=False,
+                formatters={
+                    "position_ratio": "{:.0%}".format,
+                    "avg_final_value": "{:.2f}".format,
+                    "avg_return_pct": "{:.2f}".format,
+                    "avg_drawdown_pct": "{:.2f}".format,
+                },
+            )
+        )
+        return 0
+
+    history = load_history(resolve_data_dir(args.data_dir))
+    table = evaluate_history(history, args.initial_cash).sort_values("final_value", ascending=False).reset_index(drop=True)
     best = table.iloc[0]
 
     print(f"Data range: {history.iloc[0]['time_key']} -> {history.iloc[-1]['time_key']}")
