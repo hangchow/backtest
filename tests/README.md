@@ -35,6 +35,6 @@
 `test_backtest_scripts.py` 会先根据自身文件位置计算仓库根目录并加入 `sys.path`，所以里面这几个导入是有效的：
 
 - `from scripts.backtest_rsi_reversion import compute_rsi`
-- `from scripts.fetch_history_1m import remove_stale_daily_files, save_daily_files`
+- `from scripts.fetch_futu_1m import remove_stale_daily_files, save_daily_files`
 
 这意味着只要测试文件还在当前仓库的 `tests/` 目录下，上面的三种运行方式都可以正确导入目标模块，不依赖你当前 shell 的工作目录碰巧是什么。
