@@ -21,6 +21,7 @@ DEFAULT_INITIAL_CASH = 100_000.0
 DEFAULT_FAST_SPAN = 30
 DEFAULT_SLOW_SPAN = 120
 DEFAULT_POSITION_RATIO = 0.5
+DEFAULT_MAX_OPEN_POSITIONS = 2
 
 
 def parse_args() -> argparse.Namespace:
@@ -32,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fast-span", type=int, default=DEFAULT_FAST_SPAN)
     parser.add_argument("--slow-span", type=int, default=DEFAULT_SLOW_SPAN)
     parser.add_argument("--position-ratio", type=float, default=DEFAULT_POSITION_RATIO)
-    parser.add_argument("--max-open-positions", type=int, default=4)
+    parser.add_argument("--max-open-positions", type=int, default=DEFAULT_MAX_OPEN_POSITIONS)
     parser.add_argument(
         "--flat-at-close",
         action="store_true",
@@ -202,23 +203,27 @@ def run_portfolio_backtest(
 
         slots_left = max_open_positions - sum(1 for qty in positions.values() if qty > 0)
         if slots_left > 0:
+            buy_candidates: list[tuple[float, str, pd.Series]] = []
             for code in sorted(histories):
-                if slots_left <= 0:
-                    break
                 if positions[code] > 0:
                     continue
                 frame = code_frames[code]
                 if ts not in frame.index or not bool(code_buy[code].get(ts, False)):
                     continue
                 row = frame.loc[ts]
+                score = float(row["fast_ema"] - row["slow_ema"])
+                buy_candidates.append((score, code, row))
+
+            buy_candidates.sort(key=lambda item: item[0], reverse=True)
+            for _, code, row in buy_candidates[:slots_left]:
                 price = float(row["close"])
-                budget = min(cash * position_ratio, cash / slots_left)
+                remaining_slots = max_open_positions - sum(1 for qty in positions.values() if qty > 0)
+                budget = min(cash * position_ratio, cash / remaining_slots)
                 qty = int(budget // price)
                 if qty <= 0:
                     continue
                 cash -= qty * price
                 positions[code] = qty
-                slots_left -= 1
                 trades.append(
                     {
                         "time_key": ts,
