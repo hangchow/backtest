@@ -9,11 +9,10 @@ import pandas as pd
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS_DIR = REPO_ROOT / "scripts"
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-from fetch_polygon_1m import convert_to_local_layout, iter_month_ranges, with_api_key
+from tests.fetch_polygon_1m import convert_to_local_layout, iter_month_ranges, with_api_key
 
 
 class IterMonthRangesTests(unittest.TestCase):

@@ -2,13 +2,23 @@
 
 ## 作用
 
-这个目录放仓库里的自动化测试。
+这个目录放仓库里的自动化测试，以及数据抓取相关脚本和说明文档。
 
 当前测试文件：
 
 - `test_backtest_scripts.py`
   - 校验 RSI 在单边上涨、单边下跌、横盘时的边界输出
   - 校验 `fetch_futu_1m.py` 默认会清理请求区间之外的旧 CSV
+- `fetch_futu_1m.py`
+  - 通过 Futu OpenD 抓取 1 分钟历史数据
+- `fetch_polygon_1m.py`
+  - 通过 Polygon API 抓取 1 分钟历史数据
+- `minute_csv_utils.py`
+  - 保存和清理按交易日拆分 CSV 的共用逻辑
+- `README_fetch_futu_1m.md`
+  - `fetch_futu_1m.py` 的使用说明
+- `README_fetch_polygon_1m.md`
+  - `fetch_polygon_1m.py` 的使用说明
 
 ## 推荐运行方式
 
@@ -35,6 +45,6 @@
 `test_backtest_scripts.py` 会先根据自身文件位置计算仓库根目录并加入 `sys.path`，所以里面这几个导入是有效的：
 
 - `from scripts.backtest_rsi_reversion import compute_rsi`
-- `from scripts.fetch_futu_1m import remove_stale_daily_files, save_daily_files`
+- `from tests.minute_csv_utils import remove_stale_daily_files, save_daily_files`
 
 这意味着只要测试文件还在当前仓库的 `tests/` 目录下，上面的三种运行方式都可以正确导入目标模块，不依赖你当前 shell 的工作目录碰巧是什么。

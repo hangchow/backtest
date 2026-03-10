@@ -14,7 +14,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.backtest_rsi_reversion import compute_rsi
-from scripts.fetch_history_1m import remove_stale_daily_files, save_daily_files
+from tests.minute_csv_utils import remove_stale_daily_files, save_daily_files
 
 
 TEST_CODE = "TEST.00001"

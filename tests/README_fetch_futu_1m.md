@@ -11,6 +11,12 @@
 3. Python 环境已安装依赖：
 
 ```bash
+./.venv/bin/pip install -r requirements.txt
+```
+
+如果只想安装这个脚本的最小依赖，也可以单独安装：
+
+```bash
 ./.venv/bin/pip install futu-api pandas
 ```
 
@@ -18,12 +24,12 @@
 
 脚本文件：
 
-`scripts/fetch_futu_1m.py`
+`tests/fetch_futu_1m.py`
 
 ## 参数
 
 ```bash
-./.venv/bin/python scripts/fetch_futu_1m.py \
+./.venv/bin/python tests/fetch_futu_1m.py \
   --code <股票代码> \
   --start <开始日期> \
   --end <结束日期>
@@ -54,7 +60,7 @@
 抓取腾讯控股从 `2025-03-07` 到 `2026-03-07` 的 1 分钟 K 线：
 
 ```bash
-./.venv/bin/python scripts/fetch_futu_1m.py \
+./.venv/bin/python tests/fetch_futu_1m.py \
   --code HK.00700 \
   --start 2025-03-07 \
   --end 2026-03-07
@@ -63,7 +69,7 @@
 如果 OpenD 不在默认端口：
 
 ```bash
-./.venv/bin/python scripts/fetch_futu_1m.py \
+./.venv/bin/python tests/fetch_futu_1m.py \
   --host 127.0.0.1 \
   --port 11111 \
   --code HK.00700 \

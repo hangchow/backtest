@@ -16,7 +16,10 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from fetch_history_1m import save_daily_files
+try:
+    from minute_csv_utils import save_daily_files
+except ModuleNotFoundError:  # package-style import
+    from .minute_csv_utils import save_daily_files
 
 
 BASE_URL = "https://api.polygon.io/v2/aggs/ticker"

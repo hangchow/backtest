@@ -4,6 +4,51 @@
 
 这个项目基于多只股票的 1 分钟 K 线数据，做几个简单策略的样本内回测。
 
+## 开发环境
+
+- 建议使用 Python `3.10+`；当前仓库里的 `.venv` 是 Python `3.14.3`。
+- 仓库目前没有 `pyproject.toml`，Python 依赖以根目录的 `requirements.txt` 为准。
+- 回测和测试依赖 `pandas`；通过 Futu 抓数还需要 `futu-api`。
+
+## 环境准备
+
+在仓库根目录执行：
+
+```bash
+python3 -m venv .venv
+./.venv/bin/python -m pip install --upgrade pip
+./.venv/bin/pip install -r requirements.txt
+```
+
+如果你已经有 `.venv`，也可以直接复用并继续使用 `./.venv/bin/python`、`./.venv/bin/pip` 这类显式路径命令。
+
+## 测试
+
+运行全部测试：
+
+```bash
+./.venv/bin/python -m unittest discover -s tests
+```
+
+只跑单个测试文件，例如：
+
+```bash
+./.venv/bin/python -m unittest tests.test_backtest_scripts
+```
+
+更多测试说明见 `tests/README.md`。
+
+## 数据抓取前提
+
+- `tests/fetch_futu_1m.py` 依赖本机已启动的 Futu OpenD，默认连接 `127.0.0.1:11111`。
+- `tests/fetch_polygon_1m.py` 需要 Polygon API key，推荐通过环境变量设置：
+
+```bash
+export POLYGON_API_KEY=your_api_key
+```
+
+- 回测脚本本身只读取本地 `data/` 目录下的 CSV，不依赖外部服务。
+
 当前数据范围：
 
 - 对比标的：`HK.00700`、`HK.09988`、`HK.00005`、`US.MSFT`、`US.NVDA`、`US.GOOG`、`US.TSLA`
@@ -21,8 +66,8 @@
 
 抓取脚本和说明：
 
-- [抓取脚本说明](scripts/README_fetch_futu_1m.md)
-- `scripts/fetch_polygon_1m.py`：按参数抓取 Polygon 的美股分钟数据
+- [Futu 抓取说明](tests/README_fetch_futu_1m.md)
+- [Polygon 抓取说明](tests/README_fetch_polygon_1m.md)
 - `scripts/compare_backtests.py`：按参数比较多只标的的默认回测结果
 
 ## 七标的默认参数对比
@@ -142,8 +187,8 @@
 
 ## 目录入口
 
-- [数据抓取说明](scripts/README_fetch_futu_1m.md)
-- `scripts/fetch_polygon_1m.py`
+- [Futu 抓取说明](tests/README_fetch_futu_1m.md)
+- [Polygon 抓取说明](tests/README_fetch_polygon_1m.md)
 - `scripts/compare_backtests.py`
 - [RSI 策略说明](scripts/README_backtest_rsi_reversion.md)
 - [EMA 策略说明](scripts/README_backtest_ema_cross.md)
