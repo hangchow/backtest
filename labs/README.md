@@ -13,8 +13,8 @@
     - EMA 金叉死叉
     - RSI 反转
     - 通道突破
-    - Bollinger Band 均值回归
-    - MACD 趋势跟随
+    - Bollinger Bands 均值回归（bollinger_band_reversion）
+    - MACD 信号线交叉（macd_signal_crossover）
 
 正式策略脚本仍然放在 `scripts/`：
 

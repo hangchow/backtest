@@ -186,7 +186,7 @@ def search_bollinger_reversion(history: pd.DataFrame, initial_cash: float) -> li
         summary = simulate_strategy(history, buy_signal, sell_signal, initial_cash, position_ratio, flat_at_close)
         results.append(
             {
-                "strategy": "bollinger_reversion",
+                "strategy": "bollinger_band_reversion",
                 "params": f"window={window}, std={std_mult}",
                 "position_ratio": position_ratio,
                 "flat_at_close": flat_at_close,
@@ -212,7 +212,7 @@ def search_macd_trend(history: pd.DataFrame, initial_cash: float) -> list[dict]:
         summary = simulate_strategy(history, buy_signal, sell_signal, initial_cash, position_ratio, flat_at_close)
         results.append(
             {
-                "strategy": "macd_trend",
+                "strategy": "macd_signal_crossover",
                 "params": f"fast={fast}, slow={slow}, signal={signal_span}",
                 "position_ratio": position_ratio,
                 "flat_at_close": flat_at_close,
