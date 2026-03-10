@@ -25,7 +25,7 @@ from backtest_ema_rsi_bull_range import (
 
 class ParseArgsTests(unittest.TestCase):
     def test_defaults_match_optimized_profile(self) -> None:
-        args = parse_args(["--code", "TEST.00001"])
+        args = parse_args(["--data-dir", "data/TEST.00001"])
 
         self.assertEqual(args.fast_span, DEFAULT_FAST_SPAN)
         self.assertEqual(args.slow_span, DEFAULT_SLOW_SPAN)

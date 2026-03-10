@@ -25,6 +25,12 @@
 - 买入仓位：`100%`
 - 默认允许隔夜；加 `--flat-at-close` 才改成日内平仓
 
+## 结果边界
+
+- 文档中的样例数字（如有）都只是样本内结果。
+- 回测还没有计入手续费、平台费、印花税、滑点。
+- 目前也没有处理港股整手限制，回测允许按股数买卖。
+
 ## 选择这组参数的原因
 
 这版不是简单多堆指标，而是沿着更适合强趋势回撤的方向收紧节奏：
@@ -36,20 +42,20 @@
 ## 基本用法
 
 ```bash
-./.venv/bin/python scripts/backtest_ema_rsi_bull_range.py --code HK.00700
+./.venv/bin/python scripts/backtest_ema_rsi_bull_range.py --codes HK.00700
 ```
 
 如果你不想隔夜持仓：
 
 ```bash
-./.venv/bin/python scripts/backtest_ema_rsi_bull_range.py --code HK.00700 --flat-at-close
+./.venv/bin/python scripts/backtest_ema_rsi_bull_range.py --codes HK.00700 --flat-at-close
 ```
 
 ## 常用参数
 
-- `--code`：股票代码，脚本会从 `data/<code>/` 读取数据
-- `--data-root`：配合 `--code` 使用的数据根目录，默认 `data`
-- `--data-dir`：直接指定完整数据目录；传了以后会覆盖 `--code`
+- `--codes`：股票代码列表（空格分隔），脚本会从 `data/<code>/` 读取数据
+- `--data-root`：配合 `--codes` 使用的数据根目录，默认 `data`
+- `--data-dir`：直接指定单标的数据目录；不能和 `--codes` 同时使用
 - `--initial-cash`：初始资金
 - `--fast-span`：短周期 EMA
 - `--slow-span`：长周期 EMA
@@ -57,16 +63,19 @@
 - `--buy-threshold`：买入阈值
 - `--sell-threshold`：卖出阈值
 - `--position-ratio`：每次买入使用的现金比例，范围 `(0, 1]`
+- `--max-open-positions`：股票池模式下的最大同时持仓数，默认 `4`
 - `--flat-at-close`：每天最后一分钟强制平仓
 - `--show-trades`：打印前后各多少笔交易，设为 `0` 可关闭
 
-## 相对当前默认 `EMA + RSI` 的样本内变化
+## 输出内容
 
-按当前 7 只样本对比：
+脚本会输出：
 
-- 原版默认 `EMA + RSI`：平均收益率约 `160.72%`，最差标的收益率 `5.60%`
-- 这版默认参数：平均收益率约 `660.70%`，最差标的收益率 `15.98%`
-- 原版默认最坏回撤约 `-16.97%`
-- 这版默认最坏回撤约 `-16.65%`
-
-注意：这仍然是样本内结果，只能说明这组参数更适合当前这批数据，不能说明未来会继续成立。
+- 回测区间
+- 策略参数
+- 交易次数
+- 期末现金
+- 期末持仓
+- 期末总资产
+- 总收益率
+- 最大回撤
