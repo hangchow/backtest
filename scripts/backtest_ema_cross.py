@@ -215,15 +215,20 @@ def run_portfolio_backtest(
                 buy_candidates.append((score, code, row))
 
             buy_candidates.sort(key=lambda item: item[0], reverse=True)
-            for _, code, row in buy_candidates[:slots_left]:
+            for _, code, row in buy_candidates:
+                if slots_left <= 0:
+                    break
                 price = float(row["close"])
                 remaining_slots = max_open_positions - sum(1 for qty in positions.values() if qty > 0)
+                if remaining_slots <= 0:
+                    break
                 budget = min(cash * position_ratio, cash / remaining_slots)
                 qty = int(budget // price)
                 if qty <= 0:
                     continue
                 cash -= qty * price
                 positions[code] = qty
+                slots_left -= 1
                 trades.append(
                     {
                         "time_key": ts,
