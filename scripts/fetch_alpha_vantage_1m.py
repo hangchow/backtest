@@ -15,7 +15,7 @@ from urllib.request import urlopen
 
 import pandas as pd
 
-from fetch_history_1m import save_daily_files
+from fetch_futu_1m import save_daily_files
 
 
 BASE_URL = "https://www.alphavantage.co/query"

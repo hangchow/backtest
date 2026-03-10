@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from fetch_history_1m import save_daily_files
+from fetch_futu_1m import save_daily_files
 
 
 BASE_URL = "https://api.polygon.io/v2/aggs/ticker"
