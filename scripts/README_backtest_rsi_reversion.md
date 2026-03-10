@@ -42,25 +42,26 @@
 指定标的代码运行：
 
 ```bash
-./.venv/bin/python scripts/backtest_rsi_reversion.py --code HK.00700
+./.venv/bin/python scripts/backtest_rsi_reversion.py --codes HK.00700
 ```
 
 如果要每天收盘前强制平仓：
 
 ```bash
-./.venv/bin/python scripts/backtest_rsi_reversion.py --code HK.00700 --flat-at-close
+./.venv/bin/python scripts/backtest_rsi_reversion.py --codes HK.00700 --flat-at-close
 ```
 
 ## 常用参数
 
-- `--code`：股票代码，脚本会从 `data/<code>/` 读取数据
-- `--data-root`：配合 `--code` 使用的数据根目录，默认 `data`
-- `--data-dir`：直接指定完整数据目录；传了以后会覆盖 `--code`
+- `--codes`：股票代码列表（空格分隔），脚本会从 `data/<code>/` 读取数据
+- `--data-root`：配合 `--codes` 使用的数据根目录，默认 `data`
+- `--data-dir`：直接指定单标的数据目录；不能和 `--codes` 同时使用
 - `--initial-cash`：初始资金
 - `--rsi-period`：RSI 周期
 - `--buy-threshold`：买入阈值
 - `--sell-threshold`：卖出阈值
 - `--position-ratio`：每次买入使用的现金比例，范围 `(0, 1]`
+- `--max-open-positions`：股票池模式下的最大同时持仓数，默认 `4`
 - `--flat-at-close`：收盘前平仓
 - `--show-trades`：打印前后各多少笔交易，设为 `0` 可关闭
 
@@ -70,7 +71,7 @@
 
 ```bash
 ./.venv/bin/python scripts/backtest_rsi_reversion.py \
-  --code HK.00700 \
+  --codes HK.00700 \
   --initial-cash 100000 \
   --rsi-period 6 \
   --buy-threshold 30 \
@@ -81,7 +82,7 @@
 不打印交易样例：
 
 ```bash
-./.venv/bin/python scripts/backtest_rsi_reversion.py --code HK.00700 --show-trades 0
+./.venv/bin/python scripts/backtest_rsi_reversion.py --codes HK.00700 --show-trades 0
 ```
 
 ## 输出内容

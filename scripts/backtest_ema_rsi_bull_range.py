@@ -5,9 +5,9 @@ import argparse
 
 import backtest_ema_rsi_combo as combo
 try:
-    from .backtest_common import add_data_source_args, load_history, resolve_data_dir
+    from .backtest_common import add_data_source_args, load_histories, load_history, resolve_codes, resolve_data_dir
 except ImportError:
-    from backtest_common import add_data_source_args, load_history, resolve_data_dir
+    from backtest_common import add_data_source_args, load_histories, load_history, resolve_codes, resolve_data_dir
 
 
 DEFAULT_INITIAL_CASH = combo.DEFAULT_INITIAL_CASH
@@ -31,6 +31,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--buy-threshold", type=float, default=DEFAULT_BUY_THRESHOLD)
     parser.add_argument("--sell-threshold", type=float, default=DEFAULT_SELL_THRESHOLD)
     parser.add_argument("--position-ratio", type=float, default=DEFAULT_POSITION_RATIO)
+    parser.add_argument("--max-open-positions", type=int, default=4)
     parser.add_argument(
         "--flat-at-close",
         action="store_true",
@@ -71,18 +72,36 @@ def run_backtest(
 
 def main() -> int:
     args = parse_args()
-    history = load_history(resolve_data_dir(args.data_dir, args.code, args.data_root))
-    summary, trades = run_backtest(
-        history=history,
-        initial_cash=args.initial_cash,
-        fast_span=args.fast_span,
-        slow_span=args.slow_span,
-        rsi_period=args.rsi_period,
-        buy_threshold=args.buy_threshold,
-        sell_threshold=args.sell_threshold,
-        position_ratio=args.position_ratio,
-        flat_at_close=args.flat_at_close,
-    )
+    if args.codes:
+        if args.data_dir is not None:
+            raise ValueError("--codes cannot be used with --data-dir")
+        codes = resolve_codes(args.data_root, args.codes)
+        histories = load_histories(args.data_root, codes)
+        summary, trades = combo.run_portfolio_backtest(
+            histories=histories,
+            initial_cash=args.initial_cash,
+            fast_span=args.fast_span,
+            slow_span=args.slow_span,
+            rsi_period=args.rsi_period,
+            buy_threshold=args.buy_threshold,
+            sell_threshold=args.sell_threshold,
+            position_ratio=args.position_ratio,
+            flat_at_close=args.flat_at_close,
+            max_open_positions=args.max_open_positions,
+        )
+    else:
+        history = load_history(resolve_data_dir(args.data_dir))
+        summary, trades = run_backtest(
+            history=history,
+            initial_cash=args.initial_cash,
+            fast_span=args.fast_span,
+            slow_span=args.slow_span,
+            rsi_period=args.rsi_period,
+            buy_threshold=args.buy_threshold,
+            sell_threshold=args.sell_threshold,
+            position_ratio=args.position_ratio,
+            flat_at_close=args.flat_at_close,
+        )
 
     print(f"Data range: {summary['start_time']} -> {summary['end_time']}")
     print(f"Initial cash: {summary['initial_cash']:.2f}")
@@ -96,8 +115,13 @@ def main() -> int:
     print(f"Flat at close: {summary['flat_at_close']}")
     print(f"Trades: {summary['trade_count']} (BUY {summary['buy_count']}, SELL {summary['sell_count']})")
     print(f"Ending cash: {summary['ending_cash']:.2f}")
-    print(f"Ending shares: {summary['ending_shares']}")
-    print(f"Last price: {summary['last_price']:.2f}")
+    if "ending_shares" in summary:
+        print(f"Ending shares: {summary['ending_shares']}")
+        print(f"Last price: {summary['last_price']:.2f}")
+    else:
+        print(f"Stock pool: {', '.join(summary['codes'])}")
+        print(f"Max open positions: {summary['max_open_positions']}")
+        print(f"Ending positions: {summary['ending_positions']}")
     print(f"Final value: {summary['final_value']:.2f}")
     print(f"Total return: {summary['total_return_pct']:.2f}%")
     print(f"Max drawdown: {summary['max_drawdown_pct']:.2f}%")
