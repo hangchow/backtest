@@ -142,17 +142,17 @@
 
 - 股票池：`US.MSFT`、`US.NVDA`、`US.GOOG`、`US.TSLA`
 - 初始资金：`100000`
-- `--max-open-positions`：`4`
+- `--max-open-positions`：`2`
 - 默认允许隔夜（仅在传入 `--flat-at-close` 时日内平仓）
 
 ### 股票池回测结果
 
 | strategy | final_value | return_pct | max_drawdown_pct | trade_count |
 | --- | --- | --- | --- | --- |
-| RSI reversion | 117053.03 | 17.05 | -14.85 | 17831 |
-| EMA cross | 117372.56 | 17.37 | -14.51 | 3910 |
-| EMA + RSI | 119738.74 | 19.74 | -7.56 | 19110 |
-| EMA + RSI bull range | 129283.83 | 29.28 | -9.41 | 40634 |
+| RSI reversion | 140824.13 | 40.82 | -20.33 | 13187 |
+| EMA cross | 122243.48 | 22.24 | -17.08 | 2446 |
+| EMA + RSI | 127005.30 | 27.01 | -12.57 | 16350 |
+| EMA + RSI bull range | 144382.78 | 44.38 | -14.89 | 33486 |
 
 ## 当前结论
 

@@ -17,6 +17,7 @@ DEFAULT_RSI_PERIOD = 4
 DEFAULT_BUY_THRESHOLD = 46.0
 DEFAULT_SELL_THRESHOLD = 52.0
 DEFAULT_POSITION_RATIO = combo.DEFAULT_POSITION_RATIO
+DEFAULT_MAX_OPEN_POSITIONS = combo.DEFAULT_MAX_OPEN_POSITIONS
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -31,7 +32,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--buy-threshold", type=float, default=DEFAULT_BUY_THRESHOLD)
     parser.add_argument("--sell-threshold", type=float, default=DEFAULT_SELL_THRESHOLD)
     parser.add_argument("--position-ratio", type=float, default=DEFAULT_POSITION_RATIO)
-    parser.add_argument("--max-open-positions", type=int, default=4)
+    parser.add_argument("--max-open-positions", type=int, default=DEFAULT_MAX_OPEN_POSITIONS)
     parser.add_argument(
         "--flat-at-close",
         action="store_true",
