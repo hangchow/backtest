@@ -69,10 +69,11 @@ export POLYGON_API_KEY=your_api_key
 - [Futu 抓取说明](tests/README_fetch_futu_1m.md)
 - [Polygon 抓取说明](tests/README_fetch_polygon_1m.md)
 - `scripts/compare_backtests.py`：按参数比较多只标的的默认回测结果
+- [Dual Momentum 股票池说明](scripts/README_backtest_dual_momentum.md)
 
 ## 七标的默认参数对比
 
-下面这组对比结果是 `2026-03-09` 生成的，使用的是当前 4 个回测脚本的默认参数。
+下面这组对比结果是 `2026-03-11` 生成的，使用的是当前已经加入 volume 处理后的默认参数。
 谷歌这里使用的是 `GOOG`，不是 `GOOGL`。
 
 ### 数据概览
@@ -91,46 +92,46 @@ export POLYGON_API_KEY=your_api_key
 
 | code | strategy | final_value | return_pct | max_drawdown_pct | trade_count |
 | --- | --- | --- | --- | --- | --- |
-| HK.00700 | RSI reversion | 604046.80 | 504.05 | -10.19 | 3628 |
-| HK.00700 | EMA cross | 93218.80 | -6.78 | -9.24 | 786 |
-| HK.00700 | EMA + RSI | 476907.80 | 376.91 | -3.70 | 3988 |
-| HK.00700 | EMA + RSI bull range | 1648402.70 | 1548.40 | -2.84 | 9560 |
-| HK.09988 | RSI reversion | 530574.40 | 430.57 | -8.86 | 3712 |
-| HK.09988 | EMA cross | 93140.95 | -6.86 | -12.73 | 722 |
-| HK.09988 | EMA + RSI | 393132.45 | 293.13 | -5.02 | 3834 |
-| HK.09988 | EMA + RSI bull range | 774807.30 | 674.81 | -7.15 | 8770 |
-| HK.00005 | RSI reversion | 398540.57 | 298.54 | -7.91 | 3558 |
-| HK.00005 | EMA cross | 97056.80 | -2.94 | -5.95 | 852 |
-| HK.00005 | EMA + RSI | 477974.00 | 377.97 | -5.89 | 4896 |
-| HK.00005 | EMA + RSI bull range | 2388441.35 | 2288.44 | -4.34 | 11576 |
-| US.MSFT | RSI reversion | 116482.41 | 16.48 | -15.84 | 4448 |
-| US.MSFT | EMA cross | 99955.15 | -0.04 | -5.43 | 942 |
-| US.MSFT | EMA + RSI | 136895.03 | 36.90 | -5.03 | 4594 |
-| US.MSFT | EMA + RSI bull range | 123259.76 | 23.26 | -14.13 | 9736 |
-| US.NVDA | RSI reversion | 139385.44 | 39.39 | -18.86 | 4532 |
-| US.NVDA | EMA cross | 95625.18 | -4.37 | -10.70 | 1028 |
-| US.NVDA | EMA + RSI | 114412.63 | 14.41 | -16.97 | 5072 |
-| US.NVDA | EMA + RSI bull range | 126605.87 | 26.61 | -16.48 | 10578 |
-| US.GOOG | RSI reversion | 117532.53 | 17.53 | -14.30 | 4456 |
-| US.GOOG | EMA cross | 109678.82 | 9.68 | -6.43 | 988 |
-| US.GOOG | EMA + RSI | 105602.72 | 5.60 | -13.94 | 4894 |
-| US.GOOG | EMA + RSI bull range | 115981.03 | 15.98 | -16.65 | 10338 |
-| US.TSLA | RSI reversion | 92446.69 | -7.55 | -32.59 | 4395 |
-| US.TSLA | EMA cross | 118632.64 | 18.63 | -8.18 | 952 |
-| US.TSLA | EMA + RSI | 120114.39 | 20.11 | -10.53 | 4550 |
-| US.TSLA | EMA + RSI bull range | 147371.74 | 47.37 | -16.05 | 9982 |
+| HK.00700 | RSI reversion | 491405.10 | 391.41 | -10.14 | 3208 |
+| HK.00700 | EMA cross | 92739.70 | -7.26 | -10.59 | 786 |
+| HK.00700 | EMA + RSI | 250760.00 | 150.76 | -3.13 | 2472 |
+| HK.00700 | EMA + RSI bull range | 385851.30 | 285.85 | -3.28 | 4502 |
+| HK.09988 | RSI reversion | 485308.30 | 385.31 | -8.11 | 3476 |
+| HK.09988 | EMA cross | 92886.45 | -7.11 | -14.64 | 722 |
+| HK.09988 | EMA + RSI | 215142.90 | 115.14 | -4.15 | 2286 |
+| HK.09988 | EMA + RSI bull range | 251209.50 | 151.21 | -5.07 | 4038 |
+| HK.00005 | RSI reversion | 286442.98 | 186.44 | -8.13 | 2792 |
+| HK.00005 | EMA cross | 96853.50 | -3.15 | -6.98 | 852 |
+| HK.00005 | EMA + RSI | 225399.45 | 125.40 | -6.34 | 2760 |
+| HK.00005 | EMA + RSI bull range | 286016.50 | 186.02 | -5.35 | 4400 |
+| US.MSFT | RSI reversion | 116975.07 | 16.98 | -15.03 | 4300 |
+| US.MSFT | EMA cross | 98772.69 | -1.23 | -6.87 | 942 |
+| US.MSFT | EMA + RSI | 135930.17 | 35.93 | -4.80 | 2862 |
+| US.MSFT | EMA + RSI bull range | 115964.97 | 15.96 | -11.66 | 4714 |
+| US.NVDA | RSI reversion | 137748.57 | 37.75 | -18.61 | 4486 |
+| US.NVDA | EMA cross | 94341.33 | -5.66 | -12.48 | 1028 |
+| US.NVDA | EMA + RSI | 112572.82 | 12.57 | -15.87 | 3438 |
+| US.NVDA | EMA + RSI bull range | 121675.65 | 21.68 | -15.87 | 4964 |
+| US.GOOG | RSI reversion | 118282.86 | 18.28 | -14.22 | 4322 |
+| US.GOOG | EMA cross | 112003.70 | 12.00 | -7.81 | 988 |
+| US.GOOG | EMA + RSI | 114388.78 | 14.39 | -6.13 | 2972 |
+| US.GOOG | EMA + RSI bull range | 115707.60 | 15.71 | -11.58 | 5074 |
+| US.TSLA | RSI reversion | 91670.84 | -8.33 | -33.11 | 4373 |
+| US.TSLA | EMA cross | 122998.53 | 23.00 | -9.67 | 952 |
+| US.TSLA | EMA + RSI | 128901.81 | 28.90 | -9.16 | 3176 |
+| US.TSLA | EMA + RSI bull range | 127930.61 | 27.93 | -20.02 | 4740 |
 
 ### 每个标的的最佳结果
 
 | code | strategy | final_value | return_pct | max_drawdown_pct |
 | --- | --- | --- | --- | --- |
-| HK.00005 | EMA + RSI bull range | 2388441.35 | 2288.44 | -4.34 |
-| HK.00700 | EMA + RSI bull range | 1648402.70 | 1548.40 | -2.84 |
-| HK.09988 | EMA + RSI bull range | 774807.30 | 674.81 | -7.15 |
-| US.GOOG | RSI reversion | 117532.53 | 17.53 | -14.30 |
-| US.MSFT | EMA + RSI | 136895.03 | 36.90 | -5.03 |
-| US.NVDA | RSI reversion | 139385.44 | 39.39 | -18.86 |
-| US.TSLA | EMA + RSI bull range | 147371.74 | 47.37 | -16.05 |
+| HK.00005 | RSI reversion | 286442.98 | 186.44 | -8.13 |
+| HK.00700 | RSI reversion | 491405.10 | 391.41 | -10.14 |
+| HK.09988 | RSI reversion | 485308.30 | 385.31 | -8.11 |
+| US.GOOG | RSI reversion | 118282.86 | 18.28 | -14.22 |
+| US.MSFT | EMA + RSI | 135930.17 | 35.93 | -4.80 |
+| US.NVDA | RSI reversion | 137748.57 | 37.75 | -18.61 |
+| US.TSLA | EMA + RSI | 128901.81 | 28.90 | -9.16 |
 
 ## 美股股票池（`--codes`）默认参数回测
 
@@ -140,24 +141,36 @@ export POLYGON_API_KEY=your_api_key
 - 初始资金：`100000`
 - `--max-open-positions`：`2`
 - 默认允许隔夜（仅在传入 `--flat-at-close` 时日内平仓）
+- `RSI reversion` 量能参数：`avg(5) / 0.6x`
+- `EMA cross` 量能参数：`avg(5) / 0.6x`
+- `EMA + RSI` 量能参数：`avg(20) / 0.9x`
+- `EMA + RSI bull range` 量能参数：`avg(20) / 0.9x`
 
 ### 股票池回测结果
 
 | strategy | final_value | return_pct | max_drawdown_pct | trade_count |
 | --- | --- | --- | --- | --- |
-| RSI reversion | 140824.13 | 40.82 | -20.33 | 13187 |
-| EMA cross | 122243.48 | 22.24 | -17.08 | 2446 |
-| EMA + RSI | 127005.30 | 27.01 | -12.57 | 16350 |
-| EMA + RSI bull range | 144382.78 | 44.38 | -14.89 | 33486 |
+| RSI reversion | 139534.51 | 39.53 | -19.67 | 12967 |
+| EMA cross | 114868.28 | 14.87 | -9.02 | 2722 |
+| EMA + RSI | 133187.07 | 33.19 | -8.61 | 11256 |
+| EMA + RSI bull range | 142168.32 | 42.17 | -11.32 | 17940 |
+
+### 更强的股票池轮动备选
+
+基于同一批 `US.MSFT`、`US.NVDA`、`US.GOOG`、`US.TSLA` 数据，我新增了一个日频 dual momentum 股票池策略：
+
+- 脚本：`scripts/backtest_dual_momentum.py`
+- 默认参数：最近 `40` 个交易日动量，持有最强 `1` 只，只有当日成交量高于 `1.3x avg(20)` 时才给动量额外加分
+- 回测结果：`final_value = 202227.59`，`return_pct = 102.23%`，`max_drawdown_pct = -10.03%`，`trade_count = 36`
 
 ## 当前结论
 
-- 在当前这 7 只标的、默认参数的设定下，`EMA + RSI` 和 `EMA + RSI bull range` 都能在所有标的上拿到正向收益。
-- 如果只看这批样本内结果，`EMA + RSI bull range` 的平均收益率约 `660.70%`，明显高于原版 `EMA + RSI` 的约 `160.72%`，但交易次数也大幅上升。
-- 港股这三只样本里，收益最高的默认策略都已经变成 `EMA + RSI bull range`。
-- 美股这四只样本里，`TSLA` 的最佳结果来自 `EMA + RSI bull range`，`MSFT` 仍然是原版 `EMA + RSI` 最好，`NVDA` 和 `GOOG` 仍然是 `RSI 反转` 最好。
-- 纯 `EMA 金叉死叉` 在七只标的里都不是收益最高的默认策略，但在 `HK.00005`、`GOOG` 和 `TSLA` 上的回撤控制明显好于纯 RSI。
-- `EMA + RSI bull range` 不是逐标的全面占优；它在 `MSFT`、`GOOG` 等美股上的回撤明显更深，所以更像一套样本内更激进的优化版本，而不是已经验证过的通用替代品。
+- 在当前这 7 只标的、加入 volume 处理后的默认参数下，`RSI reversion` 拿到了 `5/7` 个单票最佳结果，港股这三只样本也都回到了它领先。
+- `EMA + RSI` 仍然是更均衡的美股单票方案，在 `US.MSFT` 和 `US.TSLA` 上是当前默认参数里最好的结果，而且回撤普遍浅于 `RSI reversion`。
+- 在当前这 4 只美股股票池上，`EMA + RSI` 的样本内结果提升到 `33.19%`，同时最大回撤压到 `-8.61%`；`EMA + RSI bull range` 的收益率是 `42.17%`，虽然略低于旧版文档里的更激进样本内峰值，但回撤更收敛。
+- `EMA cross` 的 volume 优化主要改善了风险侧，当前股票池最大回撤约 `-9.02%`，明显小于旧版的 `-17.08%`；但它没有成为收益冠军，所以更像低风险对照组。
+- `RSI reversion` 的股票池收益率是 `39.53%`，和旧版 `40.82%` 接近，但最大回撤从 `-20.33%` 收敛到 `-19.67%`，说明这组 volume 过滤更偏风险控制。
+- `dual momentum` 里，volume 现在只在明显放量时给动量加分，不再惩罚普通量能；当前样本内结果 `102.23%`，仍然显著强于 4 套分钟级股票池策略。
 
 ## 已知缺陷
 
@@ -194,5 +207,6 @@ export POLYGON_API_KEY=your_api_key
 - [EMA 策略说明](scripts/README_backtest_ema_cross.md)
 - [EMA + RSI 策略说明](scripts/README_backtest_ema_rsi_combo.md)
 - [优化版 EMA + RSI 说明](scripts/README_backtest_ema_rsi_bull_range.md)
+- [Dual Momentum 股票池说明](scripts/README_backtest_dual_momentum.md)
 - [tests 目录说明（含实验脚本）](tests/README.md)
 - [ValueSider 持仓抓取说明（非主流程）](tests/README_valuesider_holdings.md)

@@ -1,4 +1,26 @@
 #!/usr/bin/env python3
+"""Minute-level RSI reversion strategy with volume confirmation.
+
+Research references consulted while shaping this implementation:
+
+1. Fidelity, "Relative Strength Index (RSI)"
+   https://www.fidelity.com/learning-center/trading-investing/technical-analysis/technical-indicator-guide/RSI
+   Used for the basic overbought / oversold RSI interpretation and the trend-range notes.
+
+2. Fidelity, "Average Volume"
+   https://www.fidelity.com/learning-center/trading-investing/technical-analysis/technical-indicator-guide/average-volume
+   Used as background for confirming that reversals occurring on stronger-than-usual volume
+   are typically more meaningful than similar price moves on thin volume.
+
+3. Fidelity, "Volume Oscillator (VO)"
+   https://www.fidelity.com/learning-center/trading-investing/technical-analysis/technical-indicator-guide/volume-oscillator
+   Used as background for comparing current volume against a recent baseline instead of
+   treating raw volume in isolation.
+
+This script is a simplified local implementation for the repository's minute-level datasets.
+It is not a line-by-line reproduction of any published trading system.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -7,13 +29,27 @@ import pandas as pd
 try:
     from .backtest_common import (
         add_data_source_args,
+        add_volume_filter_args,
+        compute_relative_volume,
         load_histories,
         load_history,
+        normalize_max_open_positions,
         resolve_codes,
         resolve_data_dir,
+        validate_volume_filter,
     )
 except ImportError:
-    from backtest_common import add_data_source_args, load_histories, load_history, resolve_codes, resolve_data_dir
+    from backtest_common import (
+        add_data_source_args,
+        add_volume_filter_args,
+        compute_relative_volume,
+        load_histories,
+        load_history,
+        normalize_max_open_positions,
+        resolve_codes,
+        resolve_data_dir,
+        validate_volume_filter,
+    )
 
 
 DEFAULT_INITIAL_CASH = 100_000.0
@@ -22,6 +58,8 @@ DEFAULT_BUY_THRESHOLD = 30.0
 DEFAULT_SELL_THRESHOLD = 60.0
 DEFAULT_POSITION_RATIO = 1.0
 DEFAULT_MAX_OPEN_POSITIONS = 2
+DEFAULT_VOLUME_WINDOW = 5
+DEFAULT_MIN_VOLUME_RATIO = 0.6
 
 
 def parse_args() -> argparse.Namespace:
@@ -35,6 +73,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sell-threshold", type=float, default=DEFAULT_SELL_THRESHOLD)
     parser.add_argument("--position-ratio", type=float, default=DEFAULT_POSITION_RATIO)
     parser.add_argument("--max-open-positions", type=int, default=DEFAULT_MAX_OPEN_POSITIONS)
+    add_volume_filter_args(parser, DEFAULT_VOLUME_WINDOW, DEFAULT_MIN_VOLUME_RATIO, label="buy")
     parser.add_argument(
         "--flat-at-close",
         action="store_true",
@@ -76,6 +115,8 @@ def run_backtest(
     buy_threshold: float,
     sell_threshold: float,
     position_ratio: float,
+    volume_window: int,
+    min_volume_ratio: float,
     flat_at_close: bool,
 ) -> tuple[dict, pd.DataFrame]:
     if rsi_period <= 0:
@@ -84,9 +125,11 @@ def run_backtest(
         raise ValueError("position-ratio must be in the range (0, 1]")
     if buy_threshold >= sell_threshold:
         raise ValueError("buy-threshold must be smaller than sell-threshold")
+    validate_volume_filter(volume_window, min_volume_ratio)
 
     rsi = compute_rsi(history["close"], rsi_period)
-    buy_signal = (rsi < buy_threshold) & (rsi.shift(1) >= buy_threshold)
+    relative_volume = compute_relative_volume(history["volume"], volume_window)
+    buy_signal = (rsi < buy_threshold) & (rsi.shift(1) >= buy_threshold) & (relative_volume >= min_volume_ratio)
     sell_signal = (rsi > sell_threshold) & (rsi.shift(1) <= sell_threshold)
 
     cash = initial_cash
@@ -94,7 +137,9 @@ def run_backtest(
     trades: list[dict] = []
     equity_points: list[dict] = []
 
-    for row, should_buy, should_sell, rsi_value in zip(history.itertuples(index=False), buy_signal, sell_signal, rsi):
+    for row, should_buy, should_sell, rsi_value, volume_ratio in zip(
+        history.itertuples(index=False), buy_signal, sell_signal, rsi, relative_volume
+    ):
         price = float(row.close)
         timestamp = row.time_key
 
@@ -111,6 +156,7 @@ def run_backtest(
                         "price": price,
                         "shares": qty,
                         "rsi": float(rsi_value),
+                        "volume_ratio": float(volume_ratio),
                         "cash_after": cash,
                     }
                 )
@@ -120,12 +166,13 @@ def run_backtest(
                 {
                     "time_key": timestamp,
                     "action": "SELL",
-                    "price": price,
-                    "shares": shares,
-                    "rsi": float(rsi_value),
-                    "cash_after": cash,
-                }
-            )
+                        "price": price,
+                        "shares": shares,
+                        "rsi": float(rsi_value),
+                        "volume_ratio": float(volume_ratio),
+                        "cash_after": cash,
+                    }
+                )
             shares = 0
 
         equity = cash + shares * price
@@ -147,6 +194,8 @@ def run_backtest(
         "buy_threshold": buy_threshold,
         "sell_threshold": sell_threshold,
         "position_ratio": position_ratio,
+        "volume_window": volume_window,
+        "min_volume_ratio": min_volume_ratio,
         "flat_at_close": flat_at_close,
         "trade_count": len(trades),
         "buy_count": sum(1 for trade in trades if trade["action"] == "BUY"),
@@ -168,13 +217,13 @@ def run_portfolio_backtest(
     buy_threshold: float,
     sell_threshold: float,
     position_ratio: float,
+    volume_window: int,
+    min_volume_ratio: float,
     flat_at_close: bool,
     max_open_positions: int,
 ) -> tuple[dict, pd.DataFrame]:
-    if max_open_positions <= 0:
-        raise ValueError("max-open-positions must be positive")
-    if max_open_positions > len(histories):
-        max_open_positions = len(histories)
+    max_open_positions = normalize_max_open_positions(max_open_positions, len(histories))
+    validate_volume_filter(volume_window, min_volume_ratio)
 
     code_frames: dict[str, pd.DataFrame] = {}
     code_buy: dict[str, pd.Series] = {}
@@ -182,9 +231,13 @@ def run_portfolio_backtest(
     for code, history in histories.items():
         frame = history.set_index("time_key", drop=False)
         rsi = compute_rsi(history["close"], rsi_period)
+        relative_volume = compute_relative_volume(history["volume"], volume_window)
         frame["rsi"] = rsi.values
+        frame["volume_ratio"] = relative_volume.values
         code_frames[code] = frame
-        code_buy[code] = ((rsi < buy_threshold) & (rsi.shift(1) >= buy_threshold)).set_axis(history["time_key"])
+        code_buy[code] = (
+            (rsi < buy_threshold) & (rsi.shift(1) >= buy_threshold) & (relative_volume >= min_volume_ratio)
+        ).set_axis(history["time_key"])
         code_sell[code] = ((rsi > sell_threshold) & (rsi.shift(1) <= sell_threshold)).set_axis(history["time_key"])
 
     timeline = sorted({ts for frame in code_frames.values() for ts in frame.index})
@@ -221,7 +274,7 @@ def run_portfolio_backtest(
         open_count = sum(1 for qty in positions.values() if qty > 0)
         slots_left = max_open_positions - open_count
         if slots_left > 0:
-            buy_candidates: list[tuple[float, str, pd.Series]] = []
+            buy_candidates: list[tuple[float, float, str, pd.Series]] = []
             for code in sorted(histories):
                 if positions[code] > 0:
                     continue
@@ -229,10 +282,10 @@ def run_portfolio_backtest(
                 if ts not in frame.index or not bool(code_buy[code].get(ts, False)):
                     continue
                 row = frame.loc[ts]
-                buy_candidates.append((float(row["rsi"]), code, row))
+                buy_candidates.append((float(row["rsi"]), -float(row["volume_ratio"]), code, row))
 
             buy_candidates.sort(key=lambda item: item[0])
-            for _, code, row in buy_candidates[:slots_left]:
+            for _, _, code, row in buy_candidates[:slots_left]:
                 price = float(row["close"])
                 remaining_slots = max_open_positions - sum(1 for qty in positions.values() if qty > 0)
                 budget = min(cash * position_ratio, cash / remaining_slots)
@@ -249,6 +302,7 @@ def run_portfolio_backtest(
                         "price": price,
                         "shares": qty,
                         "rsi": float(row["rsi"]),
+                        "volume_ratio": float(row["volume_ratio"]),
                         "cash_after": cash,
                     }
                 )
@@ -271,6 +325,8 @@ def run_portfolio_backtest(
         "buy_threshold": buy_threshold,
         "sell_threshold": sell_threshold,
         "position_ratio": position_ratio,
+        "volume_window": volume_window,
+        "min_volume_ratio": min_volume_ratio,
         "flat_at_close": flat_at_close,
         "max_open_positions": max_open_positions,
         "trade_count": len(trades),
@@ -299,6 +355,8 @@ def main() -> int:
             buy_threshold=args.buy_threshold,
             sell_threshold=args.sell_threshold,
             position_ratio=args.position_ratio,
+            volume_window=args.volume_window,
+            min_volume_ratio=args.min_volume_ratio,
             flat_at_close=args.flat_at_close,
             max_open_positions=args.max_open_positions,
         )
@@ -311,6 +369,8 @@ def main() -> int:
             buy_threshold=args.buy_threshold,
             sell_threshold=args.sell_threshold,
             position_ratio=args.position_ratio,
+            volume_window=args.volume_window,
+            min_volume_ratio=args.min_volume_ratio,
             flat_at_close=args.flat_at_close,
         )
 
@@ -322,6 +382,10 @@ def main() -> int:
         f"sell>{summary['sell_threshold']:.0f}"
     )
     print(f"Position ratio per buy: {summary['position_ratio']:.0%}")
+    print(
+        f"Volume confirmation: current volume >= {summary['min_volume_ratio']:.2f}x "
+        f"avg({summary['volume_window']})"
+    )
     print(f"Flat at close: {summary['flat_at_close']}")
     print(f"Trades: {summary['trade_count']} (BUY {summary['buy_count']}, SELL {summary['sell_count']})")
     print(f"Ending cash: {summary['ending_cash']:.2f}")

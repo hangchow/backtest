@@ -1,4 +1,25 @@
 #!/usr/bin/env python3
+"""Minute-level EMA crossover strategy with volume-aware ranking and sizing.
+
+Research references consulted while shaping this implementation:
+
+1. Fidelity, "Exponential Moving Average (EMA)"
+   https://www.fidelity.com/learning-center/trading-investing/technical-analysis/technical-indicator-guide/ema
+   Used for the trend-following logic behind EMA direction and crossover-style signals.
+
+2. Fidelity, "Average Volume"
+   https://www.fidelity.com/learning-center/trading-investing/technical-analysis/technical-indicator-guide/average-volume
+   Used as background for treating higher-than-average volume as confirmation that a move
+   is stronger than a similar move on weak volume.
+
+3. Fidelity, "Volume Oscillator (VO)"
+   https://www.fidelity.com/learning-center/trading-investing/technical-analysis/technical-indicator-guide/volume-oscillator
+   Used as background for measuring volume expansion relative to recent history.
+
+This script is a simplified local implementation for the repository's minute-level datasets.
+It is not a line-by-line reproduction of any published trading system.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -8,13 +29,27 @@ import pandas as pd
 try:
     from .backtest_common import (
         add_data_source_args,
+        compute_relative_volume,
+        compute_volume_scale,
         load_histories,
         load_history,
+        normalize_max_open_positions,
         resolve_codes,
         resolve_data_dir,
+        validate_volume_filter,
     )
 except ImportError:
-    from backtest_common import add_data_source_args, load_histories, load_history, resolve_codes, resolve_data_dir
+    from backtest_common import (
+        add_data_source_args,
+        compute_relative_volume,
+        compute_volume_scale,
+        load_histories,
+        load_history,
+        normalize_max_open_positions,
+        resolve_codes,
+        resolve_data_dir,
+        validate_volume_filter,
+    )
 
 
 DEFAULT_INITIAL_CASH = 100_000.0
@@ -22,6 +57,8 @@ DEFAULT_FAST_SPAN = 30
 DEFAULT_SLOW_SPAN = 120
 DEFAULT_POSITION_RATIO = 0.5
 DEFAULT_MAX_OPEN_POSITIONS = 2
+DEFAULT_VOLUME_WINDOW = 5
+DEFAULT_MIN_VOLUME_RATIO = 0.6
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,6 +71,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--slow-span", type=int, default=DEFAULT_SLOW_SPAN)
     parser.add_argument("--position-ratio", type=float, default=DEFAULT_POSITION_RATIO)
     parser.add_argument("--max-open-positions", type=int, default=DEFAULT_MAX_OPEN_POSITIONS)
+    parser.add_argument(
+        "--volume-window",
+        type=int,
+        default=DEFAULT_VOLUME_WINDOW,
+        help="Rolling window used to compare current volume against recent average volume.",
+    )
+    parser.add_argument(
+        "--min-volume-ratio",
+        type=float,
+        default=DEFAULT_MIN_VOLUME_RATIO,
+        help="Relative-volume level above which crossover entries can scale above the base position size.",
+    )
     parser.add_argument(
         "--flat-at-close",
         action="store_true",
@@ -54,6 +103,8 @@ def run_backtest(
     fast_span: int,
     slow_span: int,
     position_ratio: float,
+    volume_window: int,
+    min_volume_ratio: float,
     flat_at_close: bool,
 ) -> tuple[dict, pd.DataFrame]:
     if fast_span <= 0 or slow_span <= 0:
@@ -62,9 +113,11 @@ def run_backtest(
         raise ValueError("fast-span must be smaller than slow-span")
     if not 0 < position_ratio <= 1:
         raise ValueError("position-ratio must be in the range (0, 1]")
+    validate_volume_filter(volume_window, min_volume_ratio)
 
     fast_ema = history["close"].ewm(span=fast_span, adjust=False).mean()
     slow_ema = history["close"].ewm(span=slow_span, adjust=False).mean()
+    relative_volume = compute_relative_volume(history["volume"], volume_window)
     buy_signal = (fast_ema > slow_ema) & (fast_ema.shift(1) <= slow_ema.shift(1))
     sell_signal = (fast_ema < slow_ema) & (fast_ema.shift(1) >= slow_ema.shift(1))
 
@@ -73,14 +126,15 @@ def run_backtest(
     trades: list[dict] = []
     equity_points: list[dict] = []
 
-    for row, should_buy, should_sell, fast_value, slow_value in zip(
-        history.itertuples(index=False), buy_signal, sell_signal, fast_ema, slow_ema
+    for row, should_buy, should_sell, fast_value, slow_value, volume_ratio in zip(
+        history.itertuples(index=False), buy_signal, sell_signal, fast_ema, slow_ema, relative_volume
     ):
         price = float(row.close)
         timestamp = row.time_key
 
         if shares == 0 and bool(should_buy):
-            budget = cash * position_ratio
+            volume_scale = compute_volume_scale(float(volume_ratio), min_volume_ratio, min_scale=1.0, max_scale=1.25)
+            budget = min(cash, cash * position_ratio * volume_scale)
             qty = int(budget // price)
             if qty > 0:
                 cash -= qty * price
@@ -93,6 +147,7 @@ def run_backtest(
                         "shares": qty,
                         "fast_ema": float(fast_value),
                         "slow_ema": float(slow_value),
+                        "volume_ratio": float(volume_ratio),
                         "cash_after": cash,
                     }
                 )
@@ -103,12 +158,13 @@ def run_backtest(
                     "time_key": timestamp,
                     "action": "SELL",
                     "price": price,
-                    "shares": shares,
-                    "fast_ema": float(fast_value),
-                    "slow_ema": float(slow_value),
-                    "cash_after": cash,
-                }
-            )
+                        "shares": shares,
+                        "fast_ema": float(fast_value),
+                        "slow_ema": float(slow_value),
+                        "volume_ratio": float(volume_ratio),
+                        "cash_after": cash,
+                    }
+                )
             shares = 0
 
         equity = cash + shares * price
@@ -129,6 +185,8 @@ def run_backtest(
         "fast_span": fast_span,
         "slow_span": slow_span,
         "position_ratio": position_ratio,
+        "volume_window": volume_window,
+        "min_volume_ratio": min_volume_ratio,
         "flat_at_close": flat_at_close,
         "trade_count": len(trades),
         "buy_count": sum(1 for trade in trades if trade["action"] == "BUY"),
@@ -149,13 +207,13 @@ def run_portfolio_backtest(
     fast_span: int,
     slow_span: int,
     position_ratio: float,
+    volume_window: int,
+    min_volume_ratio: float,
     flat_at_close: bool,
     max_open_positions: int,
 ) -> tuple[dict, pd.DataFrame]:
-    if max_open_positions <= 0:
-        raise ValueError("max-open-positions must be positive")
-    if max_open_positions > len(histories):
-        max_open_positions = len(histories)
+    max_open_positions = normalize_max_open_positions(max_open_positions, len(histories))
+    validate_volume_filter(volume_window, min_volume_ratio)
 
     code_frames: dict[str, pd.DataFrame] = {}
     code_buy: dict[str, pd.Series] = {}
@@ -163,9 +221,11 @@ def run_portfolio_backtest(
     for code, history in histories.items():
         fast_ema = history["close"].ewm(span=fast_span, adjust=False).mean()
         slow_ema = history["close"].ewm(span=slow_span, adjust=False).mean()
+        relative_volume = compute_relative_volume(history["volume"], volume_window)
         frame = history.set_index("time_key", drop=False)
         frame["fast_ema"] = fast_ema.values
         frame["slow_ema"] = slow_ema.values
+        frame["volume_ratio"] = relative_volume.values
         code_frames[code] = frame
         code_buy[code] = ((fast_ema > slow_ema) & (fast_ema.shift(1) <= slow_ema.shift(1))).set_axis(history["time_key"])
         code_sell[code] = ((fast_ema < slow_ema) & (fast_ema.shift(1) >= slow_ema.shift(1))).set_axis(history["time_key"])
@@ -203,7 +263,7 @@ def run_portfolio_backtest(
 
         slots_left = max_open_positions - sum(1 for qty in positions.values() if qty > 0)
         if slots_left > 0:
-            buy_candidates: list[tuple[float, str, pd.Series]] = []
+            buy_candidates: list[tuple[float, float, str, pd.Series]] = []
             for code in sorted(histories):
                 if positions[code] > 0:
                     continue
@@ -211,18 +271,20 @@ def run_portfolio_backtest(
                 if ts not in frame.index or not bool(code_buy[code].get(ts, False)):
                     continue
                 row = frame.loc[ts]
+                volume_ratio = float(row["volume_ratio"])
                 score = float(row["fast_ema"] - row["slow_ema"])
-                buy_candidates.append((score, code, row))
+                buy_candidates.append((score, volume_ratio, code, row))
 
-            buy_candidates.sort(key=lambda item: item[0], reverse=True)
-            for _, code, row in buy_candidates:
+            buy_candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+            for _, volume_ratio, code, row in buy_candidates:
                 if slots_left <= 0:
                     break
                 price = float(row["close"])
                 remaining_slots = max_open_positions - sum(1 for qty in positions.values() if qty > 0)
                 if remaining_slots <= 0:
                     break
-                budget = min(cash * position_ratio, cash / remaining_slots)
+                volume_scale = compute_volume_scale(volume_ratio, min_volume_ratio, min_scale=1.0, max_scale=1.25)
+                budget = min(cash * position_ratio * volume_scale, cash / remaining_slots)
                 qty = int(budget // price)
                 if qty <= 0:
                     continue
@@ -238,6 +300,7 @@ def run_portfolio_backtest(
                         "shares": qty,
                         "fast_ema": float(row["fast_ema"]),
                         "slow_ema": float(row["slow_ema"]),
+                        "volume_ratio": float(row["volume_ratio"]),
                         "cash_after": cash,
                     }
                 )
@@ -259,6 +322,8 @@ def run_portfolio_backtest(
         "fast_span": fast_span,
         "slow_span": slow_span,
         "position_ratio": position_ratio,
+        "volume_window": volume_window,
+        "min_volume_ratio": min_volume_ratio,
         "flat_at_close": flat_at_close,
         "max_open_positions": max_open_positions,
         "trade_count": len(trades),
@@ -286,6 +351,8 @@ def main() -> int:
             fast_span=args.fast_span,
             slow_span=args.slow_span,
             position_ratio=args.position_ratio,
+            volume_window=args.volume_window,
+            min_volume_ratio=args.min_volume_ratio,
             flat_at_close=args.flat_at_close,
             max_open_positions=args.max_open_positions,
         )
@@ -297,6 +364,8 @@ def main() -> int:
             fast_span=args.fast_span,
             slow_span=args.slow_span,
             position_ratio=args.position_ratio,
+            volume_window=args.volume_window,
+            min_volume_ratio=args.min_volume_ratio,
             flat_at_close=args.flat_at_close,
         )
 
@@ -304,6 +373,10 @@ def main() -> int:
     print(f"Initial cash: {summary['initial_cash']:.2f}")
     print(f"Strategy: EMA({summary['fast_span']}) / EMA({summary['slow_span']}) cross")
     print(f"Position ratio per buy: {summary['position_ratio']:.0%}")
+    print(
+        f"Volume sizing: bars above {summary['min_volume_ratio']:.2f}x "
+        f"avg({summary['volume_window']}) can scale orders above the base size"
+    )
     print(f"Flat at close: {summary['flat_at_close']}")
     print(f"Trades: {summary['trade_count']} (BUY {summary['buy_count']}, SELL {summary['sell_count']})")
     print(f"Ending cash: {summary['ending_cash']:.2f}")

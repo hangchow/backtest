@@ -15,9 +15,11 @@ if str(SCRIPTS_DIR) not in sys.path:
 from backtest_ema_rsi_bull_range import (
     DEFAULT_BUY_THRESHOLD,
     DEFAULT_FAST_SPAN,
+    DEFAULT_MIN_VOLUME_RATIO,
     DEFAULT_RSI_PERIOD,
     DEFAULT_SELL_THRESHOLD,
     DEFAULT_SLOW_SPAN,
+    DEFAULT_VOLUME_WINDOW,
     parse_args,
     run_backtest,
 )
@@ -32,6 +34,8 @@ class ParseArgsTests(unittest.TestCase):
         self.assertEqual(args.rsi_period, DEFAULT_RSI_PERIOD)
         self.assertEqual(args.buy_threshold, DEFAULT_BUY_THRESHOLD)
         self.assertEqual(args.sell_threshold, DEFAULT_SELL_THRESHOLD)
+        self.assertEqual(args.volume_window, DEFAULT_VOLUME_WINDOW)
+        self.assertEqual(args.min_volume_ratio, DEFAULT_MIN_VOLUME_RATIO)
         self.assertFalse(args.flat_at_close)
 
 
@@ -60,6 +64,8 @@ class RunBacktestTests(unittest.TestCase):
                 buy_threshold=52.0,
                 sell_threshold=46.0,
                 position_ratio=1.0,
+                volume_window=10,
+                min_volume_ratio=1.0,
                 flat_at_close=True,
             )
 
