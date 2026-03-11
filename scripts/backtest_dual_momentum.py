@@ -49,6 +49,7 @@ DEFAULT_LOOKBACK_DAYS = 40
 DEFAULT_TOP_N = 1
 DEFAULT_VOLUME_WINDOW = 20
 DEFAULT_MIN_VOLUME_RATIO = 1.3
+MAX_VOLUME_BOOST_RATIO = 1.5
 
 
 def parse_args() -> argparse.Namespace:
@@ -101,8 +102,8 @@ def load_daily_data(data_root: Path, codes: list[str]) -> tuple[pd.DataFrame, pd
         price_map[code] = pd.concat(close_parts).sort_index()
         volume_map[code] = pd.concat(volume_parts).sort_index()
 
-    prices = pd.DataFrame(price_map).sort_index().ffill()
-    volumes = pd.DataFrame(volume_map).sort_index().ffill()
+    prices = pd.DataFrame(price_map).sort_index()
+    volumes = pd.DataFrame(volume_map).sort_index()
     if prices.empty or volumes.empty:
         raise ValueError("no daily closes loaded")
     return prices, volumes
@@ -114,6 +115,14 @@ def select_target_codes(momentum: pd.Series, top_n: int) -> list[str]:
     if eligible.empty:
         return []
     return eligible.sort_values(ascending=False).head(top_n).index.tolist()
+
+
+def compute_volume_boost(volume_ratio: pd.Series, min_volume_ratio: float) -> pd.Series:
+    capped_ratio = volume_ratio.clip(upper=MAX_VOLUME_BOOST_RATIO)
+    volume_boost = pd.Series(1.0, index=volume_ratio.index, dtype=float)
+    boosted = capped_ratio >= min_volume_ratio
+    volume_boost.loc[boosted] = capped_ratio.loc[boosted] / min_volume_ratio
+    return volume_boost.where(volume_ratio.notna())
 
 
 def run_backtest(
@@ -130,6 +139,8 @@ def run_backtest(
     if top_n <= 0:
         raise ValueError("top-n must be positive")
     validate_volume_filter(volume_window, min_volume_ratio)
+    if not prices.index.equals(volumes.index) or not prices.columns.equals(volumes.columns):
+        raise ValueError("prices and volumes must share the same index and columns")
 
     top_n = min(top_n, len(prices.columns))
     relative_volume = volumes.apply(lambda column: compute_relative_volume(column, volume_window))
@@ -138,62 +149,76 @@ def run_backtest(
     trades: list[dict] = []
     equity_points: list[dict] = []
     target_codes: list[str] = []
+    last_prices: dict[str, float] = {}
 
     for index, (trade_date, close_row) in enumerate(prices.iterrows()):
+        tradable_row = close_row.dropna()
+        tradable_codes = set(tradable_row.index)
+        for code, price in tradable_row.items():
+            last_prices[code] = float(price)
+
         if index >= lookback_days:
             momentum = prices.iloc[index] / prices.iloc[index - lookback_days] - 1
-            volume_weight = relative_volume.iloc[index].clip(lower=min_volume_ratio, upper=1.5) / min_volume_ratio
+            volume_weight = compute_volume_boost(relative_volume.iloc[index], min_volume_ratio)
             weighted_momentum = momentum.where(momentum > 0) * volume_weight
             target_codes = select_target_codes(weighted_momentum, top_n)
 
+        desired_shares = {code: 0 for code in shares}
+        if target_codes:
+            portfolio_value = cash + sum(qty * last_prices.get(code, 0.0) for code, qty in shares.items())
+            target_value = portfolio_value / len(target_codes)
+            for code in target_codes:
+                if code not in tradable_codes:
+                    desired_shares[code] = shares[code]
+                    continue
+                price = float(tradable_row[code])
+                desired_shares[code] = int(target_value // price)
+
         for code in list(shares):
             qty = shares[code]
-            if qty <= 0 or code in target_codes:
+            if qty <= desired_shares[code] or code not in tradable_codes:
                 continue
-            price = float(close_row[code])
-            cash += qty * price
+            price = float(tradable_row[code])
+            sell_qty = qty - desired_shares[code]
+            cash += sell_qty * price
             trades.append(
                 {
                     "time_key": trade_date,
                     "code": code,
                     "action": "SELL",
                     "price": price,
-                    "shares": qty,
+                    "shares": sell_qty,
                     "cash_after": cash,
                 }
             )
-            shares[code] = 0
+            shares[code] -= sell_qty
 
         if target_codes:
-            open_codes = [code for code, qty in shares.items() if qty > 0]
-            missing_codes = [code for code in target_codes if shares[code] == 0]
-            remaining_slots = len(missing_codes)
-            for code in missing_codes:
-                price = float(close_row[code])
-                if remaining_slots <= 0:
-                    break
-                budget = cash / remaining_slots
-                qty = int(budget // price)
-                remaining_slots -= 1
-                if qty <= 0:
+            for code in target_codes:
+                if code not in tradable_codes:
                     continue
-                cash -= qty * price
-                shares[code] = qty
+                needed_qty = desired_shares[code] - shares[code]
+                if needed_qty <= 0:
+                    continue
+                price = float(tradable_row[code])
+                affordable_qty = min(needed_qty, int(cash // price))
+                if affordable_qty <= 0:
+                    continue
+                cash -= affordable_qty * price
+                shares[code] += affordable_qty
                 trades.append(
                     {
                         "time_key": trade_date,
                         "code": code,
                         "action": "BUY",
                         "price": price,
-                        "shares": qty,
+                        "shares": affordable_qty,
                         "cash_after": cash,
                     }
                 )
-            open_codes = [code for code, qty in shares.items() if qty > 0]
-        else:
-            open_codes = []
 
-        equity = cash + sum(int(qty) * float(close_row[code]) for code, qty in shares.items())
+        open_codes = [code for code, qty in shares.items() if qty > 0]
+        equity = cash + sum(qty * last_prices.get(code, 0.0) for code, qty in shares.items())
         equity_points.append({"time_key": trade_date, "equity": equity, "open_codes": ",".join(sorted(open_codes))})
 
     equity_curve = pd.DataFrame(equity_points)

@@ -12,7 +12,11 @@ from scripts.backtest_common import (
     normalize_max_open_positions,
     resolve_codes,
 )
-from scripts.backtest_dual_momentum import run_backtest as run_dual_momentum_backtest
+from scripts.backtest_dual_momentum import (
+    compute_volume_boost,
+    load_daily_data,
+    run_backtest as run_dual_momentum_backtest,
+)
 from scripts.backtest_rsi_reversion import run_portfolio_backtest
 
 
@@ -47,6 +51,15 @@ class RelativeVolumeTests(unittest.TestCase):
         self.assertEqual(compute_volume_scale(0.2, 0.8), 0.5)
         self.assertEqual(compute_volume_scale(0.8, 0.8), 1.0)
         self.assertEqual(compute_volume_scale(2.0, 0.8), 1.25)
+
+    def test_compute_relative_volume_preserves_missing_rows(self) -> None:
+        volume = pd.Series([100.0, None, 150.0])
+
+        result = compute_relative_volume(volume, 2)
+
+        self.assertEqual(result.iloc[0], 1.0)
+        self.assertTrue(pd.isna(result.iloc[1]))
+        self.assertEqual(round(float(result.iloc[2]), 2), 1.5)
 
 
 class PortfolioBacktestTests(unittest.TestCase):
@@ -115,6 +128,39 @@ class PortfolioBacktestTests(unittest.TestCase):
 
 
 class DualMomentumBacktestTests(unittest.TestCase):
+    def test_load_daily_data_keeps_missing_sessions_unfilled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            (data_root / "US.A").mkdir()
+            (data_root / "US.B").mkdir()
+
+            pd.DataFrame(
+                {
+                    "time_key": ["2025-01-02 16:00:00"],
+                    "close": [100.0],
+                    "volume": [1000.0],
+                }
+            ).to_csv(data_root / "US.A" / "US.A_2025-01-02.csv", index=False)
+            pd.DataFrame(
+                {
+                    "time_key": ["2025-01-03 16:00:00"],
+                    "close": [101.0],
+                    "volume": [1100.0],
+                }
+            ).to_csv(data_root / "US.A" / "US.A_2025-01-03.csv", index=False)
+            pd.DataFrame(
+                {
+                    "time_key": ["2025-01-02 16:00:00"],
+                    "close": [50.0],
+                    "volume": [500.0],
+                }
+            ).to_csv(data_root / "US.B" / "US.B_2025-01-02.csv", index=False)
+
+            prices, volumes = load_daily_data(data_root, ["US.A", "US.B"])
+
+        self.assertTrue(pd.isna(prices.loc[pd.Timestamp("2025-01-03").date(), "US.B"]))
+        self.assertTrue(pd.isna(volumes.loc[pd.Timestamp("2025-01-03").date(), "US.B"]))
+
     def test_dual_momentum_prefers_stronger_positive_trend(self) -> None:
         prices = pd.DataFrame(
             {
@@ -144,6 +190,44 @@ class DualMomentumBacktestTests(unittest.TestCase):
 
         self.assertGreater(summary["trade_count"], 0)
         self.assertEqual(trades.iloc[0]["code"], "US.B")
+
+    def test_dual_momentum_rebalances_existing_positions_for_top_n_baskets(self) -> None:
+        dates = pd.to_datetime(["2025-01-02", "2025-01-03", "2025-01-06"]).date
+        prices = pd.DataFrame(
+            {
+                "US.A": [100.0, 110.0, 121.0],
+                "US.B": [100.0, 105.0, 110.0],
+                "US.C": [100.0, 90.0, 80.0],
+            },
+            index=dates,
+        )
+        volumes = pd.DataFrame(
+            {
+                "US.A": [100.0, 100.0, 100.0],
+                "US.B": [100.0, 100.0, 100.0],
+                "US.C": [100.0, 100.0, 100.0],
+            },
+            index=dates,
+        )
+
+        _, trades = run_dual_momentum_backtest(
+            prices=prices,
+            volumes=volumes,
+            initial_cash=10_000.0,
+            lookback_days=1,
+            top_n=2,
+            volume_window=2,
+            min_volume_ratio=1.0,
+        )
+
+        rebalance_day = trades[trades["time_key"] == pd.Timestamp("2025-01-06").date()]
+        self.assertEqual(list(rebalance_day["action"]), ["SELL", "BUY"])
+        self.assertEqual(list(rebalance_day["code"]), ["US.A", "US.B"])
+
+    def test_dual_momentum_volume_boost_does_not_penalize_high_thresholds(self) -> None:
+        boost = compute_volume_boost(pd.Series({"US.A": 1.0, "US.B": 1.4}), 2.0)
+
+        self.assertEqual(boost.to_dict(), {"US.A": 1.0, "US.B": 1.0})
 
 
 if __name__ == "__main__":
