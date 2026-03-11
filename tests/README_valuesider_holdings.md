@@ -24,6 +24,14 @@
 - 脚本会默认把最终统计结果同步到 `stock_select/valuesider`
 - 如果只想写入 `output/` 而不同步到仓库目录，可加 `--no-publish`
 
+- 如果网络不可用、只想基于已有缓存重算并发布，可使用：
+
+```bash
+./.venv/bin/python tests/fetch_valuesider_holdings.py   --publish-from-cache stock_select/valuesider/all_holdings.csv   --output-dir output/valuesider
+```
+
+该模式不会访问 ValueSider 网站，只会读取缓存 `all_holdings.csv` 并重建/发布汇总文件。
+
 ## 输出文件
 
 - `output/valuesider/investors/<investor_slug>.csv`：单个投资人持仓明细
