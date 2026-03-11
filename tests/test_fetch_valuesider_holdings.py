@@ -38,6 +38,10 @@ class NormalizeTickerTests(unittest.TestCase):
             normalize_security("2299955D", "CONSTELLATION SOFTWARE IN-40"),
             ("CSU", "CONSTELLATION SOFTWARE INC"),
         )
+        self.assertEqual(
+            normalize_security("GOOGL", "ALPHABET INC-CL A"),
+            ("GOOG", "ALPHABET INC-CL A"),
+        )
 
 
 class BuildSummaryByTickerTests(unittest.TestCase):
