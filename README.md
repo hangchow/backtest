@@ -194,4 +194,5 @@ export POLYGON_API_KEY=your_api_key
 - [EMA 策略说明](scripts/README_backtest_ema_cross.md)
 - [EMA + RSI 策略说明](scripts/README_backtest_ema_rsi_combo.md)
 - [优化版 EMA + RSI 说明](scripts/README_backtest_ema_rsi_bull_range.md)
-- [labs 实验脚本](labs/README.md)
+- [tests 目录说明（含实验脚本）](tests/README.md)
+- [ValueSider 持仓抓取说明（非主流程）](tests/README_valuesider_holdings.md)
