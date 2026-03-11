@@ -577,6 +577,45 @@ def run(
         print(f"发布输出: {publish_dir}")
 
 
+def publish_from_cached_holdings(
+    cached_all_holdings_path: Path,
+    output_dir: Path,
+    publish_dir: Path | None,
+) -> None:
+    if not cached_all_holdings_path.exists():
+        raise FileNotFoundError(f"缓存文件不存在: {cached_all_holdings_path}")
+
+    all_df = pd.read_csv(cached_all_holdings_path)
+    all_df = apply_security_normalization(all_df)
+    all_df = all_df.drop_duplicates(
+        subset=["investor_slug", "ticker", "stock", "value", "portfolio_url"],
+        keep="first",
+    ).reset_index(drop=True)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    all_df.to_csv(output_dir / "all_holdings.csv", index=False)
+
+    summary_df = build_summary_by_ticker(all_df)
+    summary_df.to_csv(output_dir / "summary_by_ticker.csv", index=False)
+
+    holder_count_df = build_holder_count_by_ticker(all_df)
+    holder_count_df.to_csv(output_dir / "holder_count_by_ticker.csv", index=False)
+
+    issues_df = build_data_quality_issues(all_df)
+    if not issues_df.empty:
+        issues_df.to_csv(output_dir / "data_quality_issues.csv", index=False)
+
+    publish_output_files(output_dir, publish_dir)
+
+    print("\n完成（缓存发布）。")
+    print(f"缓存输入: {cached_all_holdings_path}")
+    print(f"明细输出: {output_dir / 'all_holdings.csv'}")
+    print(f"汇总输出: {output_dir / 'summary_by_ticker.csv'}")
+    print(f"持有人数输出: {output_dir / 'holder_count_by_ticker.csv'}")
+    if publish_dir is not None:
+        print(f"发布输出: {publish_dir}")
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="抓取 ValueSider 投资人持仓，并按 ticker 汇总 Value 总和"
@@ -616,18 +655,33 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="不把最终统计结果同步到 stock_select/valuesider",
     )
+    parser.add_argument(
+        "--publish-from-cache",
+        type=Path,
+        default=None,
+        help="使用缓存的 all_holdings.csv 直接重算并发布（不会抓取网络）",
+    )
     return parser
 
 
 def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args()
+    publish_dir = None if args.no_publish else args.publish_dir
+    if args.publish_from_cache is not None:
+        publish_from_cached_holdings(
+            cached_all_holdings_path=args.publish_from_cache,
+            output_dir=args.output_dir,
+            publish_dir=publish_dir,
+        )
+        return
+
     run(
         output_dir=args.output_dir,
         limit=args.limit,
         sleep_seconds=args.sleep_seconds,
         timeout=args.timeout,
-        publish_dir=None if args.no_publish else args.publish_dir,
+        publish_dir=publish_dir,
     )
 
 

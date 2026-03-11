@@ -18,6 +18,7 @@ from tests.fetch_valuesider_holdings import (
     build_summary_by_ticker,
     normalize_security,
     normalize_ticker,
+    publish_from_cached_holdings,
     publish_output_files,
 )
 
@@ -261,6 +262,55 @@ class PublishOutputFilesTests(unittest.TestCase):
             self.assertFalse((publish_dir / "data_quality_issues.csv").exists())
             self.assertFalse(stale_errors_path.exists())
 
+
+class PublishFromCachedHoldingsTests(unittest.TestCase):
+    def test_publish_from_cached_holdings_rebuilds_and_publishes_without_network(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cached_path = Path(tmp) / "all_holdings.csv"
+            output_dir = Path(tmp) / "output"
+            publish_dir = Path(tmp) / "publish"
+            publish_dir.mkdir(parents=True, exist_ok=True)
+
+            pd.DataFrame(
+                [
+                    {
+                        "investor_slug": "fund-a",
+                        "ticker": "GOOGL",
+                        "stock": "ALPHABET INC-CL A",
+                        "value": 100.0,
+                        "value_text": "$100",
+                        "portfolio_url": "https://example.com/a",
+                    },
+                    {
+                        "investor_slug": "fund-a",
+                        "ticker": "GOOG",
+                        "stock": "ALPHABET INC-CL C",
+                        "value": 200.0,
+                        "value_text": "$200",
+                        "portfolio_url": "https://example.com/a",
+                    },
+                    {
+                        "investor_slug": "fund-b",
+                        "ticker": "GOOG",
+                        "stock": "ALPHABET INC-CL C",
+                        "value": 300.0,
+                        "value_text": "$300",
+                        "portfolio_url": "https://example.com/b",
+                    },
+                ]
+            ).to_csv(cached_path, index=False)
+
+            publish_from_cached_holdings(
+                cached_all_holdings_path=cached_path,
+                output_dir=output_dir,
+                publish_dir=publish_dir,
+            )
+
+            holder_df = pd.read_csv(publish_dir / "holder_count_by_ticker.csv")
+            self.assertEqual(
+                int(holder_df.loc[holder_df["ticker"] == "GOOG", "holder_count"].iloc[0]),
+                2,
+            )
 
 if __name__ == "__main__":
     unittest.main()
