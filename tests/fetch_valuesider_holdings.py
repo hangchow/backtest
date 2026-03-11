@@ -35,8 +35,11 @@ KNOWN_SECURITY_OVERRIDES: dict[tuple[str, str], tuple[str, str]] = {
     ("1534615D", "LOTUS BAKERIES"): ("LOTB", "LOTUS BAKERIES"),
     ("2299955D", "CONSTELLATION SOFTWARE IN-40"): ("CSU", "CONSTELLATION SOFTWARE INC"),
 }
-TICKER_ALIASES: dict[str, str] = {
-    "GOOGL": "GOOG",
+AGGREGATED_TICKER_LABELS: dict[str, str] = {
+    "GOOG": "GOOG/GOOGL",
+    "GOOGL": "GOOG/GOOGL",
+    "BRK.A": "BRK.A/BRK.B",
+    "BRK.B": "BRK.A/BRK.B",
 }
 
 
@@ -72,11 +75,15 @@ def normalize_stock(value: object) -> str:
 def normalize_security(ticker: object, stock: object) -> tuple[str, str]:
     normalized_ticker = normalize_ticker(ticker)
     normalized_stock = normalize_stock(stock)
-    normalized_ticker = TICKER_ALIASES.get(normalized_ticker, normalized_ticker)
     return KNOWN_SECURITY_OVERRIDES.get(
         (normalized_ticker, normalized_stock),
         (normalized_ticker, normalized_stock),
     )
+
+
+def aggregate_ticker_label(ticker: object) -> str:
+    normalized_ticker = normalize_ticker(ticker)
+    return AGGREGATED_TICKER_LABELS.get(normalized_ticker, normalized_ticker)
 
 
 def is_code_like_ticker(ticker: str) -> bool:
@@ -400,6 +407,7 @@ def build_aggregatable_holdings(all_df: pd.DataFrame) -> pd.DataFrame:
     summary_source = apply_security_normalization(all_df)
     summary_source = summary_source[summary_source["ticker"] != ""].copy()
     summary_source = summary_source[summary_source["value"] > 0].copy()
+    summary_source["ticker"] = summary_source["ticker"].map(aggregate_ticker_label)
     return summary_source
 
 

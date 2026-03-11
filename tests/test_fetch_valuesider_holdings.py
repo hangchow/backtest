@@ -40,7 +40,7 @@ class NormalizeTickerTests(unittest.TestCase):
         )
         self.assertEqual(
             normalize_security("GOOGL", "ALPHABET INC-CL A"),
-            ("GOOG", "ALPHABET INC-CL A"),
+            ("GOOGL", "ALPHABET INC-CL A"),
         )
 
 
@@ -81,6 +81,39 @@ class BuildSummaryByTickerTests(unittest.TestCase):
 
         self.assertTrue(summary_df.loc[summary_df["ticker"] == ""].empty)
         self.assertTrue(summary_df.loc[summary_df["ticker"] == "2299955D"].empty)
+
+    def test_build_summary_by_ticker_merges_selected_share_classes_under_group_labels(self) -> None:
+        all_df = pd.DataFrame(
+            [
+                {"ticker": "GOOG", "stock": "ALPHABET INC-CL C", "value": 100.0},
+                {"ticker": "GOOGL", "stock": "ALPHABET INC-CL A", "value": 300.0},
+                {"ticker": "BRK.A", "stock": "BERKSHIRE HATHAWAY INC CL-A", "value": 50.0},
+                {"ticker": "BRK.B", "stock": "BERKSHIRE HATHAWAY INC CL-B", "value": 200.0},
+            ]
+        )
+
+        summary_df = build_summary_by_ticker(all_df)
+
+        self.assertEqual(
+            float(summary_df.loc[summary_df["ticker"] == "GOOG/GOOGL", "value"].iloc[0]),
+            400.0,
+        )
+        self.assertEqual(
+            summary_df.loc[summary_df["ticker"] == "GOOG/GOOGL", "stock"].iloc[0],
+            "ALPHABET INC-CL A",
+        )
+        self.assertEqual(
+            float(summary_df.loc[summary_df["ticker"] == "BRK.A/BRK.B", "value"].iloc[0]),
+            250.0,
+        )
+        self.assertEqual(
+            summary_df.loc[summary_df["ticker"] == "BRK.A/BRK.B", "stock"].iloc[0],
+            "BERKSHIRE HATHAWAY INC CL-B",
+        )
+        self.assertTrue(summary_df.loc[summary_df["ticker"] == "GOOG"].empty)
+        self.assertTrue(summary_df.loc[summary_df["ticker"] == "GOOGL"].empty)
+        self.assertTrue(summary_df.loc[summary_df["ticker"] == "BRK.A"].empty)
+        self.assertTrue(summary_df.loc[summary_df["ticker"] == "BRK.B"].empty)
 
 
 class BuildDataQualityIssuesTests(unittest.TestCase):
@@ -192,6 +225,79 @@ class BuildHolderCountByTickerTests(unittest.TestCase):
         )
         self.assertTrue(holder_count_df.loc[holder_count_df["ticker"] == ""].empty)
         self.assertTrue(holder_count_df.loc[holder_count_df["ticker"] == "CSU"].empty)
+
+    def test_build_holder_count_by_ticker_merges_selected_share_classes_without_double_counting(self) -> None:
+        all_df = pd.DataFrame(
+            [
+                {
+                    "investor_slug": "fund-a",
+                    "ticker": "GOOG",
+                    "stock": "ALPHABET INC-CL C",
+                    "value": 100.0,
+                },
+                {
+                    "investor_slug": "fund-a",
+                    "ticker": "GOOGL",
+                    "stock": "ALPHABET INC-CL A",
+                    "value": 120.0,
+                },
+                {
+                    "investor_slug": "fund-b",
+                    "ticker": "GOOGL",
+                    "stock": "ALPHABET INC-CL A",
+                    "value": 140.0,
+                },
+                {
+                    "investor_slug": "fund-c",
+                    "ticker": "BRK.A",
+                    "stock": "BERKSHIRE HATHAWAY INC CL-A",
+                    "value": 80.0,
+                },
+                {
+                    "investor_slug": "fund-c",
+                    "ticker": "BRK.B",
+                    "stock": "BERKSHIRE HATHAWAY INC CL-B",
+                    "value": 200.0,
+                },
+                {
+                    "investor_slug": "fund-d",
+                    "ticker": "BRK.B",
+                    "stock": "BERKSHIRE HATHAWAY INC CL-B",
+                    "value": 60.0,
+                },
+            ]
+        )
+
+        holder_count_df = build_holder_count_by_ticker(all_df)
+
+        self.assertEqual(
+            int(
+                holder_count_df.loc[
+                    holder_count_df["ticker"] == "GOOG/GOOGL", "holder_count"
+                ].iloc[0]
+            ),
+            2,
+        )
+        self.assertEqual(
+            holder_count_df.loc[holder_count_df["ticker"] == "GOOG/GOOGL", "stock"].iloc[0],
+            "ALPHABET INC-CL A",
+        )
+        self.assertEqual(
+            int(
+                holder_count_df.loc[
+                    holder_count_df["ticker"] == "BRK.A/BRK.B", "holder_count"
+                ].iloc[0]
+            ),
+            2,
+        )
+        self.assertEqual(
+            holder_count_df.loc[holder_count_df["ticker"] == "BRK.A/BRK.B", "stock"].iloc[0],
+            "BERKSHIRE HATHAWAY INC CL-B",
+        )
+        self.assertTrue(holder_count_df.loc[holder_count_df["ticker"] == "GOOG"].empty)
+        self.assertTrue(holder_count_df.loc[holder_count_df["ticker"] == "GOOGL"].empty)
+        self.assertTrue(holder_count_df.loc[holder_count_df["ticker"] == "BRK.A"].empty)
+        self.assertTrue(holder_count_df.loc[holder_count_df["ticker"] == "BRK.B"].empty)
 
 
 class PublishOutputFilesTests(unittest.TestCase):

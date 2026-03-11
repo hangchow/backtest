@@ -37,3 +37,5 @@
 说明：
 
 - `data_quality_issues.csv` 和 `errors.csv` 只保留在 `output/`，不会发布到 `stock_select/valuesider`
+- `summary_by_ticker.csv` 和 `holder_count_by_ticker.csv` 会按 share class 合并 `GOOG/GOOGL`、`BRK.A/BRK.B`
+- `all_holdings.csv` 保留原始 `ticker`，不会把上述 share class 直接改写成单一代码
