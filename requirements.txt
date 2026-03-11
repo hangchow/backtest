@@ -1,2 +1,4 @@
 pandas
 futu-api
+requests
+beautifulsoup4
