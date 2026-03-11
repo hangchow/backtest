@@ -2,4 +2,6 @@ __pycache__/
 *.pyc
 .DS_Store
 .com.futunn.FutuOpenD/
+.venv
+output/
 
