@@ -193,6 +193,37 @@ class BuildHolderCountByTickerTests(unittest.TestCase):
         self.assertTrue(holder_count_df.loc[holder_count_df["ticker"] == ""].empty)
         self.assertTrue(holder_count_df.loc[holder_count_df["ticker"] == "CSU"].empty)
 
+    def test_build_holder_count_by_ticker_deduplicates_same_investor_after_ticker_alias_normalization(self) -> None:
+        all_df = pd.DataFrame(
+            [
+                {
+                    "investor_slug": "fund-a",
+                    "ticker": "GOOGL",
+                    "stock": "ALPHABET INC-CL A",
+                    "value": 100.0,
+                },
+                {
+                    "investor_slug": "fund-a",
+                    "ticker": "GOOG",
+                    "stock": "ALPHABET INC-CL C",
+                    "value": 200.0,
+                },
+                {
+                    "investor_slug": "fund-b",
+                    "ticker": "GOOG",
+                    "stock": "ALPHABET INC-CL C",
+                    "value": 300.0,
+                },
+            ]
+        )
+
+        holder_count_df = build_holder_count_by_ticker(all_df)
+
+        self.assertEqual(
+            int(holder_count_df.loc[holder_count_df["ticker"] == "GOOG", "holder_count"].iloc[0]),
+            2,
+        )
+
 
 class PublishOutputFilesTests(unittest.TestCase):
     def test_publish_output_files_copies_required_files_and_removes_stale_nonpublished_files(self) -> None:

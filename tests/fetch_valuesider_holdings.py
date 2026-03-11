@@ -459,8 +459,11 @@ def build_holder_count_by_ticker(all_df: pd.DataFrame) -> pd.DataFrame:
     if summary_source.empty:
         return pd.DataFrame(columns=["ticker", "stock", "holder_count"])
 
+    # 同一位投资人若同时持有同一标的的不同 share class（例如 GOOGL + GOOG），
+    # 在经过 ticker 归一化后应只计为 1 位持有人。
+    unique_holders = summary_source.drop_duplicates(subset=["ticker", "investor_slug"], keep="first")
     holder_count_df = (
-        summary_source.groupby("ticker", dropna=False, as_index=False)["investor_slug"]
+        unique_holders.groupby("ticker", dropna=False, as_index=False)["investor_slug"]
         .nunique()
         .rename(columns={"investor_slug": "holder_count"})
     )
