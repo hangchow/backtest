@@ -35,6 +35,9 @@ KNOWN_SECURITY_OVERRIDES: dict[tuple[str, str], tuple[str, str]] = {
     ("1534615D", "LOTUS BAKERIES"): ("LOTB", "LOTUS BAKERIES"),
     ("2299955D", "CONSTELLATION SOFTWARE IN-40"): ("CSU", "CONSTELLATION SOFTWARE INC"),
 }
+TICKER_ALIASES: dict[str, str] = {
+    "GOOGL": "GOOG",
+}
 
 
 def parse_money(value_text: str) -> float:
@@ -69,6 +72,7 @@ def normalize_stock(value: object) -> str:
 def normalize_security(ticker: object, stock: object) -> tuple[str, str]:
     normalized_ticker = normalize_ticker(ticker)
     normalized_stock = normalize_stock(stock)
+    normalized_ticker = TICKER_ALIASES.get(normalized_ticker, normalized_ticker)
     return KNOWN_SECURITY_OVERRIDES.get(
         (normalized_ticker, normalized_stock),
         (normalized_ticker, normalized_stock),
