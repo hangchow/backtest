@@ -30,6 +30,26 @@ def add_data_source_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_volume_filter_args(
+    parser: argparse.ArgumentParser,
+    default_volume_window: int,
+    default_min_volume_ratio: float,
+    label: str = "buy",
+) -> None:
+    parser.add_argument(
+        "--volume-window",
+        type=int,
+        default=default_volume_window,
+        help=f"Rolling window used to compare current volume against recent average volume for {label} signals.",
+    )
+    parser.add_argument(
+        "--min-volume-ratio",
+        type=float,
+        default=default_min_volume_ratio,
+        help=f"Minimum current-volume / recent-average-volume ratio required for {label} signals.",
+    )
+
+
 def resolve_data_dir(data_dir: Path | None) -> Path:
     if data_dir is not None:
         return data_dir
@@ -49,6 +69,45 @@ def resolve_codes(data_root: Path, codes: list[str] | None) -> list[str]:
         missing_text = ", ".join(missing)
         raise FileNotFoundError(f"Missing code directories under {data_root}: {missing_text}")
     return normalized
+
+
+def normalize_max_open_positions(max_open_positions: int, universe_size: int) -> int:
+    if universe_size <= 0:
+        raise ValueError("universe_size must be positive")
+    if max_open_positions == -1:
+        return universe_size
+    if max_open_positions <= 0:
+        raise ValueError("max-open-positions must be positive or -1 for unlimited")
+    return min(max_open_positions, universe_size)
+
+
+def validate_volume_filter(volume_window: int, min_volume_ratio: float) -> None:
+    if volume_window <= 0:
+        raise ValueError("volume-window must be positive")
+    if min_volume_ratio <= 0:
+        raise ValueError("min-volume-ratio must be positive")
+
+
+def compute_relative_volume(volume: pd.Series, volume_window: int) -> pd.Series:
+    validate_volume_filter(volume_window, 1e-9)
+    baseline = volume.shift(1).rolling(window=volume_window, min_periods=1).mean()
+    relative_volume = (volume / baseline).replace([float("inf"), float("-inf")], pd.NA)
+    return relative_volume.fillna(1.0).astype(float)
+
+
+def compute_volume_scale(
+    volume_ratio: float,
+    min_volume_ratio: float,
+    min_scale: float = 0.5,
+    max_scale: float = 1.25,
+) -> float:
+    validate_volume_filter(1, min_volume_ratio)
+    if min_scale <= 0 or max_scale <= 0 or min_scale > max_scale:
+        raise ValueError("volume scale bounds must be positive and ordered")
+    if pd.isna(volume_ratio) or volume_ratio <= 0:
+        return float(min_scale)
+    normalized_ratio = float(volume_ratio) / min_volume_ratio
+    return max(min_scale, min(max_scale, normalized_ratio))
 
 
 def load_histories(data_root: Path, codes: list[str]) -> dict[str, pd.DataFrame]:

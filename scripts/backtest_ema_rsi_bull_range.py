@@ -1,4 +1,25 @@
 #!/usr/bin/env python3
+"""Minute-level bull-range EMA + RSI pullback strategy with volume confirmation.
+
+Research references consulted while shaping this implementation:
+
+1. Fidelity, "Exponential Moving Average (EMA)"
+   https://www.fidelity.com/learning-center/trading-investing/technical-analysis/technical-indicator-guide/ema
+   Used for the trend filter and the idea of buying pullbacks within a rising average structure.
+
+2. Fidelity, "Relative Strength Index (RSI)"
+   https://www.fidelity.com/learning-center/trading-investing/technical-analysis/technical-indicator-guide/RSI
+   Used for the observation that, in strong uptrends, RSI often operates in higher bands and
+   the 40-50 area can behave like support.
+
+3. Fidelity, "Average Volume"
+   https://www.fidelity.com/learning-center/trading-investing/technical-analysis/technical-indicator-guide/average-volume
+   Used as background for requiring at least normal participation before accepting a pullback entry.
+
+This script is a tuned local wrapper around the repository's EMA + RSI combo implementation.
+It is not a line-by-line reproduction of any published trading system.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -18,6 +39,8 @@ DEFAULT_BUY_THRESHOLD = 46.0
 DEFAULT_SELL_THRESHOLD = 52.0
 DEFAULT_POSITION_RATIO = combo.DEFAULT_POSITION_RATIO
 DEFAULT_MAX_OPEN_POSITIONS = combo.DEFAULT_MAX_OPEN_POSITIONS
+DEFAULT_VOLUME_WINDOW = combo.DEFAULT_VOLUME_WINDOW
+DEFAULT_MIN_VOLUME_RATIO = combo.DEFAULT_MIN_VOLUME_RATIO
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -33,6 +56,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--sell-threshold", type=float, default=DEFAULT_SELL_THRESHOLD)
     parser.add_argument("--position-ratio", type=float, default=DEFAULT_POSITION_RATIO)
     parser.add_argument("--max-open-positions", type=int, default=DEFAULT_MAX_OPEN_POSITIONS)
+    parser.add_argument("--volume-window", type=int, default=DEFAULT_VOLUME_WINDOW)
+    parser.add_argument("--min-volume-ratio", type=float, default=DEFAULT_MIN_VOLUME_RATIO)
     parser.add_argument(
         "--flat-at-close",
         action="store_true",
@@ -56,6 +81,8 @@ def run_backtest(
     buy_threshold: float,
     sell_threshold: float,
     position_ratio: float,
+    volume_window: int,
+    min_volume_ratio: float,
     flat_at_close: bool,
 ):
     return combo.run_backtest(
@@ -67,6 +94,8 @@ def run_backtest(
         buy_threshold=buy_threshold,
         sell_threshold=sell_threshold,
         position_ratio=position_ratio,
+        volume_window=volume_window,
+        min_volume_ratio=min_volume_ratio,
         flat_at_close=flat_at_close,
     )
 
@@ -87,6 +116,8 @@ def main() -> int:
             buy_threshold=args.buy_threshold,
             sell_threshold=args.sell_threshold,
             position_ratio=args.position_ratio,
+            volume_window=args.volume_window,
+            min_volume_ratio=args.min_volume_ratio,
             flat_at_close=args.flat_at_close,
             max_open_positions=args.max_open_positions,
         )
@@ -101,6 +132,8 @@ def main() -> int:
             buy_threshold=args.buy_threshold,
             sell_threshold=args.sell_threshold,
             position_ratio=args.position_ratio,
+            volume_window=args.volume_window,
+            min_volume_ratio=args.min_volume_ratio,
             flat_at_close=args.flat_at_close,
         )
 
@@ -113,6 +146,10 @@ def main() -> int:
         f"sell>{summary['sell_threshold']:.0f}"
     )
     print(f"Position ratio per buy: {summary['position_ratio']:.0%}")
+    print(
+        f"Volume confirmation: current volume >= {summary['min_volume_ratio']:.2f}x "
+        f"avg({summary['volume_window']})"
+    )
     print(f"Flat at close: {summary['flat_at_close']}")
     print(f"Trades: {summary['trade_count']} (BUY {summary['buy_count']}, SELL {summary['sell_count']})")
     print(f"Ending cash: {summary['ending_cash']:.2f}")

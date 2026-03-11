@@ -51,6 +51,8 @@ def run_all(codes: list[str], data_root: Path) -> tuple[pd.DataFrame, pd.DataFra
             buy_threshold=rsi_reversion.DEFAULT_BUY_THRESHOLD,
             sell_threshold=rsi_reversion.DEFAULT_SELL_THRESHOLD,
             position_ratio=rsi_reversion.DEFAULT_POSITION_RATIO,
+            volume_window=rsi_reversion.DEFAULT_VOLUME_WINDOW,
+            min_volume_ratio=rsi_reversion.DEFAULT_MIN_VOLUME_RATIO,
             flat_at_close=False,
         )
         result_rows.append(
@@ -70,6 +72,8 @@ def run_all(codes: list[str], data_root: Path) -> tuple[pd.DataFrame, pd.DataFra
             fast_span=ema_cross.DEFAULT_FAST_SPAN,
             slow_span=ema_cross.DEFAULT_SLOW_SPAN,
             position_ratio=ema_cross.DEFAULT_POSITION_RATIO,
+            volume_window=ema_cross.DEFAULT_VOLUME_WINDOW,
+            min_volume_ratio=ema_cross.DEFAULT_MIN_VOLUME_RATIO,
             flat_at_close=True,
         )
         result_rows.append(
@@ -92,6 +96,8 @@ def run_all(codes: list[str], data_root: Path) -> tuple[pd.DataFrame, pd.DataFra
             buy_threshold=ema_rsi_combo.DEFAULT_BUY_THRESHOLD,
             sell_threshold=ema_rsi_combo.DEFAULT_SELL_THRESHOLD,
             position_ratio=ema_rsi_combo.DEFAULT_POSITION_RATIO,
+            volume_window=ema_rsi_combo.DEFAULT_VOLUME_WINDOW,
+            min_volume_ratio=ema_rsi_combo.DEFAULT_MIN_VOLUME_RATIO,
             flat_at_close=False,
         )
         result_rows.append(
@@ -114,6 +120,8 @@ def run_all(codes: list[str], data_root: Path) -> tuple[pd.DataFrame, pd.DataFra
             buy_threshold=ema_rsi_bull_range.DEFAULT_BUY_THRESHOLD,
             sell_threshold=ema_rsi_bull_range.DEFAULT_SELL_THRESHOLD,
             position_ratio=ema_rsi_bull_range.DEFAULT_POSITION_RATIO,
+            volume_window=ema_rsi_bull_range.DEFAULT_VOLUME_WINDOW,
+            min_volume_ratio=ema_rsi_bull_range.DEFAULT_MIN_VOLUME_RATIO,
             flat_at_close=False,
         )
         result_rows.append(
