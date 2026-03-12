@@ -14,9 +14,9 @@
 ## 当前口径
 
 - 结果生成日期：`2026-03-12`
-- 原始数据范围：`2024-03-07 09:30:00` 到 `2026-03-06 16:00:00`
-- 指标预热窗口：`2024-03-07 09:30:00` 到 `2025-03-10 16:00:00`
-- 正式记分窗口：`2025-03-11 09:30:00` 到 `2026-03-06 16:00:00`
+- 原始数据范围：`2024-03-11 09:30:00` 到 `2026-03-06 15:59:00`
+- 指标预热窗口：`2024-03-11 09:30:00` 到 `2025-03-10 15:59:00`
+- 正式记分窗口：`2025-03-11 09:30:00` 到 `2026-03-06 15:59:00`
 - 股票池：`HK.00700`、`HK.09988`、`HK.00005`
 - 初始资金：`100000`
 - 默认允许隔夜；只有显式传入 `--flat-at-close` 才会日内平仓
@@ -63,27 +63,27 @@
 ```bash
 ./.venv/bin/python scripts/backtest_rsi_reversion.py \
   --codes HK.00700 HK.09988 HK.00005 \
-  --eval-start 2025-03-11 \
+  --eval-start "2025-03-11 09:30:00" \
   --show-trades 0
 
 ./.venv/bin/python scripts/backtest_ema_cross.py \
   --codes HK.00700 HK.09988 HK.00005 \
-  --eval-start 2025-03-11 \
+  --eval-start "2025-03-11 09:30:00" \
   --show-trades 0
 
 ./.venv/bin/python scripts/backtest_ema_rsi_combo.py \
   --codes HK.00700 HK.09988 HK.00005 \
-  --eval-start 2025-03-11 \
+  --eval-start "2025-03-11 09:30:00" \
   --show-trades 0
 
 ./.venv/bin/python scripts/backtest_ema_rsi_bull_range.py \
   --codes HK.00700 HK.09988 HK.00005 \
-  --eval-start 2025-03-11 \
+  --eval-start "2025-03-11 09:30:00" \
   --show-trades 0
 
 ./.venv/bin/python scripts/backtest_dual_momentum.py \
   --codes HK.00700 HK.09988 HK.00005 \
-  --eval-start 2025-03-11 \
+  --eval-start "2025-03-11 09:30:00" \
   --show-trades 0
 ```
 
