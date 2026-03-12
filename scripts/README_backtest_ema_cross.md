@@ -52,7 +52,7 @@
 - `--fast-span`：短周期 EMA
 - `--slow-span`：长周期 EMA
 - `--position-ratio`：每次买入使用的现金比例，范围 `(0, 1]`
-- `--max-open-positions`：股票池模式下的最大同时持仓数，默认 `2`；传 `-1` 表示不限制
+- `--max-open-positions`：股票池模式下的最大同时持仓数，默认 `-1`（不限制）
 - `--volume-window`：成交量比较窗口，用于计算当前量和近期均量的比值
 - `--min-volume-ratio`：相对成交量高于这个阈值时，可在基础仓位上做放量加仓
 - `--flat-at-close`：每天最后一分钟强制平仓（默认允许隔夜）

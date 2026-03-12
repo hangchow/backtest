@@ -50,6 +50,17 @@ def add_volume_filter_args(
     )
 
 
+def add_eval_start_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--eval-start",
+        default=None,
+        help=(
+            "Optional evaluation start date/time. Bars before this point are used only "
+            "for indicator warm-up and are excluded from trades and PnL statistics."
+        ),
+    )
+
+
 def resolve_data_dir(data_dir: Path | None) -> Path:
     if data_dir is not None:
         return data_dir
@@ -110,6 +121,15 @@ def compute_volume_scale(
         return float(min_scale)
     normalized_ratio = float(volume_ratio) / min_volume_ratio
     return max(min_scale, min(max_scale, normalized_ratio))
+
+
+def parse_eval_start(eval_start: str | None) -> pd.Timestamp | None:
+    if eval_start is None:
+        return None
+    try:
+        return pd.Timestamp(eval_start)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid eval-start: {eval_start}") from exc
 
 
 def load_histories(data_root: Path, codes: list[str]) -> dict[str, pd.DataFrame]:

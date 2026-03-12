@@ -12,12 +12,17 @@ from scripts.backtest_common import (
     normalize_max_open_positions,
     resolve_codes,
 )
+from scripts.backtest_ema_cross import DEFAULT_MAX_OPEN_POSITIONS as EMA_CROSS_DEFAULT_MAX_OPEN_POSITIONS
+from scripts.backtest_ema_rsi_combo import DEFAULT_MAX_OPEN_POSITIONS as EMA_RSI_DEFAULT_MAX_OPEN_POSITIONS
 from scripts.backtest_dual_momentum import (
     compute_volume_boost,
     load_daily_data,
     run_backtest as run_dual_momentum_backtest,
 )
-from scripts.backtest_rsi_reversion import run_portfolio_backtest
+from scripts.backtest_rsi_reversion import (
+    DEFAULT_MAX_OPEN_POSITIONS as RSI_REVERSION_DEFAULT_MAX_OPEN_POSITIONS,
+    run_portfolio_backtest,
+)
 
 
 class ResolveCodesTests(unittest.TestCase):
@@ -31,6 +36,11 @@ class ResolveCodesTests(unittest.TestCase):
 
 
 class NormalizeMaxOpenPositionsTests(unittest.TestCase):
+    def test_default_max_open_positions_is_unlimited_for_minute_stock_pool_scripts(self) -> None:
+        self.assertEqual(RSI_REVERSION_DEFAULT_MAX_OPEN_POSITIONS, -1)
+        self.assertEqual(EMA_CROSS_DEFAULT_MAX_OPEN_POSITIONS, -1)
+        self.assertEqual(EMA_RSI_DEFAULT_MAX_OPEN_POSITIONS, -1)
+
     def test_normalize_max_open_positions_supports_unlimited(self) -> None:
         self.assertEqual(normalize_max_open_positions(-1, 4), 4)
 
@@ -125,6 +135,32 @@ class PortfolioBacktestTests(unittest.TestCase):
         )
 
         self.assertEqual(summary["max_open_positions"], 2)
+
+    def test_portfolio_backtest_uses_pre_eval_bars_for_warmup_only(self) -> None:
+        histories = {
+            "US.A": self.build_history([100, 90, 80, 90, 100, 90, 80, 90, 100]),
+        }
+        eval_start = pd.Timestamp("2025-01-02 09:35:00")
+
+        summary, trades = run_portfolio_backtest(
+            histories=histories,
+            initial_cash=10000.0,
+            rsi_period=2,
+            buy_threshold=45,
+            sell_threshold=55,
+            position_ratio=1.0,
+            volume_window=2,
+            min_volume_ratio=1.0,
+            flat_at_close=False,
+            max_open_positions=1,
+            eval_start=eval_start,
+        )
+
+        self.assertEqual(summary["warmup_start_time"], pd.Timestamp("2025-01-02 09:30:00"))
+        self.assertEqual(summary["start_time"], eval_start)
+        self.assertEqual(summary["trade_count"], 2)
+        self.assertTrue((trades["time_key"] >= eval_start).all())
+        self.assertAlmostEqual(float(summary["final_value"]), 10000.0)
 
 
 class DualMomentumBacktestTests(unittest.TestCase):
@@ -228,6 +264,40 @@ class DualMomentumBacktestTests(unittest.TestCase):
         boost = compute_volume_boost(pd.Series({"US.A": 1.0, "US.B": 1.4}), 2.0)
 
         self.assertEqual(boost.to_dict(), {"US.A": 1.0, "US.B": 1.0})
+
+    def test_dual_momentum_uses_pre_eval_days_for_warmup_only(self) -> None:
+        prices = pd.DataFrame(
+            {
+                "US.A": [100, 101, 102, 103, 104],
+                "US.B": [100, 100, 110, 120, 130],
+            },
+            index=pd.to_datetime(
+                ["2025-01-02", "2025-01-03", "2025-01-06", "2025-01-07", "2025-01-08"]
+            ).date,
+        )
+        volumes = pd.DataFrame(
+            {
+                "US.A": [100, 100, 100, 100, 100],
+                "US.B": [100, 100, 200, 200, 200],
+            },
+            index=prices.index,
+        )
+
+        summary, trades = run_dual_momentum_backtest(
+            prices=prices,
+            volumes=volumes,
+            initial_cash=10000.0,
+            lookback_days=2,
+            top_n=1,
+            volume_window=2,
+            min_volume_ratio=1.0,
+            eval_start=pd.Timestamp("2025-01-07"),
+        )
+
+        self.assertEqual(summary["warmup_start_time"], pd.Timestamp("2025-01-02").date())
+        self.assertEqual(summary["start_time"], pd.Timestamp("2025-01-07").date())
+        self.assertGreater(summary["trade_count"], 0)
+        self.assertTrue((trades["time_key"] >= pd.Timestamp("2025-01-07").date()).all())
 
 
 if __name__ == "__main__":
