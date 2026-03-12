@@ -58,6 +58,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-open-positions", type=int, default=DEFAULT_MAX_OPEN_POSITIONS)
     parser.add_argument("--volume-window", type=int, default=DEFAULT_VOLUME_WINDOW)
     parser.add_argument("--min-volume-ratio", type=float, default=DEFAULT_MIN_VOLUME_RATIO)
+    combo.add_eval_start_arg(parser)
     parser.add_argument(
         "--flat-at-close",
         action="store_true",
@@ -84,6 +85,7 @@ def run_backtest(
     volume_window: int,
     min_volume_ratio: float,
     flat_at_close: bool,
+    eval_start=None,
 ):
     return combo.run_backtest(
         history=history,
@@ -97,11 +99,13 @@ def run_backtest(
         volume_window=volume_window,
         min_volume_ratio=min_volume_ratio,
         flat_at_close=flat_at_close,
+        eval_start=eval_start,
     )
 
 
 def main() -> int:
     args = parse_args()
+    eval_start = combo.parse_eval_start(args.eval_start)
     if args.codes:
         if args.data_dir is not None:
             raise ValueError("--codes cannot be used with --data-dir")
@@ -120,6 +124,7 @@ def main() -> int:
             min_volume_ratio=args.min_volume_ratio,
             flat_at_close=args.flat_at_close,
             max_open_positions=args.max_open_positions,
+            eval_start=eval_start,
         )
     else:
         history = load_history(resolve_data_dir(args.data_dir))
@@ -135,9 +140,12 @@ def main() -> int:
             volume_window=args.volume_window,
             min_volume_ratio=args.min_volume_ratio,
             flat_at_close=args.flat_at_close,
+            eval_start=eval_start,
         )
 
-    print(f"Data range: {summary['start_time']} -> {summary['end_time']}")
+    print(f"Data range: {summary['warmup_start_time']} -> {summary['end_time']}")
+    if summary["warmup_start_time"] != summary["start_time"]:
+        print(f"Evaluation range: {summary['start_time']} -> {summary['end_time']}")
     print(f"Initial cash: {summary['initial_cash']:.2f}")
     print(
         "Strategy: "

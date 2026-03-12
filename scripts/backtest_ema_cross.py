@@ -29,11 +29,13 @@ import pandas as pd
 try:
     from .backtest_common import (
         add_data_source_args,
+        add_eval_start_arg,
         compute_relative_volume,
         compute_volume_scale,
         load_histories,
         load_history,
         normalize_max_open_positions,
+        parse_eval_start,
         resolve_codes,
         resolve_data_dir,
         validate_volume_filter,
@@ -41,11 +43,13 @@ try:
 except ImportError:
     from backtest_common import (
         add_data_source_args,
+        add_eval_start_arg,
         compute_relative_volume,
         compute_volume_scale,
         load_histories,
         load_history,
         normalize_max_open_positions,
+        parse_eval_start,
         resolve_codes,
         resolve_data_dir,
         validate_volume_filter,
@@ -56,7 +60,7 @@ DEFAULT_INITIAL_CASH = 100_000.0
 DEFAULT_FAST_SPAN = 30
 DEFAULT_SLOW_SPAN = 120
 DEFAULT_POSITION_RATIO = 0.5
-DEFAULT_MAX_OPEN_POSITIONS = 2
+DEFAULT_MAX_OPEN_POSITIONS = -1
 DEFAULT_VOLUME_WINDOW = 5
 DEFAULT_MIN_VOLUME_RATIO = 0.6
 
@@ -71,6 +75,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--slow-span", type=int, default=DEFAULT_SLOW_SPAN)
     parser.add_argument("--position-ratio", type=float, default=DEFAULT_POSITION_RATIO)
     parser.add_argument("--max-open-positions", type=int, default=DEFAULT_MAX_OPEN_POSITIONS)
+    add_eval_start_arg(parser)
     parser.add_argument(
         "--volume-window",
         type=int,
@@ -106,6 +111,7 @@ def run_backtest(
     volume_window: int,
     min_volume_ratio: float,
     flat_at_close: bool,
+    eval_start: pd.Timestamp | None = None,
 ) -> tuple[dict, pd.DataFrame]:
     if fast_span <= 0 or slow_span <= 0:
         raise ValueError("fast-span and slow-span must be positive")
@@ -114,6 +120,10 @@ def run_backtest(
     if not 0 < position_ratio <= 1:
         raise ValueError("position-ratio must be in the range (0, 1]")
     validate_volume_filter(volume_window, min_volume_ratio)
+    eval_mask = history["time_key"] >= eval_start if eval_start is not None else pd.Series(True, index=history.index)
+    if not bool(eval_mask.any()):
+        raise ValueError("eval-start is after the available data range")
+    start_time = history.loc[eval_mask, "time_key"].iloc[0]
 
     fast_ema = history["close"].ewm(span=fast_span, adjust=False).mean()
     slow_ema = history["close"].ewm(span=slow_span, adjust=False).mean()
@@ -131,6 +141,8 @@ def run_backtest(
     ):
         price = float(row.close)
         timestamp = row.time_key
+        if eval_start is not None and timestamp < eval_start:
+            continue
 
         if shares == 0 and bool(should_buy):
             volume_scale = compute_volume_scale(float(volume_ratio), min_volume_ratio, min_scale=1.0, max_scale=1.25)
@@ -179,7 +191,8 @@ def run_backtest(
     )
 
     summary = {
-        "start_time": history.iloc[0]["time_key"],
+        "warmup_start_time": history.iloc[0]["time_key"],
+        "start_time": start_time,
         "end_time": history.iloc[-1]["time_key"],
         "initial_cash": initial_cash,
         "fast_span": fast_span,
@@ -211,6 +224,7 @@ def run_portfolio_backtest(
     min_volume_ratio: float,
     flat_at_close: bool,
     max_open_positions: int,
+    eval_start: pd.Timestamp | None = None,
 ) -> tuple[dict, pd.DataFrame]:
     max_open_positions = normalize_max_open_positions(max_open_positions, len(histories))
     validate_volume_filter(volume_window, min_volume_ratio)
@@ -231,6 +245,9 @@ def run_portfolio_backtest(
         code_sell[code] = ((fast_ema < slow_ema) & (fast_ema.shift(1) >= slow_ema.shift(1))).set_axis(history["time_key"])
 
     timeline = sorted({ts for frame in code_frames.values() for ts in frame.index})
+    eval_timeline = [ts for ts in timeline if eval_start is None or ts >= eval_start]
+    if not eval_timeline:
+        raise ValueError("eval-start is after the available data range")
     cash = initial_cash
     positions = {code: 0 for code in histories}
     last_prices: dict[str, float] = {}
@@ -245,6 +262,15 @@ def run_portfolio_backtest(
             row = frame.loc[ts]
             price = float(row["close"])
             last_prices[code] = price
+        if eval_start is not None and ts < eval_start:
+            continue
+
+        for code in sorted(histories):
+            frame = code_frames[code]
+            if ts not in frame.index:
+                continue
+            row = frame.loc[ts]
+            price = float(row["close"])
             if positions[code] > 0 and (bool(code_sell[code].get(ts, False)) or (flat_at_close and bool(row["is_day_end"]))):
                 cash += positions[code] * price
                 trades.append(
@@ -315,7 +341,8 @@ def run_portfolio_backtest(
         (equity_curve["equity"] - equity_curve["rolling_peak"]) / equity_curve["rolling_peak"] * 100
     )
     summary = {
-        "start_time": timeline[0],
+        "warmup_start_time": timeline[0],
+        "start_time": eval_timeline[0],
         "end_time": timeline[-1],
         "initial_cash": initial_cash,
         "codes": sorted(histories),
@@ -340,6 +367,7 @@ def run_portfolio_backtest(
 
 def main() -> int:
     args = parse_args()
+    eval_start = parse_eval_start(args.eval_start)
     if args.codes:
         if args.data_dir is not None:
             raise ValueError("--codes cannot be used with --data-dir")
@@ -355,6 +383,7 @@ def main() -> int:
             min_volume_ratio=args.min_volume_ratio,
             flat_at_close=args.flat_at_close,
             max_open_positions=args.max_open_positions,
+            eval_start=eval_start,
         )
     else:
         history = load_history(resolve_data_dir(args.data_dir))
@@ -367,9 +396,12 @@ def main() -> int:
             volume_window=args.volume_window,
             min_volume_ratio=args.min_volume_ratio,
             flat_at_close=args.flat_at_close,
+            eval_start=eval_start,
         )
 
-    print(f"Data range: {summary['start_time']} -> {summary['end_time']}")
+    print(f"Data range: {summary['warmup_start_time']} -> {summary['end_time']}")
+    if summary["warmup_start_time"] != summary["start_time"]:
+        print(f"Evaluation range: {summary['start_time']} -> {summary['end_time']}")
     print(f"Initial cash: {summary['initial_cash']:.2f}")
     print(f"Strategy: EMA({summary['fast_span']}) / EMA({summary['slow_span']}) cross")
     print(f"Position ratio per buy: {summary['position_ratio']:.0%}")

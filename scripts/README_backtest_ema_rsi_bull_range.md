@@ -66,7 +66,7 @@
 - `--buy-threshold`：买入阈值
 - `--sell-threshold`：卖出阈值
 - `--position-ratio`：每次买入使用的现金比例，范围 `(0, 1]`
-- `--max-open-positions`：股票池模式下的最大同时持仓数，默认 `2`；传 `-1` 表示不限制
+- `--max-open-positions`：股票池模式下的最大同时持仓数，默认 `-1`（不限制）
 - `--volume-window`：成交量比较窗口，用于计算当前量和近期均量的比值
 - `--min-volume-ratio`：买点要求的最小相对成交量
 - `--flat-at-close`：每天最后一分钟强制平仓

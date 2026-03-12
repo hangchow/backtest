@@ -39,9 +39,23 @@ from pathlib import Path
 import pandas as pd
 
 try:
-    from .backtest_common import DEFAULT_DATA_ROOT, compute_relative_volume, resolve_codes, validate_volume_filter
+    from .backtest_common import (
+        DEFAULT_DATA_ROOT,
+        add_eval_start_arg,
+        compute_relative_volume,
+        parse_eval_start,
+        resolve_codes,
+        validate_volume_filter,
+    )
 except ImportError:
-    from backtest_common import DEFAULT_DATA_ROOT, compute_relative_volume, resolve_codes, validate_volume_filter
+    from backtest_common import (
+        DEFAULT_DATA_ROOT,
+        add_eval_start_arg,
+        compute_relative_volume,
+        parse_eval_start,
+        resolve_codes,
+        validate_volume_filter,
+    )
 
 
 DEFAULT_INITIAL_CASH = 100_000.0
@@ -61,6 +75,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--initial-cash", type=float, default=DEFAULT_INITIAL_CASH)
     parser.add_argument("--lookback-days", type=int, default=DEFAULT_LOOKBACK_DAYS)
     parser.add_argument("--top-n", type=int, default=DEFAULT_TOP_N)
+    add_eval_start_arg(parser)
     parser.add_argument(
         "--volume-window",
         type=int,
@@ -133,6 +148,7 @@ def run_backtest(
     top_n: int,
     volume_window: int,
     min_volume_ratio: float,
+    eval_start: pd.Timestamp | None = None,
 ) -> tuple[dict, pd.DataFrame]:
     if lookback_days <= 0:
         raise ValueError("lookback-days must be positive")
@@ -143,6 +159,10 @@ def run_backtest(
         raise ValueError("prices and volumes must share the same index and columns")
 
     top_n = min(top_n, len(prices.columns))
+    eval_start_date = eval_start.date() if eval_start is not None else None
+    eval_dates = [trade_date for trade_date in prices.index if eval_start_date is None or trade_date >= eval_start_date]
+    if not eval_dates:
+        raise ValueError("eval-start is after the available data range")
     relative_volume = volumes.apply(lambda column: compute_relative_volume(column, volume_window))
     cash = initial_cash
     shares = {code: 0 for code in prices.columns}
@@ -162,6 +182,8 @@ def run_backtest(
             volume_weight = compute_volume_boost(relative_volume.iloc[index], min_volume_ratio)
             weighted_momentum = momentum.where(momentum > 0) * volume_weight
             target_codes = select_target_codes(weighted_momentum, top_n)
+        if eval_start_date is not None and trade_date < eval_start_date:
+            continue
 
         desired_shares = {code: 0 for code in shares}
         if target_codes:
@@ -228,7 +250,8 @@ def run_backtest(
     )
     final_value = float(equity_curve.iloc[-1]["equity"])
     summary = {
-        "start_time": prices.index[0],
+        "warmup_start_time": prices.index[0],
+        "start_time": eval_dates[0],
         "end_time": prices.index[-1],
         "initial_cash": initial_cash,
         "codes": list(prices.columns),
@@ -252,6 +275,7 @@ def main() -> int:
     args = parse_args()
     codes = resolve_codes(args.data_root, args.codes)
     prices, volumes = load_daily_data(args.data_root, codes)
+    eval_start = parse_eval_start(args.eval_start)
     summary, trades = run_backtest(
         prices=prices,
         volumes=volumes,
@@ -260,9 +284,12 @@ def main() -> int:
         top_n=args.top_n,
         volume_window=args.volume_window,
         min_volume_ratio=args.min_volume_ratio,
+        eval_start=eval_start,
     )
 
-    print(f"Data range: {summary['start_time']} -> {summary['end_time']}")
+    print(f"Data range: {summary['warmup_start_time']} -> {summary['end_time']}")
+    if summary["warmup_start_time"] != summary["start_time"]:
+        print(f"Evaluation range: {summary['start_time']} -> {summary['end_time']}")
     print(f"Initial cash: {summary['initial_cash']:.2f}")
     print(
         "Strategy: daily dual momentum "
