@@ -62,27 +62,27 @@
 ```bash
 ./.venv/bin/python scripts/backtest_rsi_reversion.py \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA \
-  --eval-start 2025-03-11 \
+  --eval-start "2025-03-11 09:30:00" \
   --show-trades 0
 
 ./.venv/bin/python scripts/backtest_ema_cross.py \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA \
-  --eval-start 2025-03-11 \
+  --eval-start "2025-03-11 09:30:00" \
   --show-trades 0
 
 ./.venv/bin/python scripts/backtest_ema_rsi_combo.py \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA \
-  --eval-start 2025-03-11 \
+  --eval-start "2025-03-11 09:30:00" \
   --show-trades 0
 
 ./.venv/bin/python scripts/backtest_ema_rsi_bull_range.py \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA \
-  --eval-start 2025-03-11 \
+  --eval-start "2025-03-11 09:30:00" \
   --show-trades 0
 
 ./.venv/bin/python scripts/backtest_dual_momentum.py \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA \
-  --eval-start 2025-03-11 \
+  --eval-start "2025-03-11 09:30:00" \
   --show-trades 0
 ```
 
