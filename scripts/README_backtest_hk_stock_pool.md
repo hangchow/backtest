@@ -7,23 +7,23 @@
 
 ## 默认参数股票池收益榜
 
-按 `2025-03-11` 到 `2026-03-06` 记分窗口里的收益率排序：
+按 `2025-03-07` 到 `2026-03-06` 记分窗口里的收益率排序：
 
 | strategy | frequency | final_value | return_pct | max_drawdown_pct | trade_count |
 | --- | --- | --- | --- | --- | --- |
-| RSI reversion | minute | 420663.83 | 320.66 | -5.12 | 9386 |
-| EMA + RSI bull range | minute | 303120.50 | 203.12 | -1.96 | 12880 |
-| EMA + RSI | minute | 230451.60 | 130.45 | -2.79 | 7482 |
-| dual momentum | daily | 141622.26 | 41.62 | -29.74 | 23 |
-| EMA cross | minute | 88514.03 | -11.49 | -22.06 | 2343 |
+| RSI reversion | minute | 414743.66 | 314.74 | -5.12 | 9478 |
+| EMA + RSI bull range | minute | 303271.75 | 203.27 | -1.96 | 12956 |
+| EMA + RSI | minute | 231257.15 | 131.26 | -2.80 | 7542 |
+| dual momentum | daily | 135075.80 | 35.08 | -29.75 | 23 |
+| EMA cross | minute | 88191.95 | -11.81 | -22.94 | 2355 |
 
 ## 结果解读
 
-- 如果只看当前这段样本外窗口，`RSI reversion` 仍然是港股股票池第一名，`return_pct = 320.66%`、`max_drawdown_pct = -5.12%`。不过它相对旧的整段样本内 `970.93%` 已经明显回落，说明它虽然仍强，但对样本区间的依赖也很重。
+- 如果只看当前这段样本外窗口，`RSI reversion` 仍然是港股股票池第一名，`return_pct = 314.74%`、`max_drawdown_pct = -5.12%`。不过它相对旧的整段样本内 `970.93%` 已经明显回落，说明它虽然仍强，但对样本区间的依赖也很重。
 - `EMA + RSI bull range` 和 `EMA + RSI` 继续维持第二、第三，而且最大回撤分别只有 `-1.96%` 和 `-2.79%`。这说明港股分钟池里，趋势过滤 + 回踩买入这条线在样本外仍然有效，而且风险控制比 `RSI reversion` 更平滑。
-- `EMA + RSI bull range` 现在比普通 `EMA + RSI` 多赚了约 `72.67` 个百分点，回撤还更浅；代价是交易数升到 `12880`，所以如果后续加入真实费用，它和 `RSI reversion` 一样都会明显受冲击。
-- `dual momentum` 在港股这组三只票上的样本外表现明显弱于美股，只剩 `41.62%`，而且最大回撤仍接近 `-30%`。这说明低频轮动逻辑在当前这个港股小股票池里并没有展现出和美股同等级别的优势。
-- `EMA cross` 仍然是港股股票池里最弱的一档，样本外收益已经转负到 `-11.49%`，回撤 `-22.06%`，优先级可以继续放低。
+- `EMA + RSI bull range` 现在比普通 `EMA + RSI` 多赚了约 `72.01` 个百分点，回撤还更浅；代价是交易数升到 `12956`，所以如果后续加入真实费用，它和 `RSI reversion` 一样都会明显受冲击。
+- `dual momentum` 在港股这组三只票上的样本外表现明显弱于美股，只剩 `35.08%`，而且最大回撤仍接近 `-30%`。这说明低频轮动逻辑在当前这个港股小股票池里并没有展现出和美股同等级别的优势。
+- `EMA cross` 仍然是港股股票池里最弱的一档，样本外收益已经转负到 `-11.81%`，回撤 `-22.94%`，优先级可以继续放低。
 
 ## 实现备注
 
@@ -38,27 +38,27 @@
 ```bash
 ./.venv/bin/python scripts/backtest_rsi_reversion.py \
   --codes HK.00700 HK.09988 HK.00005 \
-  --eval-start "2025-03-11 09:30:00" \
+  --eval-start "2025-03-07 09:30:00" \
   --show-trades 0
 
 ./.venv/bin/python scripts/backtest_ema_cross.py \
   --codes HK.00700 HK.09988 HK.00005 \
-  --eval-start "2025-03-11 09:30:00" \
+  --eval-start "2025-03-07 09:30:00" \
   --show-trades 0
 
 ./.venv/bin/python scripts/backtest_ema_rsi_combo.py \
   --codes HK.00700 HK.09988 HK.00005 \
-  --eval-start "2025-03-11 09:30:00" \
+  --eval-start "2025-03-07 09:30:00" \
   --show-trades 0
 
 ./.venv/bin/python scripts/backtest_ema_rsi_bull_range.py \
   --codes HK.00700 HK.09988 HK.00005 \
-  --eval-start "2025-03-11 09:30:00" \
+  --eval-start "2025-03-07 09:30:00" \
   --show-trades 0
 
 ./.venv/bin/python scripts/backtest_dual_momentum.py \
   --codes HK.00700 HK.09988 HK.00005 \
-  --eval-start "2025-03-11 09:30:00" \
+  --eval-start "2025-03-07 09:30:00" \
   --show-trades 0
 ```
 
