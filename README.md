@@ -1,7 +1,7 @@
 # Backtest
 
 ## 项目概览
-这个项目基于多只股票的 1 分钟 K 线数据，做单标与股票池策略回测，并整理样本内 / 样本外结果文档。
+这个项目基于港美股样本股票的1分钟K线数据，做单标与股票池的量化策略回测。
 
 ## 环境准备
 在仓库根目录执行：
@@ -16,15 +16,6 @@ python3 -m venv .venv
 - 数据文件格式：`<股票代码>_YYYY-MM-DD.csv`
 - 数据文件字段：`time_key, open, close, high, low, volume`，每分钟一行
 - 回测脚本本身只读取本地 `data/` 目录下的 CSV，不依赖外部服务。
-
-## 回测文档
-- [单标的回测分析](scripts/README_backtest_single_symbol.md)
-- [港股股票池回测](scripts/README_backtest_hk_stock_pool.md)
-- [美股股票池回测结果与分析](scripts/README_backtest_us_stock_pool.md)
-
-## 抓取脚本和说明
-- [Futu 抓取说明](tests/README_fetch_futu_1m.md)
-- [Polygon 抓取说明](tests/README_fetch_polygon_1m.md)
 
 ## 已知缺陷和风险提示
 - 没有加入手续费、平台费、印花税、滑点。
@@ -49,12 +40,12 @@ python3 -m venv .venv
 - [RSI 策略说明](scripts/README_backtest_rsi_reversion.md)
 - [EMA 策略说明](scripts/README_backtest_ema_cross.md)
 - [EMA + RSI 策略说明](scripts/README_backtest_ema_rsi_combo.md)
-- [优化版 EMA + RSI 说明](scripts/README_backtest_ema_rsi_bull_range.md)
-- [单标的回测结果与分析](scripts/README_backtest_single_symbol.md)
-- [港股股票池回测结果与分析](scripts/README_backtest_hk_stock_pool.md)
-- [美股股票池回测结果与分析](scripts/README_backtest_us_stock_pool.md)
-- [Dual Momentum 股票池说明](scripts/README_backtest_dual_momentum.md)
+- [优化版 EMA + RSI 策略说明](scripts/README_backtest_ema_rsi_bull_range.md)
+- [Dual Momentum 策略说明](scripts/README_backtest_dual_momentum.md)
+- [港美股单股回测](scripts/README_backtest_single_symbol.md)
+- [港股股票池回测](scripts/README_backtest_hk_stock_pool.md)
+- [美股股票池回测](scripts/README_backtest_us_stock_pool.md)
 - [tests 目录说明](tests/README.md)
-- [ValueSider 抓取说明](tests/README_valuesider_holdings.md)
 - [Futu 抓取说明](tests/README_fetch_futu_1m.md)
 - [Polygon 抓取说明](tests/README_fetch_polygon_1m.md)
+- [ValueSider 抓取说明](tests/README_valuesider_holdings.md)
