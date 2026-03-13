@@ -3,22 +3,22 @@
 
 ## 默认参数股票池收益榜
 
-按 `2025-03-11` 到 `2026-03-06` 记分窗口里的收益率排序：
+按 `2025-03-07` 到 `2026-03-06` 记分窗口里的收益率排序：
 
 | strategy | frequency | final_value | return_pct | max_drawdown_pct | trade_count |
 | --- | --- | --- | --- | --- | --- |
 | dual momentum | daily | 188354.82 | 88.35 | -10.04 | 42 |
-| EMA + RSI | minute | 123345.07 | 23.35 | -5.16 | 12382 |
-| EMA + RSI bull range | minute | 122234.29 | 22.23 | -8.58 | 19368 |
-| EMA cross | minute | 119643.63 | 19.64 | -14.83 | 3878 |
-| RSI reversion | minute | 118489.57 | 18.49 | -14.78 | 17317 |
+| EMA + RSI | minute | 122816.26 | 22.82 | -5.15 | 12442 |
+| EMA + RSI bull range | minute | 121219.58 | 21.22 | -8.57 | 19496 |
+| RSI reversion | minute | 116891.13 | 16.89 | -14.78 | 17483 |
+| EMA cross | minute | 116845.23 | 16.85 | -14.79 | 3908 |
 
 ## 结果解读
 
 - 如果只看当前这段样本外窗口，`dual momentum` 仍然明显是第一名。它从旧的整段样本内 `102.23%` 回落到 `88.35%`，但优势没有消失，说明它不是完全靠那段样本内区间堆出来的。
-- 如果只看分钟级股票池，`EMA + RSI` 现在排到第一，`return_pct = 23.35%`、`max_drawdown_pct = -5.16%`。它比 `EMA + RSI bull range` 更稳，说明更保守的趋势过滤在样本外更有韧性。
+- 如果只看分钟级股票池，`EMA + RSI` 现在排到第一，`return_pct = 22.82%`、`max_drawdown_pct = -5.15%`。它比 `EMA + RSI bull range` 更稳，说明更保守的趋势过滤在样本外更有韧性。
 - `EMA + RSI bull range` 和 `RSI reversion` 的收益都比旧的整段样本内结果回落明显，说明这两套参数对原先那段样本依赖更强，样本外衰减更明显。
-- `EMA cross` 虽然不是收益冠军，但交易数只有 `3878`，明显低于其它分钟级股票池策略，更适合作为低频、低换手的控制组。
+- `EMA cross` 在当前口径下收益与 `RSI reversion` 基本持平（`16.85%` vs `16.89%`），但交易数只有 `3908`，显著低于其它分钟级股票池策略，更适合作为低频、低换手的控制组。
 - `dual momentum` 的交易数只有 `42`，远低于分钟级策略；如果后续引入真实费用和滑点，它的相对优势理论上还有机会进一步放大。
 
 ## 实现备注
@@ -34,27 +34,27 @@
 ```bash
 ./.venv/bin/python scripts/backtest_rsi_reversion.py \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA \
-  --eval-start "2025-03-11 09:30:00" \
+  --eval-start "2025-03-07 09:30:00" \
   --show-trades 0
 
 ./.venv/bin/python scripts/backtest_ema_cross.py \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA \
-  --eval-start "2025-03-11 09:30:00" \
+  --eval-start "2025-03-07 09:30:00" \
   --show-trades 0
 
 ./.venv/bin/python scripts/backtest_ema_rsi_combo.py \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA \
-  --eval-start "2025-03-11 09:30:00" \
+  --eval-start "2025-03-07 09:30:00" \
   --show-trades 0
 
 ./.venv/bin/python scripts/backtest_ema_rsi_bull_range.py \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA \
-  --eval-start "2025-03-11 09:30:00" \
+  --eval-start "2025-03-07 09:30:00" \
   --show-trades 0
 
 ./.venv/bin/python scripts/backtest_dual_momentum.py \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA \
-  --eval-start "2025-03-11 09:30:00" \
+  --eval-start "2025-03-07 09:30:00" \
   --show-trades 0
 ```
 
