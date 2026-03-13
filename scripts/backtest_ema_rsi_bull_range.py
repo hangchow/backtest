@@ -26,9 +26,25 @@ import argparse
 
 import backtest_ema_rsi_combo as combo
 try:
-    from .backtest_common import add_data_source_args, load_histories, load_history, resolve_codes, resolve_data_dir
+    from .backtest_common import (
+        add_data_source_args,
+        add_fee_args,
+        infer_market_from_codes,
+        load_histories,
+        load_history,
+        resolve_codes,
+        resolve_data_dir,
+    )
 except ImportError:
-    from backtest_common import add_data_source_args, load_histories, load_history, resolve_codes, resolve_data_dir
+    from backtest_common import (
+        add_data_source_args,
+        add_fee_args,
+        infer_market_from_codes,
+        load_histories,
+        load_history,
+        resolve_codes,
+        resolve_data_dir,
+    )
 
 
 DEFAULT_INITIAL_CASH = combo.DEFAULT_INITIAL_CASH
@@ -48,6 +64,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="Backtest an optimized EMA + RSI bull-range pullback strategy."
     )
     add_data_source_args(parser)
+    add_fee_args(parser)
     parser.add_argument("--initial-cash", type=float, default=DEFAULT_INITIAL_CASH)
     parser.add_argument("--fast-span", type=int, default=DEFAULT_FAST_SPAN)
     parser.add_argument("--slow-span", type=int, default=DEFAULT_SLOW_SPAN)
@@ -84,6 +101,9 @@ def run_backtest(
     volume_window: int,
     min_volume_ratio: float,
     flat_at_close: bool,
+    fee_account: str | None = None,
+    market: str = "US",
+    security_type: str = "stock",
 ):
     return combo.run_backtest(
         history=history,
@@ -97,6 +117,9 @@ def run_backtest(
         volume_window=volume_window,
         min_volume_ratio=min_volume_ratio,
         flat_at_close=flat_at_close,
+        fee_account=fee_account,
+        market=market,
+        security_type=security_type,
     )
 
 
@@ -107,6 +130,7 @@ def main() -> int:
             raise ValueError("--codes cannot be used with --data-dir")
         codes = resolve_codes(args.data_root, args.codes)
         histories = load_histories(args.data_root, codes)
+        market = infer_market_from_codes(codes)
         summary, trades = combo.run_portfolio_backtest(
             histories=histories,
             initial_cash=args.initial_cash,
@@ -120,9 +144,14 @@ def main() -> int:
             min_volume_ratio=args.min_volume_ratio,
             flat_at_close=args.flat_at_close,
             max_open_positions=args.max_open_positions,
+            fee_account=args.fee_account,
+            market=market,
+            security_type=args.security_type,
         )
     else:
-        history = load_history(resolve_data_dir(args.data_dir))
+        data_dir = resolve_data_dir(args.data_dir)
+        history = load_history(data_dir)
+        market = infer_market_from_codes([data_dir.name])
         summary, trades = run_backtest(
             history=history,
             initial_cash=args.initial_cash,
@@ -135,6 +164,9 @@ def main() -> int:
             volume_window=args.volume_window,
             min_volume_ratio=args.min_volume_ratio,
             flat_at_close=args.flat_at_close,
+            fee_account=args.fee_account,
+            market=market,
+            security_type=args.security_type,
         )
 
     print(f"Data range: {summary['start_time']} -> {summary['end_time']}")
@@ -151,6 +183,8 @@ def main() -> int:
         f"avg({summary['volume_window']})"
     )
     print(f"Flat at close: {summary['flat_at_close']}")
+    print(f"Fee account: {summary['fee_account']}")
+    print(f"Market/Security: {summary['market']} / {summary['security_type']}")
     print(f"Trades: {summary['trade_count']} (BUY {summary['buy_count']}, SELL {summary['sell_count']})")
     print(f"Ending cash: {summary['ending_cash']:.2f}")
     if "ending_shares" in summary:

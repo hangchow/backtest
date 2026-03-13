@@ -33,8 +33,12 @@ import pandas as pd
 try:
     from .backtest_common import (
         add_data_source_args,
+        add_fee_args,
         add_volume_filter_args,
+        compute_buy_quantity_with_fees,
+        compute_order_fees,
         compute_relative_volume,
+        infer_market_from_codes,
         load_histories,
         load_history,
         normalize_max_open_positions,
@@ -46,8 +50,12 @@ try:
 except ImportError:
     from backtest_common import (
         add_data_source_args,
+        add_fee_args,
         add_volume_filter_args,
+        compute_buy_quantity_with_fees,
+        compute_order_fees,
         compute_relative_volume,
+        infer_market_from_codes,
         load_histories,
         load_history,
         normalize_max_open_positions,
@@ -75,6 +83,7 @@ def parse_args() -> argparse.Namespace:
         description="Backtest an EMA trend filter plus RSI reversion strategy."
     )
     add_data_source_args(parser)
+    add_fee_args(parser)
     parser.add_argument("--initial-cash", type=float, default=DEFAULT_INITIAL_CASH)
     parser.add_argument("--fast-span", type=int, default=DEFAULT_FAST_SPAN)
     parser.add_argument("--slow-span", type=int, default=DEFAULT_SLOW_SPAN)
@@ -110,6 +119,9 @@ def run_backtest(
     volume_window: int,
     min_volume_ratio: float,
     flat_at_close: bool,
+    fee_account: str | None = None,
+    market: str = "US",
+    security_type: str = "stock",
 ) -> tuple[dict, pd.DataFrame]:
     if fast_span <= 0 or slow_span <= 0 or rsi_period <= 0:
         raise ValueError("fast-span, slow-span and rsi-period must be positive")
@@ -149,9 +161,15 @@ def run_backtest(
 
         if shares == 0 and bool(should_buy):
             budget = cash * position_ratio
-            qty = int(budget // price)
+            qty, fee_total, fee_breakdown = compute_buy_quantity_with_fees(
+                budget=budget,
+                price=price,
+                fee_account=fee_account,
+                market=market,
+                security_type=security_type,
+            )
             if qty > 0:
-                cash -= qty * price
+                cash -= qty * price + fee_total
                 shares = qty
                 trades.append(
                     {
@@ -163,11 +181,21 @@ def run_backtest(
                         "slow_ema": float(slow_value),
                         "rsi": float(rsi_value),
                         "volume_ratio": float(volume_ratio),
+                        "fee": fee_total,
+                        "fee_breakdown": fee_breakdown,
                         "cash_after": cash,
                     }
                 )
         elif shares > 0 and (bool(should_sell) or (flat_at_close and bool(row.is_day_end))):
-            cash += shares * price
+            fee_total, fee_breakdown = compute_order_fees(
+                fee_account=fee_account,
+                market=market,
+                side="sell",
+                price=price,
+                shares=shares,
+                security_type=security_type,
+            )
+            cash += shares * price - fee_total
             trades.append(
                 {
                     "time_key": timestamp,
@@ -178,6 +206,8 @@ def run_backtest(
                         "slow_ema": float(slow_value),
                         "rsi": float(rsi_value),
                         "volume_ratio": float(volume_ratio),
+                        "fee": fee_total,
+                        "fee_breakdown": fee_breakdown,
                         "cash_after": cash,
                     }
                 )
@@ -207,6 +237,9 @@ def run_backtest(
         "volume_window": volume_window,
         "min_volume_ratio": min_volume_ratio,
         "flat_at_close": flat_at_close,
+        "fee_account": fee_account,
+        "market": market,
+        "security_type": security_type,
         "trade_count": len(trades),
         "buy_count": sum(1 for trade in trades if trade["action"] == "BUY"),
         "sell_count": sum(1 for trade in trades if trade["action"] == "SELL"),
@@ -233,6 +266,9 @@ def run_portfolio_backtest(
     min_volume_ratio: float,
     flat_at_close: bool,
     max_open_positions: int,
+    fee_account: str | None = None,
+    market: str = "US",
+    security_type: str = "stock",
 ) -> tuple[dict, pd.DataFrame]:
     max_open_positions = normalize_max_open_positions(max_open_positions, len(histories))
     validate_volume_filter(volume_window, min_volume_ratio)
@@ -278,7 +314,15 @@ def run_portfolio_backtest(
             price = float(row["close"])
             last_prices[code] = price
             if positions[code] > 0 and (bool(code_sell[code].get(ts, False)) or (flat_at_close and bool(row["is_day_end"]))):
-                cash += positions[code] * price
+                fee_total, fee_breakdown = compute_order_fees(
+                    fee_account=fee_account,
+                    market=market,
+                    side="sell",
+                    price=price,
+                    shares=positions[code],
+                    security_type=security_type,
+                )
+                cash += positions[code] * price - fee_total
                 trades.append(
                     {
                         "time_key": ts,
@@ -289,6 +333,8 @@ def run_portfolio_backtest(
                         "fast_ema": float(row["fast_ema"]),
                         "slow_ema": float(row["slow_ema"]),
                         "rsi": float(row["rsi"]),
+                        "fee": fee_total,
+                        "fee_breakdown": fee_breakdown,
                         "cash_after": cash,
                     }
                 )
@@ -319,10 +365,16 @@ def run_portfolio_backtest(
                 price = float(row["close"])
                 remaining_slots = max_open_positions - sum(1 for qty in positions.values() if qty > 0)
                 budget = min(cash * position_ratio, cash / remaining_slots)
-                qty = int(budget // price)
+                qty, fee_total, fee_breakdown = compute_buy_quantity_with_fees(
+                    budget=budget,
+                    price=price,
+                    fee_account=fee_account,
+                    market=market,
+                    security_type=security_type,
+                )
                 if qty <= 0:
                     continue
-                cash -= qty * price
+                cash -= qty * price + fee_total
                 positions[code] = qty
                 trades.append(
                     {
@@ -335,6 +387,8 @@ def run_portfolio_backtest(
                         "slow_ema": float(row["slow_ema"]),
                         "rsi": float(row["rsi"]),
                         "volume_ratio": float(row["volume_ratio"]),
+                        "fee": fee_total,
+                        "fee_breakdown": fee_breakdown,
                         "cash_after": cash,
                     }
                 )
@@ -363,6 +417,9 @@ def run_portfolio_backtest(
         "min_volume_ratio": min_volume_ratio,
         "flat_at_close": flat_at_close,
         "max_open_positions": max_open_positions,
+        "fee_account": fee_account,
+        "market": market,
+        "security_type": security_type,
         "trade_count": len(trades),
         "buy_count": sum(1 for trade in trades if trade["action"] == "BUY"),
         "sell_count": sum(1 for trade in trades if trade["action"] == "SELL"),
@@ -382,6 +439,7 @@ def main() -> int:
             raise ValueError("--codes cannot be used with --data-dir")
         codes = resolve_codes(args.data_root, args.codes)
         histories = load_histories(args.data_root, codes)
+        market = infer_market_from_codes(codes)
         summary, trades = run_portfolio_backtest(
             histories=histories,
             initial_cash=args.initial_cash,
@@ -395,9 +453,14 @@ def main() -> int:
             min_volume_ratio=args.min_volume_ratio,
             flat_at_close=args.flat_at_close,
             max_open_positions=args.max_open_positions,
+            fee_account=args.fee_account,
+            market=market,
+            security_type=args.security_type,
         )
     else:
-        history = load_history(resolve_data_dir(args.data_dir))
+        data_dir = resolve_data_dir(args.data_dir)
+        history = load_history(data_dir)
+        market = infer_market_from_codes([data_dir.name])
         summary, trades = run_backtest(
             history=history,
             initial_cash=args.initial_cash,
@@ -410,6 +473,9 @@ def main() -> int:
             volume_window=args.volume_window,
             min_volume_ratio=args.min_volume_ratio,
             flat_at_close=args.flat_at_close,
+            fee_account=args.fee_account,
+            market=market,
+            security_type=args.security_type,
         )
 
     print(f"Data range: {summary['start_time']} -> {summary['end_time']}")
@@ -426,6 +492,8 @@ def main() -> int:
         f"avg({summary['volume_window']})"
     )
     print(f"Flat at close: {summary['flat_at_close']}")
+    print(f"Fee account: {summary['fee_account']}")
+    print(f"Market/Security: {summary['market']} / {summary['security_type']}")
     print(f"Trades: {summary['trade_count']} (BUY {summary['buy_count']}, SELL {summary['sell_count']})")
     print(f"Ending cash: {summary['ending_cash']:.2f}")
     if "ending_shares" in summary:
