@@ -3,15 +3,26 @@
 ## 作用
 这个目录放仓库里的正式回测脚本、公共回测组件，以及各类回测结果说明文档。
 
-## 说明文档入口
-- [单标的回测结果与分析](README_backtest_single_symbol.md)
-- [港股股票池回测结果与分析](README_backtest_hk_stock_pool.md)
-- [美股股票池回测结果与分析](README_backtest_us_stock_pool.md)
+## 回测口径
+- 原始数据范围：`2024-03-07 09:30:00` 到 `2026-03-06 16:00:00`
+- 指标预热窗口：`2024-03-07 09:30:00` 到 `2025-03-06 16:00:00`
+- 正式记分窗口：`2025-03-07 09:30:00` 到 `2026-03-06 16:00:00`
+- 初始资金：`100000`
+- 默认允许隔夜；只有显式传入 `--flat-at-close` 才会日内平仓
+- `--max-open-positions` 默认是 `-1`，等同全池可同时持仓
+- 港股股票池：`HK.00700`、`HK.09988`、`HK.00005`
+- 美股股票池：`US.MSFT`、`US.NVDA`、`US.GOOG`、`US.TSLA`，谷歌这里使用的是 `GOOG`，不是 `GOOGL`
+- `dual momentum` 使用同一批分钟数据聚合出的日线收盘价和日成交量
+
+## 文档入口
+- [港美股单标回测](README_backtest_single_symbol.md)
+- [港股股票池回测](README_backtest_hk_stock_pool.md)
+- [美股股票池回测](README_backtest_us_stock_pool.md)
 - [RSI 策略说明](README_backtest_rsi_reversion.md)
 - [EMA 策略说明](README_backtest_ema_cross.md)
 - [EMA + RSI 策略说明](README_backtest_ema_rsi_combo.md)
-- [优化版 EMA + RSI 说明](README_backtest_ema_rsi_bull_range.md)
-- [Dual Momentum 股票池说明](README_backtest_dual_momentum.md)
+- [优化版 EMA + RSI 策略说明](README_backtest_ema_rsi_bull_range.md)
+- [Dual Momentum 策略说明](README_backtest_dual_momentum.md)
 
 ## 文件清单
 - `backtest_common.py`
