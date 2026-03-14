@@ -65,11 +65,17 @@ except ImportError:
 
 
 DEFAULT_INITIAL_CASH = 100_000.0
-DEFAULT_LOOKBACK_DAYS = 40
+DEFAULT_LOOKBACK_DAYS = 90
+DEFAULT_LONG_LOOKBACK_DAYS = 180
+DEFAULT_LONG_LOOKBACK_WEIGHT = 0.25
 DEFAULT_TOP_N = 1
 DEFAULT_VOLUME_WINDOW = 20
 DEFAULT_MIN_VOLUME_RATIO = 1.3
 MAX_VOLUME_BOOST_RATIO = 1.5
+DEFAULT_MARKET_FILTER_WINDOW = 120
+DEFAULT_REBALANCE_BAND_PCT = 0.1
+DEFAULT_VOLATILITY_WINDOW = 20
+DEFAULT_TARGET_ANNUAL_VOL = 0.30
 
 
 def parse_args() -> argparse.Namespace:
@@ -80,6 +86,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-root", type=Path, default=DEFAULT_DATA_ROOT)
     parser.add_argument("--initial-cash", type=float, default=DEFAULT_INITIAL_CASH)
     parser.add_argument("--lookback-days", type=int, default=DEFAULT_LOOKBACK_DAYS)
+    parser.add_argument(
+        "--long-lookback-days",
+        type=int,
+        default=DEFAULT_LONG_LOOKBACK_DAYS,
+        help="Secondary lookback horizon to build a blended momentum score.",
+    )
+    parser.add_argument(
+        "--long-lookback-weight",
+        type=float,
+        default=DEFAULT_LONG_LOOKBACK_WEIGHT,
+        help="Weight assigned to the long lookback momentum score in blended ranking.",
+    )
     parser.add_argument("--top-n", type=int, default=DEFAULT_TOP_N)
     add_eval_start_arg(parser)
     add_fee_args(parser)
@@ -100,6 +118,30 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=5,
         help="How many head/tail trades to print. Use 0 to suppress trade samples.",
+    )
+    parser.add_argument(
+        "--market-filter-window",
+        type=int,
+        default=DEFAULT_MARKET_FILTER_WINDOW,
+        help="Risk-on filter window: only hold risk assets when equal-weight pool is above this MA.",
+    )
+    parser.add_argument(
+        "--rebalance-band-pct",
+        type=float,
+        default=DEFAULT_REBALANCE_BAND_PCT,
+        help="Only rebalance a target when weight gap exceeds this portfolio-level band.",
+    )
+    parser.add_argument(
+        "--volatility-window",
+        type=int,
+        default=DEFAULT_VOLATILITY_WINDOW,
+        help="Rolling window used to estimate daily volatility for position scaling.",
+    )
+    parser.add_argument(
+        "--target-annual-vol",
+        type=float,
+        default=DEFAULT_TARGET_ANNUAL_VOL,
+        help="Annualized volatility target. Lower values reduce gross risk allocation.",
     )
     return parser.parse_args()
 
@@ -176,9 +218,15 @@ def run_backtest(
     volumes: pd.DataFrame,
     initial_cash: float,
     lookback_days: int,
+    long_lookback_days: int,
+    long_lookback_weight: float,
     top_n: int,
     volume_window: int,
     min_volume_ratio: float,
+    market_filter_window: int,
+    rebalance_band_pct: float,
+    volatility_window: int,
+    target_annual_vol: float,
     eval_start: pd.Timestamp | None = None,
     fee_account: str | None = None,
     market: str | None = None,
@@ -186,8 +234,20 @@ def run_backtest(
 ) -> tuple[dict, pd.DataFrame]:
     if lookback_days <= 0:
         raise ValueError("lookback-days must be positive")
+    if long_lookback_days <= 0:
+        raise ValueError("long-lookback-days must be positive")
+    if not 0 <= long_lookback_weight <= 1:
+        raise ValueError("long-lookback-weight must be within [0, 1]")
     if top_n <= 0:
         raise ValueError("top-n must be positive")
+    if market_filter_window <= 0:
+        raise ValueError("market-filter-window must be positive")
+    if not 0 <= rebalance_band_pct <= 1:
+        raise ValueError("rebalance-band-pct must be within [0, 1]")
+    if volatility_window <= 1:
+        raise ValueError("volatility-window must be > 1")
+    if target_annual_vol <= 0:
+        raise ValueError("target-annual-vol must be positive")
     validate_volume_filter(volume_window, min_volume_ratio)
     if not prices.index.equals(volumes.index) or not prices.columns.equals(volumes.columns):
         raise ValueError("prices and volumes must share the same index and columns")
@@ -200,6 +260,10 @@ def run_backtest(
     if not eval_dates:
         raise ValueError("eval-start is after the available data range")
     relative_volume = volumes.apply(lambda column: compute_relative_volume(column, volume_window))
+    pool_close = prices.mean(axis=1)
+    pool_ma = pool_close.rolling(window=market_filter_window, min_periods=market_filter_window).mean()
+    daily_pool_returns = pool_close.pct_change()
+    realized_daily_vol = daily_pool_returns.rolling(window=volatility_window, min_periods=volatility_window).std()
     cash = initial_cash
     shares = {code: 0 for code in prices.columns}
     trades: list[dict] = []
@@ -214,23 +278,38 @@ def run_backtest(
             last_prices[code] = float(price)
 
         if index >= lookback_days:
-            momentum = prices.iloc[index] / prices.iloc[index - lookback_days] - 1
+            short_momentum = prices.iloc[index] / prices.iloc[index - lookback_days] - 1
+            long_momentum = pd.Series(0.0, index=prices.columns)
+            if index >= long_lookback_days:
+                long_momentum = prices.iloc[index] / prices.iloc[index - long_lookback_days] - 1
+            blended_momentum = short_momentum * (1 - long_lookback_weight) + long_momentum * long_lookback_weight
             volume_weight = compute_volume_boost(relative_volume.iloc[index], min_volume_ratio)
-            weighted_momentum = momentum.where(momentum > 0) * volume_weight
-            target_codes = select_target_codes(weighted_momentum, top_n)
+            weighted_momentum = blended_momentum.where(blended_momentum > 0) * volume_weight
+            candidate_codes = select_target_codes(weighted_momentum, top_n)
+            market_is_risk_on = bool(pd.notna(pool_ma.iloc[index]) and pool_close.iloc[index] >= pool_ma.iloc[index])
+            target_codes = candidate_codes if market_is_risk_on else []
         if eval_start_date is not None and trade_date < eval_start_date:
             continue
 
         desired_shares = {code: 0 for code in shares}
+        portfolio_value = cash + sum(qty * last_prices.get(code, 0.0) for code, qty in shares.items())
         if target_codes:
-            portfolio_value = cash + sum(qty * last_prices.get(code, 0.0) for code, qty in shares.items())
-            target_value = portfolio_value / len(target_codes)
+            target_vol_multiplier = 1.0
+            if pd.notna(realized_daily_vol.iloc[index]) and realized_daily_vol.iloc[index] > 0:
+                annualized_vol = float(realized_daily_vol.iloc[index]) * (252**0.5)
+                target_vol_multiplier = min(1.0, target_annual_vol / annualized_vol)
+            investable_value = portfolio_value * target_vol_multiplier
+            target_value = investable_value / len(target_codes)
             for code in target_codes:
                 if code not in tradable_codes:
                     desired_shares[code] = shares[code]
                     continue
                 price = float(tradable_row[code])
-                desired_shares[code] = int(target_value // price)
+                desired_qty = int(target_value // price)
+                delta_value = abs(desired_qty - shares[code]) * price
+                if portfolio_value > 0 and (delta_value / portfolio_value) < rebalance_band_pct:
+                    desired_qty = shares[code]
+                desired_shares[code] = desired_qty
 
         for code in list(shares):
             qty = shares[code]
@@ -311,9 +390,15 @@ def run_backtest(
         "initial_cash": initial_cash,
         "codes": list(prices.columns),
         "lookback_days": lookback_days,
+        "long_lookback_days": long_lookback_days,
+        "long_lookback_weight": long_lookback_weight,
         "top_n": top_n,
         "volume_window": volume_window,
         "min_volume_ratio": min_volume_ratio,
+        "market_filter_window": market_filter_window,
+        "rebalance_band_pct": rebalance_band_pct,
+        "volatility_window": volatility_window,
+        "target_annual_vol": target_annual_vol,
         "fee_account": fee_account,
         "market": market,
         "security_type": security_type,
@@ -340,9 +425,15 @@ def main() -> int:
         volumes=volumes,
         initial_cash=args.initial_cash,
         lookback_days=args.lookback_days,
+        long_lookback_days=args.long_lookback_days,
+        long_lookback_weight=args.long_lookback_weight,
         top_n=args.top_n,
         volume_window=args.volume_window,
         min_volume_ratio=args.min_volume_ratio,
+        market_filter_window=args.market_filter_window,
+        rebalance_band_pct=args.rebalance_band_pct,
+        volatility_window=args.volatility_window,
+        target_annual_vol=args.target_annual_vol,
         eval_start=eval_start,
         fee_account=args.fee_account,
         market=market,
@@ -355,8 +446,12 @@ def main() -> int:
     print(f"Initial cash: {summary['initial_cash']:.2f}")
     print(
         "Strategy: daily dual momentum "
-        f"(lookback {summary['lookback_days']} trading days, top {summary['top_n']}, "
-        f"volume boost above {summary['min_volume_ratio']:.2f}x avg({summary['volume_window']}))"
+        f"(short/long lookback {summary['lookback_days']}/{summary['long_lookback_days']} trading days, "
+        f"long-weight {summary['long_lookback_weight']:.2f}, top {summary['top_n']}, "
+        f"volume boost above {summary['min_volume_ratio']:.2f}x avg({summary['volume_window']}), "
+        f"market filter MA{summary['market_filter_window']}, "
+        f"rebalance band {summary['rebalance_band_pct']:.2%}, "
+        f"vol target {summary['target_annual_vol']:.2f} ann (window {summary['volatility_window']}))"
     )
     if summary["fee_account"]:
         print(f"Fee account: {summary['fee_account']}")
