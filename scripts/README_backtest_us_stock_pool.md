@@ -1,30 +1,37 @@
 # 美股股票池回测结果与分析
 这份文档只记录美股股票池相关工作
 
+## 统一回测口径与账户费用
+
+- [回测统一口径（scripts/README.md）](README.md#回测统一口径)
+- [账户费用规则（scripts/README.md）](README.md#费用规则futu_alt)
+
+- 本文档聚焦美股股票池结果、解读与复现命令，不再重复维护统一口径与费用细则。
+
 ## 默认参数股票池收益榜
 
 按 `2025-03-07` 到 `2026-03-06` 记分窗口里的收益率排序：
 
 | strategy | frequency | final_value | return_pct | max_drawdown_pct | trade_count |
 | --- | --- | --- | --- | --- | --- |
-| dual momentum | daily | 188354.82 | 88.35 | -10.04 | 42 |
-| EMA + RSI | minute | 122816.26 | 22.82 | -5.15 | 12442 |
-| EMA + RSI bull range | minute | 121219.58 | 21.22 | -8.57 | 19496 |
-| RSI reversion | minute | 116891.13 | 16.89 | -14.78 | 17483 |
-| EMA cross | minute | 116845.23 | 16.85 | -14.79 | 3908 |
+| RSI reversion | minute | 117827.65 | 17.83 | -27.37 | 25969 |
+| EMA + RSI | minute | 90197.59 | -9.80 | -14.78 | 22386 |
+| EMA cross | minute | 75639.22 | -24.36 | -46.33 | 4846 |
+| EMA + RSI bull range | minute | 32107.89 | -67.89 | -69.33 | 35532 |
+| dual momentum | daily | 28097.06 | -71.90 | -90.77 | 88 |
 
 ## 结果解读
 
-- 如果只看当前这段样本外窗口，`dual momentum` 仍然明显是第一名。它从旧的整段样本内 `102.23%` 回落到 `88.35%`，但优势没有消失，说明它不是完全靠那段样本内区间堆出来的。
-- 如果只看分钟级股票池，`EMA + RSI` 现在排到第一，`return_pct = 22.82%`、`max_drawdown_pct = -5.15%`。它比 `EMA + RSI bull range` 更稳，说明更保守的趋势过滤在样本外更有韧性。
-- `EMA + RSI bull range` 和 `RSI reversion` 的收益都比旧的整段样本内结果回落明显，说明这两套参数对原先那段样本依赖更强，样本外衰减更明显。
-- `EMA cross` 在当前口径下收益与 `RSI reversion` 基本持平（`16.85%` vs `16.89%`），但交易数只有 `3908`，显著低于其它分钟级股票池策略，更适合作为低频、低换手的控制组。
-- `dual momentum` 的交易数只有 `42`，远低于分钟级策略；如果后续引入真实费用和滑点，它的相对优势理论上还有机会进一步放大。
+- 在本次按统一费用口径（`--fee-account futu_alt`）重跑后，`RSI reversion` 成为收益第一（`return_pct = 17.83%`），但回撤明显扩大到 `-27.37%`。
+- `EMA + RSI` 本次结果转为负收益（`-9.80%`），但回撤（`-14.78%`）显著小于其它多数策略，表现更偏防守。
+- `EMA cross` 交易数明显低于其它分钟策略（`4846`），但收益与回撤都弱于 `RSI reversion` 与 `EMA + RSI`。
+- `EMA + RSI bull range` 在当前口径下回撤与收益表现都较弱（`return_pct = -67.89%`，`max_drawdown_pct = -69.33%`），高换手下费用影响较重。
+- `dual momentum` 在本次参数与费用口径下表现最弱（`return_pct = -71.90%`，`max_drawdown_pct = -90.77%`）；与此前版本相比，说明其对评估窗口与费用设定较敏感。
 
 ## 实现备注
 
-- 分钟级股票池策略现在支持 `--eval-start`，会用该时间点之前的 bar 做指标预热，但不把那一段纳入交易和收益统计。
-- `dual momentum` 同样支持 `--eval-start`，但它按日频交易日解释这个起点；也就是先用更早的日线做 lookback 预热，再从指定日期开始记分。
+- 本文档结果基于各策略当前默认参数与统一费用口径重跑；分钟级策略命令以当前脚本实际支持参数为准。
+- `dual momentum` 支持 `--eval-start`，按日频交易日解释该起点；若不传该参数则按全样本区间统计。
 - [`backtest_ema_rsi_bull_range.py`](backtest_ema_rsi_bull_range.py) 复用了 [`backtest_ema_rsi_combo.py`](backtest_ema_rsi_combo.py) 的股票池引擎，只是默认参数不同。
 
 ## 当前基线命令
@@ -34,27 +41,27 @@
 ```bash
 ./.venv/bin/python scripts/backtest_rsi_reversion.py \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA \
-  --eval-start "2025-03-07 09:30:00" \
+  --fee-account futu_alt \
   --show-trades 0
 
 ./.venv/bin/python scripts/backtest_ema_cross.py \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA \
-  --eval-start "2025-03-07 09:30:00" \
+  --fee-account futu_alt \
   --show-trades 0
 
 ./.venv/bin/python scripts/backtest_ema_rsi_combo.py \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA \
-  --eval-start "2025-03-07 09:30:00" \
+  --fee-account futu_alt \
   --show-trades 0
 
 ./.venv/bin/python scripts/backtest_ema_rsi_bull_range.py \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA \
-  --eval-start "2025-03-07 09:30:00" \
+  --fee-account futu_alt \
   --show-trades 0
 
 ./.venv/bin/python scripts/backtest_dual_momentum.py \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA \
-  --eval-start "2025-03-07 09:30:00" \
+  --fee-account futu_alt \
   --show-trades 0
 ```
 

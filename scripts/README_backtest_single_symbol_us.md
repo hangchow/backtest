@@ -1,49 +1,47 @@
 # 美股单标回测（`--codes`）
 
-本文档汇总美股单标在默认参数下的分钟级回测结果。
+本文档汇总美股单标在默认参数下的回测结果（含 4 个分钟策略 + 1 个 dual momentum 日频策略）。
 
-## 回测口径
+## 统一回测口径与账户费用
 
-- 数据目录：`data/`
-- 初始资金：`100000`
-- 每次仅回测 1 只标的（`--codes <US.CODE>`）
-- 默认允许隔夜持仓（未启用 `--flat-at-close`）
-- 交易价格：分钟收盘价
-- 费用：当前结果未加入 `--fee-account`，属于样本内结果快照
+- [回测统一口径（scripts/README.md）](README.md#回测统一口径)
+- [账户费用规则（scripts/README.md）](README.md#费用规则futu_alt)
 
-## 标的范围
+## 结果范围
 
-- `US.MSFT`
-- `US.NVDA`
-- `US.GOOG`
-- `US.TSLA`
+- 本文档仅保留美股单标结果表；统一回测口径与账户费用请以上方链接为准。
 
 ## 默认参数结果
 
 | code | strategy | final_value | return_pct | max_drawdown_pct | trade_count |
 | --- | --- | ---: | ---: | ---: | ---: |
-| US.MSFT | RSI reversion | 116975.07 | 16.98 | -15.03 | 4300 |
-| US.MSFT | EMA cross | 98772.69 | -1.23 | -6.87 | 942 |
-| US.MSFT | EMA + RSI | 135930.17 | 35.93 | -4.80 | 2862 |
-| US.MSFT | EMA + RSI bull range | 115964.97 | 15.96 | -11.66 | 4714 |
-| US.NVDA | RSI reversion | 137748.57 | 37.75 | -18.61 | 4486 |
-| US.NVDA | EMA cross | 94341.33 | -5.66 | -12.48 | 1028 |
-| US.NVDA | EMA + RSI | 112572.82 | 12.57 | -15.87 | 3438 |
-| US.NVDA | EMA + RSI bull range | 121675.65 | 21.68 | -15.87 | 4964 |
-| US.GOOG | RSI reversion | 118282.86 | 18.28 | -14.22 | 4322 |
-| US.GOOG | EMA cross | 112003.70 | 12.00 | -7.81 | 988 |
-| US.GOOG | EMA + RSI | 114388.78 | 14.39 | -6.13 | 2972 |
-| US.GOOG | EMA + RSI bull range | 115707.60 | 15.71 | -11.58 | 5074 |
-| US.TSLA | RSI reversion | 91670.84 | -8.33 | -33.11 | 4373 |
-| US.TSLA | EMA cross | 122998.53 | 23.00 | -9.67 | 952 |
-| US.TSLA | EMA + RSI | 128901.81 | 28.90 | -9.16 | 3176 |
-| US.TSLA | EMA + RSI bull range | 127930.61 | 27.93 | -20.02 | 4740 |
+| US.MSFT | RSI reversion | 100336.72 | 0.34 | -18.05 | 8610 |
+| US.MSFT | EMA cross | 87909.61 | -12.09 | -19.95 | 1932 |
+| US.MSFT | EMA + RSI | 108458.18 | 8.46 | -17.58 | 5738 |
+| US.MSFT | EMA + RSI bull range | 81979.48 | -18.02 | -20.48 | 9552 |
+| US.MSFT | dual momentum | 94201.57 | -5.80 | -22.31 | 42 |
+| US.NVDA | RSI reversion | 153937.26 | 53.94 | -25.72 | 9022 |
+| US.NVDA | EMA cross | 40858.05 | -59.14 | -66.64 | 1914 |
+| US.NVDA | EMA + RSI | 83891.73 | -16.11 | -28.96 | 6736 |
+| US.NVDA | EMA + RSI bull range | 49676.27 | -50.32 | -55.50 | 9494 |
+| US.NVDA | dual momentum | 13452.86 | -86.55 | -92.57 | 44 |
+| US.GOOG | RSI reversion | 68742.97 | -31.26 | -42.62 | 8524 |
+| US.GOOG | EMA cross | 95918.15 | -4.08 | -24.34 | 1990 |
+| US.GOOG | EMA + RSI | 86551.17 | -13.45 | -17.57 | 5980 |
+| US.GOOG | EMA + RSI bull range | 69046.84 | -30.95 | -34.94 | 10198 |
+| US.GOOG | dual momentum | 192148.40 | 92.15 | -14.99 | 22 |
+| US.TSLA | RSI reversion | 80509.85 | -19.49 | -51.37 | 8843 |
+| US.TSLA | EMA cross | 162034.04 | 62.03 | -16.23 | 1876 |
+| US.TSLA | EMA + RSI | 130379.94 | 30.38 | -11.98 | 6326 |
+| US.TSLA | EMA + RSI bull range | 92696.59 | -7.30 | -29.71 | 9382 |
+| US.TSLA | dual momentum | 204762.80 | 104.76 | -30.61 | 37 |
 
 ## 复现命令示例
 
 ```bash
-./.venv/bin/python scripts/backtest_rsi_reversion.py --codes US.MSFT
-./.venv/bin/python scripts/backtest_ema_cross.py --codes US.MSFT
-./.venv/bin/python scripts/backtest_ema_rsi_combo.py --codes US.MSFT
-./.venv/bin/python scripts/backtest_ema_rsi_bull_range.py --codes US.MSFT
+./.venv/bin/python scripts/backtest_rsi_reversion.py --codes US.MSFT --fee-account futu_alt --show-trades 0
+./.venv/bin/python scripts/backtest_ema_cross.py --codes US.MSFT --fee-account futu_alt --show-trades 0
+./.venv/bin/python scripts/backtest_ema_rsi_combo.py --codes US.MSFT --fee-account futu_alt --show-trades 0
+./.venv/bin/python scripts/backtest_ema_rsi_bull_range.py --codes US.MSFT --fee-account futu_alt --show-trades 0
+./.venv/bin/python scripts/backtest_dual_momentum.py --codes US.MSFT --fee-account futu_alt --show-trades 0
 ```
