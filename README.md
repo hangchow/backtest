@@ -69,6 +69,8 @@ export POLYGON_API_KEY=your_api_key
 - [Futu 抓取说明](tests/README_fetch_futu_1m.md)
 - [Polygon 抓取说明](tests/README_fetch_polygon_1m.md)
 - `scripts/compare_backtests.py`：按参数比较多只标的的默认回测结果
+- [港股单标回测说明](scripts/README_backtest_single_symbol_hk.md)
+- [美股单标回测说明](scripts/README_backtest_single_symbol_us.md)
 - [Dual Momentum 股票池说明](scripts/README_backtest_dual_momentum.md)
 
 ## 七标的默认参数对比
@@ -207,6 +209,8 @@ export POLYGON_API_KEY=your_api_key
 - [EMA 策略说明](scripts/README_backtest_ema_cross.md)
 - [EMA + RSI 策略说明](scripts/README_backtest_ema_rsi_combo.md)
 - [优化版 EMA + RSI 说明](scripts/README_backtest_ema_rsi_bull_range.md)
+- [港股单标回测说明](scripts/README_backtest_single_symbol_hk.md)
+- [美股单标回测说明](scripts/README_backtest_single_symbol_us.md)
 - [Dual Momentum 股票池说明](scripts/README_backtest_dual_momentum.md)
 - [tests 目录说明（含实验脚本）](tests/README.md)
 - [ValueSider 持仓抓取说明（非主流程）](tests/README_valuesider_holdings.md)
