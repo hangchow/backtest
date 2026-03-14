@@ -65,6 +65,7 @@
 
 ./.venv/bin/python scripts/backtest_dual_momentum.py \
   --codes HK.00700 HK.09988 HK.00005 \
+  --fee-account futu_alt \
   --eval-start "2025-03-07 09:30:00" \
   --show-trades 0
 ```

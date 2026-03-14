@@ -27,7 +27,8 @@
 
 ```bash
 ./.venv/bin/python scripts/backtest_dual_momentum.py \
-  --codes US.MSFT US.NVDA US.GOOG US.TSLA
+  --codes US.MSFT US.NVDA US.GOOG US.TSLA \
+  --fee-account futu_alt
 ```
 
 ## 常用参数
@@ -37,6 +38,8 @@
 - `--initial-cash`：初始资金
 - `--lookback-days`：动量回看窗口
 - `--top-n`：同时持有的最强标的数量
+- `--fee-account`：可选费用账户（如 `futu_alt`）
+- `--security-type`：费用规则对应证券类型（默认 `stock`）
 - `--volume-window`：成交量比较窗口，用于计算当前量和近期均量的比值
 - `--min-volume-ratio`：相对成交量高于这个阈值时，动量分数会得到放量加分
 - `--show-trades`：打印前后各多少笔交易，设为 `0` 可关闭

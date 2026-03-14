@@ -42,7 +42,10 @@ try:
     from .backtest_common import (
         DEFAULT_DATA_ROOT,
         add_eval_start_arg,
+        add_fee_args,
+        compute_order_fees,
         compute_relative_volume,
+        infer_market_from_codes,
         parse_eval_start,
         resolve_codes,
         validate_volume_filter,
@@ -51,7 +54,10 @@ except ImportError:
     from backtest_common import (
         DEFAULT_DATA_ROOT,
         add_eval_start_arg,
+        add_fee_args,
+        compute_order_fees,
         compute_relative_volume,
+        infer_market_from_codes,
         parse_eval_start,
         resolve_codes,
         validate_volume_filter,
@@ -76,6 +82,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lookback-days", type=int, default=DEFAULT_LOOKBACK_DAYS)
     parser.add_argument("--top-n", type=int, default=DEFAULT_TOP_N)
     add_eval_start_arg(parser)
+    add_fee_args(parser)
     parser.add_argument(
         "--volume-window",
         type=int,
@@ -140,6 +147,30 @@ def compute_volume_boost(volume_ratio: pd.Series, min_volume_ratio: float) -> pd
     return volume_boost.where(volume_ratio.notna())
 
 
+def _compute_affordable_qty_with_fee(
+    cash: float,
+    price: float,
+    needed_qty: int,
+    fee_account: str | None,
+    market: str,
+    security_type: str,
+) -> tuple[int, float, dict[str, float]]:
+    qty = min(needed_qty, int(cash // price))
+    while qty > 0:
+        fee_total, fee_breakdown = compute_order_fees(
+            fee_account=fee_account,
+            market=market,
+            side="buy",
+            price=price,
+            shares=qty,
+            security_type=security_type,
+        )
+        if qty * price + fee_total <= cash + 1e-9:
+            return qty, fee_total, fee_breakdown
+        qty -= 1
+    return 0, 0.0, {}
+
+
 def run_backtest(
     prices: pd.DataFrame,
     volumes: pd.DataFrame,
@@ -149,6 +180,9 @@ def run_backtest(
     volume_window: int,
     min_volume_ratio: float,
     eval_start: pd.Timestamp | None = None,
+    fee_account: str | None = None,
+    market: str | None = None,
+    security_type: str = "stock",
 ) -> tuple[dict, pd.DataFrame]:
     if lookback_days <= 0:
         raise ValueError("lookback-days must be positive")
@@ -157,6 +191,8 @@ def run_backtest(
     validate_volume_filter(volume_window, min_volume_ratio)
     if not prices.index.equals(volumes.index) or not prices.columns.equals(volumes.columns):
         raise ValueError("prices and volumes must share the same index and columns")
+    if fee_account and not market:
+        raise ValueError("market is required when fee-account is enabled")
 
     top_n = min(top_n, len(prices.columns))
     eval_start_date = eval_start.date() if eval_start is not None else None
@@ -202,7 +238,15 @@ def run_backtest(
                 continue
             price = float(tradable_row[code])
             sell_qty = qty - desired_shares[code]
-            cash += sell_qty * price
+            fee_total, fee_breakdown = compute_order_fees(
+                fee_account=fee_account,
+                market=market if market is not None else "",
+                side="sell",
+                price=price,
+                shares=sell_qty,
+                security_type=security_type,
+            )
+            cash += sell_qty * price - fee_total
             trades.append(
                 {
                     "time_key": trade_date,
@@ -210,6 +254,8 @@ def run_backtest(
                     "action": "SELL",
                     "price": price,
                     "shares": sell_qty,
+                    "fee_total": fee_total,
+                    "fee_breakdown": fee_breakdown,
                     "cash_after": cash,
                 }
             )
@@ -223,10 +269,17 @@ def run_backtest(
                 if needed_qty <= 0:
                     continue
                 price = float(tradable_row[code])
-                affordable_qty = min(needed_qty, int(cash // price))
+                affordable_qty, fee_total, fee_breakdown = _compute_affordable_qty_with_fee(
+                    cash=cash,
+                    price=price,
+                    needed_qty=needed_qty,
+                    fee_account=fee_account,
+                    market=market if market is not None else "",
+                    security_type=security_type,
+                )
                 if affordable_qty <= 0:
                     continue
-                cash -= affordable_qty * price
+                cash -= affordable_qty * price + fee_total
                 shares[code] += affordable_qty
                 trades.append(
                     {
@@ -235,6 +288,8 @@ def run_backtest(
                         "action": "BUY",
                         "price": price,
                         "shares": affordable_qty,
+                        "fee_total": fee_total,
+                        "fee_breakdown": fee_breakdown,
                         "cash_after": cash,
                     }
                 )
@@ -259,6 +314,9 @@ def run_backtest(
         "top_n": top_n,
         "volume_window": volume_window,
         "min_volume_ratio": min_volume_ratio,
+        "fee_account": fee_account,
+        "market": market,
+        "security_type": security_type,
         "trade_count": len(trades),
         "buy_count": sum(1 for trade in trades if trade["action"] == "BUY"),
         "sell_count": sum(1 for trade in trades if trade["action"] == "SELL"),
@@ -276,6 +334,7 @@ def main() -> int:
     codes = resolve_codes(args.data_root, args.codes)
     prices, volumes = load_daily_data(args.data_root, codes)
     eval_start = parse_eval_start(args.eval_start)
+    market = infer_market_from_codes(codes)
     summary, trades = run_backtest(
         prices=prices,
         volumes=volumes,
@@ -285,6 +344,9 @@ def main() -> int:
         volume_window=args.volume_window,
         min_volume_ratio=args.min_volume_ratio,
         eval_start=eval_start,
+        fee_account=args.fee_account,
+        market=market,
+        security_type=args.security_type,
     )
 
     print(f"Data range: {summary['warmup_start_time']} -> {summary['end_time']}")
@@ -296,6 +358,9 @@ def main() -> int:
         f"(lookback {summary['lookback_days']} trading days, top {summary['top_n']}, "
         f"volume boost above {summary['min_volume_ratio']:.2f}x avg({summary['volume_window']}))"
     )
+    if summary["fee_account"]:
+        print(f"Fee account: {summary['fee_account']}")
+        print(f"Market/Security: {summary['market']} / {summary['security_type']}")
     print(f"Stock pool: {', '.join(summary['codes'])}")
     print(f"Trades: {summary['trade_count']} (BUY {summary['buy_count']}, SELL {summary['sell_count']})")
     print(f"Ending cash: {summary['ending_cash']:.2f}")
