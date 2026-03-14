@@ -10,25 +10,25 @@
 
 ## 优化参数股票池收益榜
 
-按 `2025-03-07` 到 `2026-03-06` 记分窗口里的收益率排序：
+按 `2025-03-07` 到 `2026-03-06` 记分窗口里的收益率排序（股票池新增 `US.AMZN`）：
 
 | strategy | frequency | final_value | return_pct | max_drawdown_pct | trade_count |
 | --- | --- | --- | --- | --- | --- |
-| dual momentum | daily | 163245.41 | 63.25 | -30.40 | 30 |
-| RSI reversion | minute | 122124.60 | 22.12 | -35.87 | 30744 |
+| dual momentum | daily | 170019.05 | 70.02 | -30.27 | 28 |
+| RSI reversion | minute | 136188.21 | 36.19 | -31.56 | 18496 |
 | EMA + RSI | minute | 100000.00 | 0.00 | 0.00 | 0 |
 | EMA + RSI bull range | minute | 100000.00 | 0.00 | 0.00 | 0 |
-| EMA cross | minute | 80842.99 | -19.16 | -41.67 | 2908 |
+| EMA cross | minute | 88092.78 | -11.91 | -14.92 | 2746 |
 
 
 ## 结果解读
 
-- 在本次按统一费用口径（`--fee-account futu_alt`）重跑后，优化版 `dual momentum` 成为收益第一（`return_pct = 63.25%`），并将交易次数压降至 `30`。
-- `RSI reversion` 通过调高止盈阈值（`--sell-threshold 70`）后，收益从 `17.83%` 提升到 `22.12%`，但回撤扩大到 `-35.87%`。
+- 在本次新增 `US.AMZN` 并按统一费用口径（`--fee-account futu_alt`）重跑后，优化版 `dual momentum` 继续收益第一，`return_pct` 提升至 `70.02%`。
+- `RSI reversion` 在五只股票池中收益提升至 `36.19%`，同时最大回撤收敛到 `-31.56%`，交易数降到 `18496`。
 - `EMA + RSI` 通过提高成交量门槛（`--min-volume-ratio 99`）后，本窗口无交易，收益回到 `0.00%`，显著优于此前 `-9.80%`。
-- `EMA cross` 调整为更保守仓位（`--position-ratio 0.15 --max-open-positions 1`）后，收益从 `-24.36%` 改善到 `-19.16%`，交易数降到 `2908`。
+- `EMA cross` 在新增 `US.AMZN` 后继续维持保守仓位配置，收益改善到 `-11.91%`，最大回撤降至 `-14.92%`。
 - `EMA + RSI bull range` 同样通过提高成交量门槛（`--min-volume-ratio 99`）将高换手关闭，本窗口收益回到 `0.00%`。
-- `dual momentum` 继续使用“短长周期动量 + 市场风险开关 + 调仓阈值 + 波动率目标”组合，维持收益第一（`63.25%`）。
+- `dual momentum` 继续使用“短长周期动量 + 市场风险开关 + 调仓阈值 + 波动率目标”组合，且在新增成分后收益与回撤均优于上一版口径。
 
 ## 实现备注
 
@@ -42,33 +42,33 @@
 后续更新这份文档时，优先复用下面这组命令（即当前排行榜口径，`dual momentum` 显式写出最佳参数）：
 
 ```bash
-./.venv/bin/python scripts/backtest_rsi_reversion.py \
-  --codes US.MSFT US.NVDA US.GOOG US.TSLA \
+python3 scripts/backtest_rsi_reversion.py \
+  --codes US.MSFT US.NVDA US.GOOG US.TSLA US.AMZN \
   --fee-account futu_alt \
   --sell-threshold 70 \
   --show-trades 0
 
-./.venv/bin/python scripts/backtest_ema_cross.py \
-  --codes US.MSFT US.NVDA US.GOOG US.TSLA \
+python3 scripts/backtest_ema_cross.py \
+  --codes US.MSFT US.NVDA US.GOOG US.TSLA US.AMZN \
   --fee-account futu_alt \
   --position-ratio 0.15 \
   --max-open-positions 1 \
   --show-trades 0
 
-./.venv/bin/python scripts/backtest_ema_rsi_combo.py \
-  --codes US.MSFT US.NVDA US.GOOG US.TSLA \
+python3 scripts/backtest_ema_rsi_combo.py \
+  --codes US.MSFT US.NVDA US.GOOG US.TSLA US.AMZN \
   --fee-account futu_alt \
   --min-volume-ratio 99 \
   --show-trades 0
 
-./.venv/bin/python scripts/backtest_ema_rsi_bull_range.py \
-  --codes US.MSFT US.NVDA US.GOOG US.TSLA \
+python3 scripts/backtest_ema_rsi_bull_range.py \
+  --codes US.MSFT US.NVDA US.GOOG US.TSLA US.AMZN \
   --fee-account futu_alt \
   --min-volume-ratio 99 \
   --show-trades 0
 
-./.venv/bin/python scripts/backtest_dual_momentum.py \
-  --codes US.MSFT US.NVDA US.GOOG US.TSLA \
+python3 scripts/backtest_dual_momentum.py \
+  --codes US.MSFT US.NVDA US.GOOG US.TSLA US.AMZN \
   --fee-account futu_alt \
   --lookback-days 90 \
   --long-lookback-days 180 \
