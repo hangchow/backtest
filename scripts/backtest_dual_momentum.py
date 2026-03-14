@@ -116,8 +116,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--show-trades",
         type=int,
-        default=5,
-        help="How many head/tail trades to print. Use 0 to suppress trade samples.",
+        choices=[0, 1],
+        default=0,
+        help="Whether to print all trade records (1=yes, 0=no).",
     )
     parser.add_argument(
         "--market-filter-window",
@@ -464,12 +465,12 @@ def main() -> int:
     print(f"Total return: {summary['total_return_pct']:.2f}%")
     print(f"Max drawdown: {summary['max_drawdown_pct']:.2f}%")
 
-    if args.show_trades > 0 and not trades.empty:
-        sample = min(args.show_trades, len(trades))
-        print(f"\nFirst {sample} trades:")
-        print(trades.head(sample).to_string(index=False))
-        print(f"\nLast {sample} trades:")
-        print(trades.tail(sample).to_string(index=False))
+    if args.show_trades == 1:
+        if trades.empty:
+            print("\nNo trades.")
+        else:
+            print("\nAll trades:")
+            print(trades.to_string(index=False))
     return 0
 
 
