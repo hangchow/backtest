@@ -1,4 +1,4 @@
-# scripts 回测口径（含账户收费）
+# scripts 目录文档
 
 本文档用于维护 `scripts/` 下股票池回测的**统一口径**（回测参数与账户费用），作为相关结果文档更新时的基线约束。
 
@@ -6,7 +6,6 @@
 
 - [港股股票池回测结果与分析](README_backtest_hk_stock_pool.md)
 - [美股股票池回测结果与分析](README_backtest_us_stock_pool.md)
-- [单标回测总览](README_backtest_single_symbol.md)
 - [港股单标回测说明](README_backtest_single_symbol_hk.md)
 - [美股单标回测说明](README_backtest_single_symbol_us.md)
 - [RSI reversion 策略说明](README_backtest_rsi_reversion.md)
@@ -18,10 +17,9 @@
 ## 回测统一口径
 
 - 数据目录：`data/`
-- 初始资金：`100000`
-- 持仓上限：`--max-open-positions 2`
+- 初始资金：`港股：800000港币` `美股：100000美元`
+- 持仓上限：`--max-open-positions -1`
 - 默认允许隔夜持仓（未启用 `--flat-at-close`）
-- 交易价格：分钟收盘价
 - 费用：启用 `--fee-account futu_alt`（港美股统一按该账户收费）
 - 证券类型：`stock`（默认）
 
@@ -47,4 +45,3 @@
 - 交易活动费：`0.000195 USD/股`，仅卖出收取，最低 `0.01 USD`，最高 `9.79 USD`
 - 综合审计跟踪监管费：`0`
 
-> 说明：本文件保留“统一口径与费用规则”；股票池测试结果、收益表与复现命令请维护在对应市场的股票池文档中。
