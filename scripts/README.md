@@ -2,6 +2,11 @@
 
 本文档给出 `scripts/` 下分钟级策略在**股票池模式**中的统一回测口径，并记录加入账户收费后的最新结果。
 
+相关文档：
+
+- [港股单标回测说明](README_backtest_single_symbol_hk.md)
+- [美股单标回测说明](README_backtest_single_symbol_us.md)
+
 ## 回测口径
 
 - 数据目录：`data/`
