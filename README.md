@@ -43,6 +43,8 @@ python3 -m venv .venv
 - [优化版 EMA + RSI 策略说明](scripts/README_backtest_ema_rsi_bull_range.md)
 - [Dual Momentum 策略说明](scripts/README_backtest_dual_momentum.md)
 - [港美股单股回测](scripts/README_backtest_single_symbol.md)
+- [港股单股回测](scripts/README_backtest_single_symbol_hk.md)
+- [美股单股回测](scripts/README_backtest_single_symbol_us.md)
 - [港股股票池回测](scripts/README_backtest_hk_stock_pool.md)
 - [美股股票池回测](scripts/README_backtest_us_stock_pool.md)
 - [tests 目录说明](tests/README.md)

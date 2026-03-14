@@ -1,89 +1,76 @@
-# Scripts
+# scripts 回测口径（含账户收费）
 
-## 作用
-这个目录放仓库里的正式回测脚本、公共回测组件，以及各类回测结果说明文档。
+本文档给出 `scripts/` 下分钟级策略在**股票池模式**中的统一回测口径，并记录加入账户收费后的最新结果。
+
+相关文档：
+
+- [港股单标回测说明](README_backtest_single_symbol_hk.md)
+- [美股单标回测说明](README_backtest_single_symbol_us.md)
 
 ## 回测口径
-- 原始数据范围：`2024-03-07 09:30:00` 到 `2026-03-06 16:00:00`
-- 指标预热窗口：`2024-03-07 09:30:00` 到 `2025-03-06 16:00:00`
-- 正式记分窗口：`2025-03-07 09:30:00` 到 `2026-03-06 16:00:00`
+
+- 数据目录：`data/`
 - 初始资金：`100000`
-- 默认允许隔夜；只有显式传入 `--flat-at-close` 才会日内平仓
-- `--max-open-positions` 默认是 `-1`，等同全池可同时持仓
-- 港股股票池：`HK.00700`、`HK.09988`、`HK.00005`
-- 美股股票池：`US.MSFT`、`US.NVDA`、`US.GOOG`、`US.TSLA`，谷歌这里使用的是 `GOOG`，不是 `GOOGL`
-- `dual momentum` 使用同一批分钟数据聚合出的日线收盘价和日成交量
+- 持仓上限：`--max-open-positions 2`
+- 默认允许隔夜持仓（未启用 `--flat-at-close`）
+- 交易价格：分钟收盘价
+- 费用：启用 `--fee-account futu_alt`（你提供的该账户港美股收费）
+- 证券类型：`stock`（默认）
 
-## 文档入口
-- [港美股单标回测](README_backtest_single_symbol.md)
-- [港股股票池回测](README_backtest_hk_stock_pool.md)
-- [美股股票池回测](README_backtest_us_stock_pool.md)
-- [RSI 策略说明](README_backtest_rsi_reversion.md)
-- [EMA 策略说明](README_backtest_ema_cross.md)
-- [EMA + RSI 策略说明](README_backtest_ema_rsi_combo.md)
-- [优化版 EMA + RSI 策略说明](README_backtest_ema_rsi_bull_range.md)
-- [Dual Momentum 策略说明](README_backtest_dual_momentum.md)
+## 费用规则（`futu_alt`）
 
-## 文件清单
-- `backtest_common.py`
-  - 回测公共逻辑，包括数据源参数、CSV 加载、量能过滤、`--eval-start` 预热等
-- `compare_backtests.py`
-  - 对多只单标跑 4 套默认分钟策略，并输出 Markdown 对比表
-- `backtest_rsi_reversion.py`
-  - 分钟级 RSI 反转策略，支持单标和股票池两种入口
-- `backtest_ema_cross.py`
-  - 分钟级 EMA 金叉死叉策略，支持单标和股票池两种入口
-- `backtest_ema_rsi_combo.py`
-  - 分钟级 EMA 趋势过滤 + RSI 回踩策略
-- `backtest_ema_rsi_bull_range.py`
-  - `EMA + RSI` 的 bull range 参数变体，复用同一套核心回测引擎
-- `backtest_dual_momentum.py`
-  - 日频 dual momentum 股票池轮动策略，使用分钟数据聚合出的日线
-- [README_backtest_single_symbol.md](README_backtest_single_symbol.md)
-  - 单标默认参数对比、最佳结果和单标分析
-- [README_backtest_hk_stock_pool.md](README_backtest_hk_stock_pool.md)
-  - 港股股票池回测结果、收益榜和分析
-- [README_backtest_us_stock_pool.md](README_backtest_us_stock_pool.md)
-  - 美股股票池回测结果、收益榜和分析
-- [README_backtest_rsi_reversion.md](README_backtest_rsi_reversion.md)
-  - RSI 策略的实现说明和基线结果
-- [README_backtest_ema_cross.md](README_backtest_ema_cross.md)
-  - EMA 策略的实现说明和基线结果
-- [README_backtest_ema_rsi_combo.md](README_backtest_ema_rsi_combo.md)
-  - EMA + RSI 策略的实现说明和基线结果
-- [README_backtest_ema_rsi_bull_range.md](README_backtest_ema_rsi_bull_range.md)
-  - 优化版 EMA + RSI 策略的实现说明和基线结果
-- [README_backtest_dual_momentum.md](README_backtest_dual_momentum.md)
-  - Dual Momentum 股票池策略的实现说明和基线结果
-- `__init__.py`
-  - 让 `scripts` 目录可作为 Python 包导入
+### 港股
 
-## 推荐运行方式
+- 佣金：`0.03% * 成交金额`，每笔最低 `3 HKD`
+- 平台使用费：每笔 `15 HKD`
+- 交易系统使用费：`0`
+- 交收费：`0.0042% * 成交金额`
+- 印花税：`0.1% * 成交金额`，每笔最低 `1 HKD`（ETF/涡轮/牛熊证豁免）
+- 交易费：`0.00565% * 成交金额`，每笔最低 `0.01 HKD`
+- 证监会征费：`0.0027% * 成交金额`，每笔最低 `0.01 HKD`
+- 财汇局征费：`0.00015% * 成交金额`
 
-在仓库根目录直接执行这些脚本：
+### 美股
+
+- 佣金：`0.0049 USD/股`，每笔最低 `0.99 USD`，最高 `0.5% * 成交金额`
+- 平台使用费：`0.005 USD/股`，每笔最低 `1 USD`，最高 `0.5% * 成交金额`
+- 交收费：`0.003 USD/股`
+- 证监会规费：`0`
+- 交易活动费：`0.000195 USD/股`，仅卖出收取，最低 `0.01 USD`，最高 `9.79 USD`
+- 综合审计跟踪监管费：`0`
+
+## 港股股票池回测（含收费）
+
+股票池：`HK.00700`、`HK.09988`、`HK.00005`
+
+| strategy | final_value | return_pct | max_drawdown_pct | trade_count |
+| --- | ---: | ---: | ---: | ---: |
+| RSI reversion | 188.59 | -99.81% | -99.81% | 2874 |
+| EMA cross | 11537.15 | -88.46% | -88.91% | 1849 |
+| EMA + RSI | 203.43 | -99.80% | -99.80% | 2738 |
+| EMA + RSI bull range | 192.89 | -99.81% | -99.81% | 2614 |
+
+## 美股股票池回测（含收费）
+
+股票池：`US.MSFT`、`US.NVDA`、`US.GOOG`、`US.TSLA`
+
+| strategy | final_value | return_pct | max_drawdown_pct | trade_count |
+| --- | ---: | ---: | ---: | ---: |
+| RSI reversion | 92994.63 | -7.01% | -23.46% | 12967 |
+| EMA cross | 117439.02 | 17.44% | -19.51% | 2446 |
+| EMA + RSI | 94390.68 | -5.61% | -13.72% | 11256 |
+| EMA + RSI bull range | 81676.17 | -18.32% | -19.14% | 17940 |
+
+## 复现命令
 
 ```bash
-./.venv/bin/python scripts/compare_backtests.py \
-  --code HK.00700 \
-  --code US.MSFT
+python scripts/backtest_rsi_reversion.py --codes HK.00700 HK.09988 HK.00005 --fee-account futu_alt --show-trades 0
+python scripts/backtest_ema_cross.py --codes HK.00700 HK.09988 HK.00005 --fee-account futu_alt --show-trades 0
+python scripts/backtest_ema_rsi_combo.py --codes HK.00700 HK.09988 HK.00005 --fee-account futu_alt --show-trades 0
+python scripts/backtest_ema_rsi_bull_range.py --codes HK.00700 HK.09988 HK.00005 --fee-account futu_alt --show-trades 0
+
+python scripts/backtest_rsi_reversion.py --codes US.MSFT US.NVDA US.GOOG US.TSLA --fee-account futu_alt --show-trades 0
+python scripts/backtest_ema_cross.py --codes US.MSFT US.NVDA US.GOOG US.TSLA --fee-account futu_alt --show-trades 0
+python scripts/backtest_ema_rsi_combo.py --codes US.MSFT US.NVDA US.GOOG US.TSLA --fee-account futu_alt --show-trades 0
+python scripts/backtest_ema_rsi_bull_range.py --codes US.MSFT US.NVDA US.GOOG US.TSLA --fee-account futu_alt --show-trades 0
 ```
-
-单标策略示例：
-
-```bash
-./.venv/bin/python scripts/backtest_rsi_reversion.py \
-  --data-dir data/US.MSFT
-```
-
-股票池策略示例：
-
-```bash
-./.venv/bin/python scripts/backtest_dual_momentum.py \
-  --codes US.MSFT US.NVDA US.GOOG US.TSLA
-```
-
-## 执行说明
-
-当前更推荐从仓库根目录使用 `./.venv/bin/python scripts/<script>.py ...` 这种方式运行。
-
-原因是这个目录下有些脚本直接 import 同目录模块，也有些脚本兼容相对导入；统一从仓库根按脚本路径执行，最稳定，不需要依赖当前 shell 恰好在 `scripts/` 目录里。
