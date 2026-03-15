@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-SUPPORTED_QUOTE_BROKER_TYPES = frozenset({"futu"})
+SUPPORTED_REALTIME_QUOTE_BROKER_TYPES = frozenset({"futu", "mock"})
+SUPPORTED_HISTORY_BROKER_TYPES = frozenset({"futu"})
 SUPPORTED_TRADE_BROKER_TYPES = frozenset({"futu"})
 
 
@@ -230,7 +231,7 @@ def _parse_realtime_quote_broker_config(raw: Mapping[str, Any], *, label: str) -
             raw.get("type"),
             label=f"{label}.type",
             default="futu",
-            supported_types=SUPPORTED_QUOTE_BROKER_TYPES,
+            supported_types=SUPPORTED_REALTIME_QUOTE_BROKER_TYPES,
         ),
         host=host,
         port=port,
@@ -253,7 +254,7 @@ def _parse_history_broker_config(raw: Mapping[str, Any], *, label: str) -> Histo
             raw.get("type"),
             label=f"{label}.type",
             default="futu",
-            supported_types=SUPPORTED_QUOTE_BROKER_TYPES,
+            supported_types=SUPPORTED_HISTORY_BROKER_TYPES,
         ),
         host=host,
         port=port,

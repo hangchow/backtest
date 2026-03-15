@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 import pandas as pd
 
-from live_trading.broker import DailyHistoryProvider, QuoteBrokerClient, TradeAccountClient
-from live_trading.config import load_live_trading_config, load_quote_config, load_trade_accounts_config
+from live_trading.broker import DailyHistoryProvider, MockRealtimeQuoteClient, QuoteBrokerClient, TradeAccountClient
+from live_trading.config import RealtimeQuoteBrokerConfig, load_live_trading_config, load_quote_config, load_trade_accounts_config
 from live_trading.engine import LiveTradingEngine
 from live_trading.models import AccountSnapshot, QuoteUpdate
 from live_trading.pool_strategies import build_pool_strategy
@@ -108,7 +110,6 @@ def build_trade_account_payload(account_id: str, host: str, port: int = 21111, a
         },
     }
 
-
 class FakeQuoteBroker(QuoteBrokerClient):
     instances: list["FakeQuoteBroker"] = []
 
@@ -181,6 +182,40 @@ class FakeTradeAccountClient(TradeAccountClient):
         self.closed = True
 
 
+class RecordingQuoteSink:
+    def __init__(self) -> None:
+        self.quotes: list[QuoteUpdate] = []
+        self.bars: list[tuple[str, dict[str, object]]] = []
+        self.messages: list[tuple[int, str]] = []
+
+    def on_quote(self, update: QuoteUpdate) -> None:
+        self.quotes.append(update)
+
+    def on_bar(self, code: str, bar: pd.Series | dict[str, object]) -> None:
+        self.bars.append((code, dict(bar)))
+
+    def on_broker_message(self, level: int, message: str) -> None:
+        self.messages.append((level, message))
+
+
+class FakeHttpServer:
+    def __init__(self) -> None:
+        self.daemon_threads = False
+        self.server_address = ("127.0.0.1", 19111)
+        self.serve_forever_calls = 0
+        self.shutdown_calls = 0
+        self.server_close_calls = 0
+
+    def serve_forever(self) -> None:
+        self.serve_forever_calls += 1
+
+    def shutdown(self) -> None:
+        self.shutdown_calls += 1
+
+    def server_close(self) -> None:
+        self.server_close_calls += 1
+
+
 class LiveTradingConfigTests(unittest.TestCase):
     def test_load_live_trading_config_supports_split_quote_and_trade_files(self) -> None:
         quote_payload = build_quote_payload(realtime_host="127.0.0.1", realtime_port=11111, history_host="127.0.0.2", history_port=22222)
@@ -251,6 +286,26 @@ class LiveTradingConfigTests(unittest.TestCase):
         self.assertEqual(config.history_broker.host, "127.0.0.1")
         self.assertEqual(config.history_broker.port, 11111)
 
+    def test_load_quote_config_supports_mock_realtime_broker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "quote.json"
+            payload = build_quote_payload()
+            payload["realtime_broker"] = {
+                "type": "mock",
+                "host": "127.0.0.1",
+                "port": 19111,
+                "market": "US",
+                "extended_time": False,
+            }
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            config = load_quote_config(path)
+
+        self.assertEqual(config.realtime_broker.type, "mock")
+        self.assertEqual(config.realtime_broker.host, "127.0.0.1")
+        self.assertEqual(config.realtime_broker.port, 19111)
+        self.assertEqual(config.history_broker.type, "futu")
+
     def test_load_quote_config_rejects_unsupported_quote_broker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "quote.json"
@@ -288,6 +343,48 @@ class LiveTradingConfigTests(unittest.TestCase):
         self.assertEqual(config.accounts[1].broker.host, "127.0.0.10")
         self.assertEqual(config.accounts[1].broker.port, 31111)
         self.assertEqual(config.accounts[1].broker.account_index, 1)
+
+
+class MockRealtimeQuoteClientTests(unittest.TestCase):
+    def test_mock_quote_client_translates_runtime_push_payload(self) -> None:
+        sink = RecordingQuoteSink()
+        fake_server = FakeHttpServer()
+        client = MockRealtimeQuoteClient(
+            RealtimeQuoteBrokerConfig(
+                type="mock",
+                host="127.0.0.1",
+                port=19111,
+                market="US",
+                extended_time=False,
+            ),
+            sink,
+            logging.getLogger("test.mock_quote"),
+        )
+        with patch.object(client, "_build_server", return_value=fake_server):
+            client.connect(["US.AAPL"])
+            payload = client.push_bars(
+                {
+                    "code": "US.AAPL",
+                    "time_key": "2026-03-13 09:30:00",
+                    "close": 104.5,
+                    "volume": 321,
+                }
+            )
+            client.close()
+
+        self.assertEqual(payload["accepted"], 1)
+        self.assertEqual(payload["ignored"], 0)
+        self.assertEqual(len(sink.quotes), 1)
+        self.assertEqual(sink.quotes[0].code, "US.AAPL")
+        self.assertEqual(sink.quotes[0].last_price, 104.5)
+        self.assertEqual(sink.quotes[0].source, "mock")
+        self.assertEqual(len(sink.bars), 1)
+        self.assertEqual(sink.bars[0][0], "US.AAPL")
+        self.assertEqual(sink.bars[0][1]["close"], 104.5)
+        self.assertEqual(fake_server.shutdown_calls, 1)
+        self.assertEqual(fake_server.server_close_calls, 1)
+        self.assertTrue(any("listening" in message for _, message in sink.messages))
+
 
 class DualMomentumPoolStrategyTests(unittest.TestCase):
     def test_dual_momentum_builds_target_for_stronger_symbol(self) -> None:
