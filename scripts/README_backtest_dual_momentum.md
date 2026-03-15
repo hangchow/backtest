@@ -15,17 +15,6 @@
 
 `scripts/backtest_dual_momentum.py`
 
-## 默认参数
-
-- 初始资金：`100000`
-- 动量回看窗口：`90` 个交易日
-- 长周期动量回看窗口：`180` 个交易日
-- 长周期动量权重：`0.25`
-- 同时持有标的数：`1`
-- 成交量窗口：`20`
-- 放量加分阈值：`1.3x` 最近均量
-- `--show-trades`：`0`（默认，不打印交易记录）
-
 ## 基本用法
 
 ```bash
@@ -36,16 +25,26 @@
 
 ## 常用参数
 
-- `--codes`：股票池代码列表
+- `--codes`：股票池代码列表（必填）
 - `--data-root`：数据根目录，默认 `data`
-- `--initial-cash`：初始资金
-- `--lookback-days`：动量回看窗口
-- `--top-n`：同时持有的最强标的数量
+- `--initial-cash`：初始资金，默认 `100000`
+- `--lookback-days`：短周期动量回看窗口，默认 `90`
+- `--long-lookback-days`：长周期动量回看窗口，默认 `180`
+- `--long-lookback-weight`：长周期动量权重，默认 `0.25`
+- `--top-n`：同时持有的最强标的数量，默认 `1`
+- `--volume-window`：成交量比较窗口，默认 `20`
+- `--min-volume-ratio`：放量加分阈值，默认 `1.3`
+- `--market-filter-window`：市场风险开关均线窗口，默认 `120`
+- `--rebalance-band-pct`：调仓带宽阈值，默认 `0.10`
+- `--volatility-window`：波动率估计窗口，默认 `20`
+- `--target-annual-vol`：组合年化波动率目标，默认 `0.30`
+- `--max-gross-exposure`：最大总仓位倍率上限，默认 `1.0`（不使用杠杆）
+- `--eval-start`：评估起点日期（可选），不传则按全样本统计
 - `--fee-account`：可选费用账户（如 `futu_alt`）
-- `--security-type`：费用规则对应证券类型（默认 `stock`）
-- `--volume-window`：成交量比较窗口，用于计算当前量和近期均量的比值
-- `--min-volume-ratio`：相对成交量高于这个阈值时，动量分数会得到放量加分
+- `--security-type`：费用规则对应证券类型，默认 `stock`
 - `--show-trades`：`1` 打印所有交易记录；`0`（默认）不打印交易记录
+
+> 说明：当 `--max-gross-exposure > 1.0` 时，脚本会在“波动率目标缩放后的名义仓位上限”内进行受控放大，并在每笔买入前按当前仓位实时校验剩余可用名义仓位，避免超出上限。
 
 ## 输出内容
 

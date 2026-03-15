@@ -13,21 +13,6 @@
 
 `scripts/backtest_ema_rsi_bull_range.py`
 
-## 默认参数
-
-这组默认值是按当前 7 只样本做过一轮样本内优化后选出来的平衡版本：
-
-- 初始资金：`100000`
-- 快线：`EMA(15)`
-- 慢线：`EMA(180)`
-- `RSI period`：`4`
-- 买入阈值：`46`
-- 卖出阈值：`52`
-- 买入仓位：`100%`
-- 量能窗口：`20`
-- 最低相对成交量：`0.9x` 最近均量
-- 默认允许隔夜；加 `--flat-at-close` 才改成日内平仓
-
 ## 结果边界
 
 - 文档中的样例数字（如有）都只是样本内结果。
@@ -59,18 +44,18 @@
 - `--codes`：股票代码列表（空格分隔），脚本会从 `data/<code>/` 读取数据
 - `--data-root`：配合 `--codes` 使用的数据根目录，默认 `data`
 - `--data-dir`：直接指定单标的数据目录；不能和 `--codes` 同时使用
-- `--initial-cash`：初始资金
-- `--fast-span`：短周期 EMA
-- `--slow-span`：长周期 EMA
-- `--rsi-period`：RSI 周期
-- `--buy-threshold`：买入阈值
-- `--sell-threshold`：卖出阈值
-- `--position-ratio`：每次买入使用的现金比例，范围 `(0, 1]`
+- `--initial-cash`：初始资金，默认 `100000`
+- `--fast-span`：短周期 EMA，默认 `15`
+- `--slow-span`：长周期 EMA，默认 `180`
+- `--rsi-period`：RSI 周期，默认 `4`
+- `--buy-threshold`：买入阈值，默认 `46`
+- `--sell-threshold`：卖出阈值，默认 `52`
+- `--position-ratio`：每次买入使用的现金比例，范围 `(0, 1]`，默认 `1.0`
 - `--max-open-positions`：股票池模式下的最大同时持仓数，默认 `-1`（不限制）
-- `--volume-window`：成交量比较窗口，用于计算当前量和近期均量的比值
-- `--min-volume-ratio`：买点要求的最小相对成交量
-- `--flat-at-close`：每天最后一分钟强制平仓
-- `--show-trades`：打印前后各多少笔交易，设为 `0` 可关闭
+- `--volume-window`：成交量比较窗口，用于计算当前量和近期均量的比值，默认 `20`
+- `--min-volume-ratio`：买点要求的最小相对成交量，默认 `0.9`
+- `--flat-at-close`：每天最后一分钟强制平仓（默认允许隔夜，即不传该参数）
+- `--show-trades`：打印前后各多少笔交易，默认显示首尾 `10` 笔，设为 `0` 可关闭
 
 ## 输出内容
 
