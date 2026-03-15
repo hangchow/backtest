@@ -8,11 +8,10 @@ import pandas as pd
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS_DIR = REPO_ROOT / "scripts"
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-from backtest_ema_rsi_bull_range import (
+from backtest.backtest_ema_rsi_bull_range import (
     DEFAULT_BUY_THRESHOLD,
     DEFAULT_FAST_SPAN,
     DEFAULT_MAX_OPEN_POSITIONS,

@@ -1,0 +1,499 @@
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+import logging
+import os
+from pathlib import Path
+import threading
+import time
+from typing import Any, Iterable, Mapping, Protocol
+
+import pandas as pd
+
+try:
+    from .config import HistoryBrokerConfig, RealtimeQuoteBrokerConfig, TradeAccountConfig
+    from .models import AccountSnapshot, PositionSnapshot, QuoteUpdate
+except ImportError:
+    from live_trading.config import HistoryBrokerConfig, RealtimeQuoteBrokerConfig, TradeAccountConfig
+    from live_trading.models import AccountSnapshot, PositionSnapshot, QuoteUpdate
+
+
+class QuoteBrokerEventSink(Protocol):
+    def on_quote(self, update: QuoteUpdate) -> None:
+        raise NotImplementedError
+
+    def on_bar(self, code: str, bar: pd.Series | dict[str, Any]) -> None:
+        raise NotImplementedError
+
+    def on_broker_message(self, level: int, message: str) -> None:
+        raise NotImplementedError
+
+
+class TradeAccountEventSink(Protocol):
+    def on_account(self, account_id: str, snapshot: AccountSnapshot) -> None:
+        raise NotImplementedError
+
+    def on_positions(self, account_id: str, positions: dict[str, PositionSnapshot]) -> None:
+        raise NotImplementedError
+
+    def on_broker_message(self, level: int, message: str) -> None:
+        raise NotImplementedError
+
+
+class QuoteBrokerClient(ABC):
+    @abstractmethod
+    def connect(self, codes: Iterable[str]) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def update_symbols(self, codes: Iterable[str]) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def close(self) -> None:
+        raise NotImplementedError
+
+
+class DailyHistoryProvider(ABC):
+    @abstractmethod
+    def fetch_daily_histories(
+        self,
+        codes: Iterable[str],
+        daily_warmup_bars: Mapping[str, int],
+    ) -> dict[str, pd.DataFrame]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def close(self) -> None:
+        raise NotImplementedError
+
+
+class TradeAccountClient(ABC):
+    @abstractmethod
+    def connect(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def close(self) -> None:
+        raise NotImplementedError
+
+
+class FutuRealtimeQuoteClient(QuoteBrokerClient):
+    def __init__(self, config: RealtimeQuoteBrokerConfig, event_sink: QuoteBrokerEventSink, logger: logging.Logger) -> None:
+        self._config = config
+        self._event_sink = event_sink
+        self._logger = logger
+        self._quote_ctx = None
+        self._futu = None
+        self._codes: list[str] = []
+        self._lock = threading.RLock()
+
+    def connect(self, codes: Iterable[str]) -> None:
+        with self._lock:
+            self.close()
+            self._futu = _load_futu_api()
+            self._quote_ctx = self._futu["OpenQuoteContext"](host=self._config.host, port=self._config.port)
+            self._quote_ctx.set_handler(self._build_quote_handler())
+            self._quote_ctx.set_handler(self._build_kline_handler())
+            self._quote_ctx.start()
+        self.update_symbols(codes)
+
+    def update_symbols(self, codes: Iterable[str]) -> None:
+        with self._lock:
+            if self._quote_ctx is None or self._futu is None:
+                raise RuntimeError("Futu realtime quote broker is not connected")
+
+            target_codes = sorted({str(code).strip().upper() for code in codes if str(code).strip()})
+            if self._codes:
+                ret, data = self._quote_ctx.unsubscribe(self._codes, [self._futu["SubType"].QUOTE, self._futu["SubType"].K_1M])
+                if ret != self._futu["RET_OK"]:
+                    self._event_sink.on_broker_message(logging.WARNING, f"quote unsubscribe failed: {data}")
+
+            if target_codes:
+                ret, data = self._quote_ctx.subscribe(
+                    target_codes,
+                    [self._futu["SubType"].QUOTE, self._futu["SubType"].K_1M],
+                    is_first_push=False,
+                    subscribe_push=True,
+                    extended_time=self._config.extended_time,
+                )
+                if ret != self._futu["RET_OK"]:
+                    raise RuntimeError(f"quote subscribe failed: {data}")
+
+            self._codes = target_codes
+
+    def close(self) -> None:
+        with self._lock:
+            quote_ctx = self._quote_ctx
+            self._quote_ctx = None
+            self._codes = []
+            if quote_ctx is not None:
+                try:
+                    quote_ctx.close()
+                except Exception as exc:
+                    self._event_sink.on_broker_message(logging.WARNING, f"quote context close failed: {exc}")
+
+    def _build_quote_handler(self):
+        futu = self._futu
+        broker = self
+
+        class QuoteHandler(futu["StockQuoteHandlerBase"]):
+            def on_recv_rsp(self, rsp_pb):
+                ret_code, content = super().on_recv_rsp(rsp_pb)
+                if ret_code != futu["RET_OK"]:
+                    broker._event_sink.on_broker_message(logging.ERROR, f"quote push error: {content}")
+                    return ret_code, content
+                broker._handle_quote_frame(content)
+                return ret_code, content
+
+        return QuoteHandler()
+
+    def _build_kline_handler(self):
+        futu = self._futu
+        broker = self
+
+        class KlineHandler(futu["CurKlineHandlerBase"]):
+            def on_recv_rsp(self, rsp_pb):
+                ret_code, content = super().on_recv_rsp(rsp_pb)
+                if ret_code != futu["RET_OK"]:
+                    broker._event_sink.on_broker_message(logging.ERROR, f"kline push error: {content}")
+                    return ret_code, content
+                broker._handle_kline_frame(content)
+                return ret_code, content
+
+        return KlineHandler()
+
+    def _handle_quote_frame(self, frame: pd.DataFrame) -> None:
+        if frame.empty:
+            return
+        for row in frame.itertuples(index=False):
+            timestamp = pd.Timestamp(f"{row.data_date} {row.data_time}")
+            self._event_sink.on_quote(
+                QuoteUpdate(
+                    code=str(row.code),
+                    timestamp=timestamp,
+                    last_price=float(row.last_price),
+                    volume=float(row.volume) if not pd.isna(row.volume) else None,
+                    turnover=float(row.turnover) if not pd.isna(row.turnover) else None,
+                    open_price=float(row.open_price) if not pd.isna(row.open_price) else None,
+                    high_price=float(row.high_price) if not pd.isna(row.high_price) else None,
+                    low_price=float(row.low_price) if not pd.isna(row.low_price) else None,
+                    prev_close_price=float(row.prev_close_price) if not pd.isna(row.prev_close_price) else None,
+                    source="quote",
+                )
+            )
+
+    def _handle_kline_frame(self, frame: pd.DataFrame) -> None:
+        if frame.empty:
+            return
+        normalized = frame.copy()
+        normalized["time_key"] = pd.to_datetime(normalized["time_key"])
+        for row in normalized.sort_values("time_key").itertuples(index=False):
+            self._event_sink.on_bar(
+                str(row.code),
+                {
+                    "code": str(row.code),
+                    "time_key": pd.Timestamp(row.time_key),
+                    "open": float(row.open),
+                    "close": float(row.close),
+                    "high": float(row.high),
+                    "low": float(row.low),
+                    "volume": float(row.volume) if not pd.isna(row.volume) else 0.0,
+                },
+            )
+
+
+class FutuDailyHistoryProvider(DailyHistoryProvider):
+    def __init__(self, config: HistoryBrokerConfig, logger: logging.Logger) -> None:
+        self._config = config
+        self._logger = logger
+
+    def fetch_daily_histories(
+        self,
+        codes: Iterable[str],
+        daily_warmup_bars: Mapping[str, int],
+    ) -> dict[str, pd.DataFrame]:
+        futu = _load_futu_api()
+        quote_ctx = futu["OpenQuoteContext"](host=self._config.host, port=self._config.port)
+        try:
+            histories: dict[str, pd.DataFrame] = {}
+            for code in sorted({str(code).strip().upper() for code in codes if str(code).strip()}):
+                bars = min(max(int(daily_warmup_bars.get(code, 10)), 10), 1000)
+                ret, data = quote_ctx.get_cur_kline(code, bars, ktype=futu["KLType"].K_DAY)
+                if ret != futu["RET_OK"]:
+                    self._logger.warning("get_cur_kline failed for %s: %s", code, data)
+                    histories[code] = pd.DataFrame(columns=["code", "time_key", "open", "close", "high", "low", "volume"])
+                    continue
+                history = data.copy()
+                history["time_key"] = pd.to_datetime(history["time_key"])
+                histories[code] = history
+            return histories
+        finally:
+            quote_ctx.close()
+
+    def close(self) -> None:
+        return None
+
+
+class FutuTradeAccountClient(TradeAccountClient):
+    def __init__(self, config: TradeAccountConfig, event_sink: TradeAccountEventSink, logger: logging.Logger) -> None:
+        self._config = config
+        self._event_sink = event_sink
+        self._logger = logger
+        self._trade_ctx = None
+        self._futu = None
+        self._poll_stop = threading.Event()
+        self._poll_thread: threading.Thread | None = None
+        self._lock = threading.RLock()
+
+    def connect(self) -> None:
+        with self._lock:
+            self.close()
+            self._poll_stop = threading.Event()
+            self._futu = _load_futu_api()
+            self._trade_ctx = self._futu["OpenSecTradeContext"](
+                filter_trdmarket=self._futu["TrdMarket"].US,
+                host=self._config.broker.host,
+                port=self._config.broker.port,
+            )
+            self._trade_ctx.set_handler(self._build_trade_order_handler())
+            self._trade_ctx.set_handler(self._build_trade_deal_handler())
+            self._trade_ctx.start()
+            self._poll_thread = threading.Thread(
+                target=self._poll_loop,
+                name=f"futu-account-poller-{self._config.account_id}",
+                daemon=True,
+            )
+            self._poll_thread.start()
+            self._poll_account()
+            self._poll_positions()
+
+    def close(self) -> None:
+        with self._lock:
+            self._poll_stop.set()
+            if self._poll_thread is not None and self._poll_thread.is_alive():
+                self._poll_thread.join(timeout=3.0)
+            self._poll_thread = None
+
+            trade_ctx = self._trade_ctx
+            self._trade_ctx = None
+            if trade_ctx is not None:
+                try:
+                    trade_ctx.close()
+                except Exception as exc:
+                    self._event_sink.on_broker_message(
+                        logging.WARNING,
+                        f"account={self._config.account_id} trade context close failed: {exc}",
+                    )
+
+    def _build_trade_order_handler(self):
+        futu = self._futu
+        broker = self
+
+        class TradeOrderHandler(futu["TradeOrderHandlerBase"]):
+            def on_recv_rsp(self, rsp_pb):
+                ret_code, content = super().on_recv_rsp(rsp_pb)
+                if ret_code != futu["RET_OK"]:
+                    broker._event_sink.on_broker_message(
+                        logging.ERROR,
+                        f"account={broker._config.account_id} order push error: {content}",
+                    )
+                    return ret_code, content
+                if not content.empty:
+                    row = content.iloc[0]
+                    broker._event_sink.on_broker_message(
+                        logging.INFO,
+                        "ORDER_PUSH "
+                        f"account={broker._config.account_id} code={row.get('code')} status={row.get('order_status')} "
+                        f"dealt_qty={row.get('dealt_qty')} avg_price={row.get('dealt_avg_price')} side={row.get('trd_side')}",
+                    )
+                return ret_code, content
+
+        return TradeOrderHandler()
+
+    def _build_trade_deal_handler(self):
+        futu = self._futu
+        broker = self
+
+        class TradeDealHandler(futu["TradeDealHandlerBase"]):
+            def on_recv_rsp(self, rsp_pb):
+                ret_code, content = super().on_recv_rsp(rsp_pb)
+                if ret_code != futu["RET_OK"]:
+                    broker._event_sink.on_broker_message(
+                        logging.ERROR,
+                        f"account={broker._config.account_id} deal push error: {content}",
+                    )
+                    return ret_code, content
+                if not content.empty:
+                    row = content.iloc[0]
+                    broker._event_sink.on_broker_message(
+                        logging.INFO,
+                        "DEAL_PUSH "
+                        f"account={broker._config.account_id} code={row.get('code')} qty={row.get('qty')} "
+                        f"price={row.get('price')} side={row.get('trd_side')}",
+                    )
+                return ret_code, content
+
+        return TradeDealHandler()
+
+    def _poll_loop(self) -> None:
+        next_account_poll = 0.0
+        next_position_poll = 0.0
+        while not self._poll_stop.wait(0.5):
+            now = time.monotonic()
+            if now >= next_account_poll:
+                self._poll_account()
+                next_account_poll = now + self._config.broker.account_poll_interval_seconds
+            if now >= next_position_poll:
+                self._poll_positions()
+                next_position_poll = now + self._config.broker.position_poll_interval_seconds
+
+    def _poll_account(self) -> None:
+        with self._lock:
+            if self._trade_ctx is None or self._futu is None:
+                return
+            ret, data = self._trade_ctx.accinfo_query(
+                trd_env=self._resolve_trade_env(),
+                acc_index=self._config.broker.account_index,
+                currency=self._futu["Currency"].USD,
+            )
+        if ret != self._futu["RET_OK"]:
+            self._event_sink.on_broker_message(
+                logging.WARNING,
+                f"account={self._config.account_id} accinfo_query failed: {data}",
+            )
+            return
+        if data.empty:
+            return
+        row = data.iloc[0]
+        snapshot = AccountSnapshot(
+            timestamp=pd.Timestamp.utcnow(),
+            total_assets=_coerce_optional_float(row.get("total_assets")),
+            cash=_coerce_optional_float(row.get("cash")),
+            available_funds=_coerce_optional_float(row.get("available_funds")),
+            buying_power=_coerce_optional_float(row.get("power")),
+            currency=_coerce_optional_str(row.get("currency")) or "USD",
+            raw=row.to_dict(),
+        )
+        self._event_sink.on_account(self._config.account_id, snapshot)
+
+    def _poll_positions(self) -> None:
+        with self._lock:
+            if self._trade_ctx is None or self._futu is None:
+                return
+            ret, data = self._trade_ctx.position_list_query(
+                trd_env=self._resolve_trade_env(),
+                acc_index=self._config.broker.account_index,
+                refresh_cache=True,
+            )
+        if ret != self._futu["RET_OK"]:
+            self._event_sink.on_broker_message(
+                logging.WARNING,
+                f"account={self._config.account_id} position_list_query failed: {data}",
+            )
+            return
+        positions: dict[str, PositionSnapshot] = {}
+        for row in data.itertuples(index=False):
+            positions[str(row.code)] = PositionSnapshot(
+                code=str(row.code),
+                qty=int(_coerce_optional_float(row.qty) or 0),
+                can_sell_qty=int(_coerce_optional_float(row.can_sell_qty) or 0),
+                average_cost=_coerce_optional_float(row.average_cost),
+                market_val=_coerce_optional_float(row.market_val),
+                unrealized_pl=_coerce_optional_float(row.unrealized_pl),
+                realized_pl=_coerce_optional_float(row.realized_pl),
+                currency=_coerce_optional_str(row.currency) or "USD",
+                raw=row._asdict(),
+            )
+        self._event_sink.on_positions(self._config.account_id, positions)
+
+    def _resolve_trade_env(self):
+        if self._config.broker.trade_env == "SIMULATE":
+            return self._futu["TrdEnv"].SIMULATE
+        return self._futu["TrdEnv"].REAL
+
+
+def _load_futu_api() -> dict[str, Any]:
+    runtime_home = Path.cwd() / ".futu_runtime"
+    runtime_home.mkdir(parents=True, exist_ok=True)
+    os.environ["HOME"] = str(runtime_home)
+    from futu import (
+        Currency,
+        CurKlineHandlerBase,
+        KLType,
+        OpenQuoteContext,
+        OpenSecTradeContext,
+        RET_OK,
+        StockQuoteHandlerBase,
+        SubType,
+        TradeDealHandlerBase,
+        TradeOrderHandlerBase,
+        TrdEnv,
+        TrdMarket,
+    )
+
+    return {
+        "Currency": Currency,
+        "CurKlineHandlerBase": CurKlineHandlerBase,
+        "KLType": KLType,
+        "OpenQuoteContext": OpenQuoteContext,
+        "OpenSecTradeContext": OpenSecTradeContext,
+        "RET_OK": RET_OK,
+        "StockQuoteHandlerBase": StockQuoteHandlerBase,
+        "SubType": SubType,
+        "TradeDealHandlerBase": TradeDealHandlerBase,
+        "TradeOrderHandlerBase": TradeOrderHandlerBase,
+        "TrdEnv": TrdEnv,
+        "TrdMarket": TrdMarket,
+    }
+
+
+def _coerce_optional_float(value: Any) -> float | None:
+    if value is None or pd.isna(value):
+        return None
+    if isinstance(value, str):
+        normalized = value.strip().upper()
+        if not normalized or normalized == "N/A":
+            return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_optional_str(value: Any) -> str | None:
+    if value is None or pd.isna(value):
+        return None
+    normalized = str(value).strip()
+    if not normalized or normalized.upper() == "N/A":
+        return None
+    return normalized
+
+
+def create_quote_broker_client(
+    config: RealtimeQuoteBrokerConfig,
+    event_sink: QuoteBrokerEventSink,
+    logger: logging.Logger,
+) -> QuoteBrokerClient:
+    if config.type == "futu":
+        return FutuRealtimeQuoteClient(config, event_sink, logger)
+    raise ValueError(f"unsupported broker type: {config.type}")
+
+
+def create_daily_history_provider(
+    config: HistoryBrokerConfig,
+    logger: logging.Logger,
+) -> DailyHistoryProvider:
+    if config.type == "futu":
+        return FutuDailyHistoryProvider(config, logger)
+    raise ValueError(f"unsupported broker type: {config.type}")
+
+
+def create_trade_account_client(
+    config: TradeAccountConfig,
+    event_sink: TradeAccountEventSink,
+    logger: logging.Logger,
+) -> TradeAccountClient:
+    if config.broker.type == "futu":
+        return FutuTradeAccountClient(config, event_sink, logger)
+    raise ValueError(f"unsupported broker type: {config.broker.type}")

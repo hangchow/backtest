@@ -1,0 +1,34 @@
+{
+  "trade_accounts": [
+    {
+      "account_id": "sim_primary",
+      "broker": {
+        "type": "futu",
+        "host": "127.0.0.1",
+        "port": 11111,
+        "market": "US",
+        "trade_env": "SIMULATE",
+        "account_index": 0,
+        "fee_account": "futu_alt",
+        "security_type": "stock",
+        "account_poll_interval_seconds": 15,
+        "position_poll_interval_seconds": 15
+      }
+    },
+    {
+      "account_id": "real_user_a",
+      "broker": {
+        "type": "futu",
+        "host": "127.0.0.2",
+        "port": 22222,
+        "market": "US",
+        "trade_env": "REAL",
+        "account_index": 0,
+        "fee_account": "futu_alt",
+        "security_type": "stock",
+        "account_poll_interval_seconds": 15,
+        "position_poll_interval_seconds": 15
+      }
+    }
+  ]
+}

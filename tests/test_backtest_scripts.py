@@ -13,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.backtest_rsi_reversion import compute_rsi
+from backtest.backtest_rsi_reversion import compute_rsi
 from tests.minute_csv_utils import remove_stale_daily_files, save_daily_files
 
 

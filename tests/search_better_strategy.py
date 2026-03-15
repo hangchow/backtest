@@ -12,14 +12,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.backtest_common import (
+from backtest.backtest_common import (
     add_data_source_args,
     load_histories,
     load_history,
     resolve_codes,
     resolve_data_dir,
 )
-from scripts.backtest_rsi_reversion import compute_rsi
+from backtest.backtest_rsi_reversion import compute_rsi
 
 
 DEFAULT_INITIAL_CASH = 100_000.0

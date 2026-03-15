@@ -11,7 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.backtest_common import add_data_source_args, load_history, resolve_data_dir
+from backtest.backtest_common import add_data_source_args, load_history, resolve_data_dir
 
 
 DEFAULT_INITIAL_CASH = 10_000.0
