@@ -76,6 +76,7 @@ DEFAULT_MARKET_FILTER_WINDOW = 120
 DEFAULT_REBALANCE_BAND_PCT = 0.1
 DEFAULT_VOLATILITY_WINDOW = 20
 DEFAULT_TARGET_ANNUAL_VOL = 0.30
+DEFAULT_MAX_GROSS_EXPOSURE = 1.0
 
 
 def parse_args() -> argparse.Namespace:
@@ -144,6 +145,12 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_TARGET_ANNUAL_VOL,
         help="Annualized volatility target. Lower values reduce gross risk allocation.",
     )
+    parser.add_argument(
+        "--max-gross-exposure",
+        type=float,
+        default=DEFAULT_MAX_GROSS_EXPOSURE,
+        help="Maximum gross exposure multiplier (1.0=fully funded, >1 allows bounded leverage).",
+    )
     return parser.parse_args()
 
 
@@ -191,14 +198,14 @@ def compute_volume_boost(volume_ratio: pd.Series, min_volume_ratio: float) -> pd
 
 
 def _compute_affordable_qty_with_fee(
-    cash: float,
+    available_cash: float,
     price: float,
     needed_qty: int,
     fee_account: str | None,
     market: str,
     security_type: str,
 ) -> tuple[int, float, dict[str, float]]:
-    qty = min(needed_qty, int(cash // price))
+    qty = min(needed_qty, int(max(0.0, available_cash) // price))
     while qty > 0:
         fee_total, fee_breakdown = compute_order_fees(
             fee_account=fee_account,
@@ -208,7 +215,7 @@ def _compute_affordable_qty_with_fee(
             shares=qty,
             security_type=security_type,
         )
-        if qty * price + fee_total <= cash + 1e-9:
+        if qty * price + fee_total <= available_cash + 1e-9:
             return qty, fee_total, fee_breakdown
         qty -= 1
     return 0, 0.0, {}
@@ -228,6 +235,7 @@ def run_backtest(
     rebalance_band_pct: float,
     volatility_window: int,
     target_annual_vol: float,
+    max_gross_exposure: float,
     eval_start: pd.Timestamp | None = None,
     fee_account: str | None = None,
     market: str | None = None,
@@ -249,6 +257,8 @@ def run_backtest(
         raise ValueError("volatility-window must be > 1")
     if target_annual_vol <= 0:
         raise ValueError("target-annual-vol must be positive")
+    if max_gross_exposure < 1:
+        raise ValueError("max-gross-exposure must be >= 1")
     validate_volume_filter(volume_window, min_volume_ratio)
     if not prices.index.equals(volumes.index) or not prices.columns.equals(volumes.columns):
         raise ValueError("prices and volumes must share the same index and columns")
@@ -294,12 +304,14 @@ def run_backtest(
 
         desired_shares = {code: 0 for code in shares}
         portfolio_value = cash + sum(qty * last_prices.get(code, 0.0) for code, qty in shares.items())
+        max_gross_notional = portfolio_value
         if target_codes:
             target_vol_multiplier = 1.0
             if pd.notna(realized_daily_vol.iloc[index]) and realized_daily_vol.iloc[index] > 0:
                 annualized_vol = float(realized_daily_vol.iloc[index]) * (252**0.5)
                 target_vol_multiplier = min(1.0, target_annual_vol / annualized_vol)
-            investable_value = portfolio_value * target_vol_multiplier
+            max_gross_notional = portfolio_value * target_vol_multiplier * max_gross_exposure
+            investable_value = max_gross_notional
             target_value = investable_value / len(target_codes)
             for code in target_codes:
                 if code not in tradable_codes:
@@ -349,8 +361,10 @@ def run_backtest(
                 if needed_qty <= 0:
                     continue
                 price = float(tradable_row[code])
+                current_gross_notional = sum(qty * last_prices.get(sym, 0.0) for sym, qty in shares.items())
+                remaining_gross_capacity = max(0.0, max_gross_notional - current_gross_notional)
                 affordable_qty, fee_total, fee_breakdown = _compute_affordable_qty_with_fee(
-                    cash=cash,
+                    available_cash=cash + remaining_gross_capacity,
                     price=price,
                     needed_qty=needed_qty,
                     fee_account=fee_account,
@@ -400,6 +414,7 @@ def run_backtest(
         "rebalance_band_pct": rebalance_band_pct,
         "volatility_window": volatility_window,
         "target_annual_vol": target_annual_vol,
+        "max_gross_exposure": max_gross_exposure,
         "fee_account": fee_account,
         "market": market,
         "security_type": security_type,
@@ -435,6 +450,7 @@ def main() -> int:
         rebalance_band_pct=args.rebalance_band_pct,
         volatility_window=args.volatility_window,
         target_annual_vol=args.target_annual_vol,
+        max_gross_exposure=args.max_gross_exposure,
         eval_start=eval_start,
         fee_account=args.fee_account,
         market=market,
@@ -452,7 +468,8 @@ def main() -> int:
         f"volume boost above {summary['min_volume_ratio']:.2f}x avg({summary['volume_window']}), "
         f"market filter MA{summary['market_filter_window']}, "
         f"rebalance band {summary['rebalance_band_pct']:.2%}, "
-        f"vol target {summary['target_annual_vol']:.2f} ann (window {summary['volatility_window']}))"
+        f"vol target {summary['target_annual_vol']:.2f} ann (window {summary['volatility_window']}), "
+        f"max gross exposure {summary['max_gross_exposure']:.2f}x)"
     )
     if summary["fee_account"]:
         print(f"Fee account: {summary['fee_account']}")
