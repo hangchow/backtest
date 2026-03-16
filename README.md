@@ -14,12 +14,6 @@ python3 -m venv .venv
 ./.venv/bin/pip install -r requirements.txt
 ```
 
-美股实盘 warm-up 需要 Polygon 日线 API key：
-
-```bash
-export POLYGON_API_KEY=your_api_key
-```
-
 ## 架构
 
 - `live_trading/config.py`
@@ -36,8 +30,11 @@ export POLYGON_API_KEY=your_api_key
   - `futu` 通过 OpenD 订阅 `QUOTE` 和 `K_1M`。
   - `mock` 在本地启动一个 HTTP 推送入口，外部可以在运行中手工推送分钟 K。
 - `history_broker`
-  - 当前只支持 `futu`。
+  - 支持 `polygon` 和 `futu`。
+  - `polygon`
   - 启动 warm-up 顺序：先读 `.kline_day/<code>/*.csv`（实盘缓存日线，按周文件）→ 若缓存缺失或过期，则直接从 Polygon 拉日线写回 `.kline_day/`，再从缓存读取。
+  - `futu`
+  - 通过 OpenD `get_cur_kline(..., K_DAY)` 直接拉历史日线，`history_broker.host` / `history_broker.port` 会真实生效。
   - `kline_day/` 与 `kline_minute/` 仅保留给回测和离线研究使用，不参与实盘 warm-up。
   - `trade_accounts`
   - 分别查询资金和持仓，并保留未来接真实下单的接口位置。
@@ -56,8 +53,8 @@ export POLYGON_API_KEY=your_api_key
   - 负责价格变更通知和分钟 K 输入。
   - `history_broker`
   - 负责策略 warm-up 用的历史日线获取。
-- `realtime_broker` 支持 `futu` 和 `mock`；`history_broker` 当前只支持 `futu`。
-- 如果当前 OpenD 账号没有开通美股实时订阅，可以把 `realtime_broker` 切到 `mock`；实盘 warm-up 仍然会走 `.kline_day/` + Polygon 日线缓存。
+- `realtime_broker` 支持 `futu` 和 `mock`；`history_broker` 支持 `polygon` 和 `futu`。
+- 如果当前 OpenD 账号没有开通美股实时订阅，可以把 `realtime_broker` 切到 `mock`；实盘 warm-up 建议把 `history_broker` 设成 `polygon`，走 `.kline_day/` + Polygon 日线缓存。
 - `dual_momentum` 用日线维度计算，在收到“新交易日第一根分钟 bar”时，使用上一交易日的已完成日线数据生成调仓信号。
 - 资金、持仓目前先用“定时查询 + 差异日志”实现成统一事件流；后续切到其他券商时可替换成原生 push。
 - 每个交易账户都会维护自己独立的 `shadow_positions` / `shadow_cash`，用于 dry-run 模式下避免重复买入卖出逻辑失真。
@@ -85,9 +82,10 @@ export POLYGON_API_KEY=your_api_key
   - `realtime_broker.extended_time`
   - 仅 `futu` 模式生效，决定是否订阅扩展时段分钟行情。
   - `history_broker.type`
-  - 当前只支持 `futu`。
+  - 支持 `polygon` 和 `futu`。
   - `history_broker.host` / `history_broker.port`
-  - 保留给兼容旧配置；当前美股实盘 warm-up 不再通过 OpenD 拉历史日线。
+  - 仅 `futu` 模式生效，对应 OpenD 地址。
+  - `polygon` 模式下可以省略。
   - `stock_pool.codes`
   - 股票池代码列表。
   - `stock_pool.strategy`
@@ -107,6 +105,7 @@ export POLYGON_API_KEY=your_api_key
 ## 运行
 
 ```bash
+export POLYGON_API_KEY=your_api_key
 ./.venv/bin/python run_live_trading.py \
   --quote-config config/live_trading.quote.sample.json \
   --trade-config config/live_trading.trade_accounts.sample.json
@@ -115,6 +114,7 @@ export POLYGON_API_KEY=your_api_key
 如果实时行情改走 mock：
 
 ```bash
+export POLYGON_API_KEY=your_api_key
 ./.venv/bin/python run_live_trading.py \
   --quote-config config/live_trading.quote.mock.sample.json \
   --trade-config config/live_trading.trade_accounts.sample.json

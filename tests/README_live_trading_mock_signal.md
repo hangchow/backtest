@@ -44,7 +44,7 @@
 }
 ```
 
-`history_broker` 仍然可以继续走 `futu`，因为策略 warm-up 用的是日线，不是实时推送。
+`history_broker` 建议显式配成 `polygon`，因为策略 warm-up 用的是日线，不是实时推送；如果你想强制走 OpenD 日线，也可以改成 `futu`。
 
 ### 2.2 账户侧必须已经有资金和持仓状态
 

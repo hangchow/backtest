@@ -27,7 +27,41 @@ except ImportError:
 HISTORY_COLUMNS = ["code", "time_key", "open", "close", "high", "low", "volume"]
 CSV_COLUMNS = ["time_key", "open", "close", "high", "low", "volume"]
 NEW_YORK = ZoneInfo("America/New_York")
+HONG_KONG = ZoneInfo("Asia/Hong_Kong")
 US_MARKET_CLOSE = datetime_time(16, 0)
+HK_MARKET_CLOSE = datetime_time(16, 0)
+MARKET_SESSIONS: dict[str, tuple[ZoneInfo, datetime_time]] = {
+    "US": (NEW_YORK, US_MARKET_CLOSE),
+    "HK": (HONG_KONG, HK_MARKET_CLOSE),
+}
+
+
+def _market_session(market: str | None) -> tuple[ZoneInfo, datetime_time] | None:
+    normalized_market = (market or "US").strip().upper()
+    return MARKET_SESSIONS.get(normalized_market)
+
+
+def _default_now_provider_for_market(market: str | None) -> Callable[[], datetime]:
+    session = _market_session(market)
+    timezone = session[0] if session is not None else NEW_YORK
+    return lambda: datetime.now(tz=timezone)
+
+
+def _expected_latest_trade_date_for_market(market: str | None, now: datetime) -> date | None:
+    session = _market_session(market)
+    if session is None:
+        return None
+    timezone, market_close = session
+    current = now
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone)
+    current = current.astimezone(timezone)
+    latest = current.date()
+    if current.weekday() >= 5 or current.time() < market_close:
+        latest = latest - timedelta(days=1)
+    while latest.weekday() >= 5:
+        latest = latest - timedelta(days=1)
+    return latest
 
 
 class QuoteBrokerEventSink(Protocol):
@@ -410,38 +444,6 @@ class MockRealtimeQuoteClient(QuoteBrokerClient):
         }
 
 
-class FutuDailyHistoryProvider(DailyHistoryProvider):
-    def __init__(self, config: HistoryBrokerConfig, logger: logging.Logger) -> None:
-        self._config = config
-        self._logger = logger
-
-    def fetch_daily_histories(
-        self,
-        codes: Iterable[str],
-        daily_warmup_bars: Mapping[str, int],
-    ) -> dict[str, pd.DataFrame]:
-        futu = _load_futu_api()
-        quote_ctx = futu["OpenQuoteContext"](host=self._config.host, port=self._config.port)
-        try:
-            histories: dict[str, pd.DataFrame] = {}
-            for code in sorted({str(code).strip().upper() for code in codes if str(code).strip()}):
-                bars = min(max(int(daily_warmup_bars.get(code, 10)), 10), 1000)
-                ret, data = quote_ctx.get_cur_kline(code, bars, ktype=futu["KLType"].K_DAY)
-                if ret != futu["RET_OK"]:
-                    self._logger.warning("get_cur_kline failed for %s: %s", code, data)
-                    histories[code] = pd.DataFrame(columns=["code", "time_key", "open", "close", "high", "low", "volume"])
-                    continue
-                history = data.copy()
-                history["time_key"] = pd.to_datetime(history["time_key"])
-                histories[code] = history
-            return histories
-        finally:
-            quote_ctx.close()
-
-    def close(self) -> None:
-        return None
-
-
 class LocalDataDailyHistoryProvider(DailyHistoryProvider):
     def __init__(
         self,
@@ -468,7 +470,7 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
         self._remote_minute_fetcher = remote_minute_fetcher
         self._remote_minute_page_size = max(int(remote_minute_page_size), 1)
         self._remote_minute_max_pages = max(int(remote_minute_max_pages), 1)
-        self._now_provider = now_provider or (lambda: datetime.now(tz=NEW_YORK))
+        self._now_provider = now_provider or _default_now_provider_for_market(config.market)
 
     def fetch_daily_histories(
         self,
@@ -479,7 +481,7 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
         histories: dict[str, pd.DataFrame] = {}
 
         for code in normalized_codes:
-            bars = min(max(int(daily_warmup_bars.get(code, 10)), 10), 1000)
+            bars = min(max(int(daily_warmup_bars.get(code, 1)), 1), 1000)
             daily_history = self._load_daily_from_kline_day(code, bars)
             minute_history, minute_from_remote = self._load_minute_for_warmup(code, bars, daily_history)
             merged_daily = self._merge_daily_histories(code, daily_history, minute_history, bars)
@@ -501,7 +503,7 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
 
     def _load_daily_from_kline_day(self, code: str, bars: int) -> pd.DataFrame | None:
         code_dir = self._kline_day_root / code
-        daily = self._load_local_csv_history(code_dir, code, frame_type="daily")
+        daily = self._load_local_csv_history(code_dir, code, frame_type="daily", dedupe_error=True)
         if daily is None:
             return None
         result = daily.tail(bars).reset_index(drop=True)
@@ -633,6 +635,8 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
 
     def _fetch_remote_minute_history(self, code: str, bars: int) -> pd.DataFrame:
         futu = _load_futu_api()
+        if not self._config.host or self._config.port is None:
+            raise ValueError("futu history broker requires host and port")
         quote_ctx = futu["OpenQuoteContext"](host=self._config.host, port=self._config.port)
         try:
             rows: list[pd.DataFrame] = []
@@ -683,22 +687,54 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
         data = frame.copy()
         data["time_key"] = pd.to_datetime(data["time_key"])
         data["week_start"] = data["time_key"].dt.normalize() - pd.to_timedelta(data["time_key"].dt.weekday, unit="D")
-        grouped = {pd.Timestamp(week_start): weekly for week_start, weekly in data.groupby("week_start")}
-        min_week = min(grouped.keys())
-        max_week = max(grouped.keys())
-        cursor = min_week
-        while cursor <= max_week:
-            file_path = code_dir / f"{code}_{cursor.date().isoformat()}.csv"
-            weekly = grouped.get(cursor)
-            if weekly is None:
-                payload = pd.DataFrame(columns=CSV_COLUMNS)
-            else:
-                payload = weekly[CSV_COLUMNS].copy()
-                payload["time_key"] = payload["time_key"].dt.strftime("%Y-%m-%d %H:%M:%S")
+        for week_start, weekly in data.groupby("week_start", sort=True):
+            week_start = pd.Timestamp(week_start)
+            file_path = code_dir / f"{code}_{week_start.date().isoformat()}.csv"
+            payload = self._merge_weekly_csv_payload(
+                file_path,
+                week_start,
+                weekly[CSV_COLUMNS].copy(),
+            )
             action = self._write_csv_payload(file_path, payload)
             if action is not None:
                 self._logger.info("warm-up cache file %s path=%s rows=%d", action, file_path, len(payload))
-            cursor = cursor + pd.Timedelta(days=7)
+
+    def _merge_weekly_csv_payload(
+        self,
+        file_path: Path,
+        week_start: pd.Timestamp,
+        payload: pd.DataFrame,
+    ) -> pd.DataFrame:
+        incoming = payload.copy()
+        incoming["time_key"] = pd.to_datetime(incoming["time_key"], errors="coerce")
+
+        existing = pd.DataFrame(columns=CSV_COLUMNS)
+        if file_path.exists():
+            try:
+                existing = pd.read_csv(file_path)
+            except pd.errors.EmptyDataError:
+                existing = pd.DataFrame(columns=CSV_COLUMNS)
+            for column in CSV_COLUMNS:
+                if column not in existing.columns:
+                    existing[column] = pd.NA
+            existing = existing[CSV_COLUMNS]
+            existing["time_key"] = pd.to_datetime(existing["time_key"], errors="coerce")
+
+        merged = pd.concat([existing, incoming], ignore_index=True)
+        week_end = week_start + pd.Timedelta(days=7)
+        merged = merged.dropna(subset=["time_key"])
+        merged = merged.loc[
+            (merged["time_key"] >= week_start) & (merged["time_key"] < week_end),
+            CSV_COLUMNS,
+        ]
+        merged["time_key"] = pd.to_datetime(merged["time_key"], errors="coerce")
+        merged = merged.dropna(subset=["time_key"])
+        merged = merged.sort_values("time_key").drop_duplicates(subset=["time_key"], keep="last").reset_index(drop=True)
+        if merged.empty:
+            return pd.DataFrame(columns=CSV_COLUMNS)
+
+        merged["time_key"] = merged["time_key"].dt.strftime("%Y-%m-%d %H:%M:%S")
+        return merged
 
     def _write_daily_csv_if_missing(self, code_dir: Path, code: str, frame: pd.DataFrame) -> None:
         if frame.empty:
@@ -783,16 +819,7 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
         return timestamps.max().date()
 
     def _expected_latest_trade_date(self) -> date | None:
-        current = self._now_provider()
-        if current.tzinfo is None:
-            current = current.replace(tzinfo=NEW_YORK)
-        current = current.astimezone(NEW_YORK)
-        latest = current.date()
-        if current.weekday() >= 5 or current.time() < US_MARKET_CLOSE:
-            latest = latest - timedelta(days=1)
-        while latest.weekday() >= 5:
-            latest = latest - timedelta(days=1)
-        return latest
+        return _expected_latest_trade_date_for_market(self._config.market, self._now_provider())
 
     def _write_csv_payload(self, file_path: Path, payload: pd.DataFrame) -> str | None:
         existed = file_path.exists()
@@ -823,7 +850,7 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
         return normalized
 
 
-class PolygonCacheDailyHistoryProvider(LocalDataDailyHistoryProvider):
+class CachedRemoteDailyHistoryProvider(LocalDataDailyHistoryProvider):
     def __init__(
         self,
         config: HistoryBrokerConfig,
@@ -851,8 +878,9 @@ class PolygonCacheDailyHistoryProvider(LocalDataDailyHistoryProvider):
         histories: dict[str, pd.DataFrame] = {}
 
         for code in normalized_codes:
-            bars = min(max(int(daily_warmup_bars.get(code, 10)), 10), 1000)
-            daily_history = self._load_daily_from_kline_day(code, bars)
+            bars = min(max(int(daily_warmup_bars.get(code, 1)), 1), 1000)
+            full_daily_history = self._load_full_daily_from_kline_day(code)
+            daily_history = self._tail_daily_history(full_daily_history, bars)
             if self._should_refresh_remote_daily(daily_history, bars):
                 remote_daily = self._fetch_remote_daily_history(code, bars)
                 if remote_daily is None or remote_daily.empty:
@@ -862,15 +890,35 @@ class PolygonCacheDailyHistoryProvider(LocalDataDailyHistoryProvider):
                         self._expected_latest_trade_date(),
                         self._latest_trade_date(daily_history),
                     )
+                    histories[code] = pd.DataFrame(columns=HISTORY_COLUMNS)
+                    continue
                 else:
-                    if daily_history is not None and not daily_history.empty:
-                        remote_daily = pd.concat([daily_history, remote_daily], ignore_index=True)
-                    remote_daily = remote_daily.copy()
-                    remote_daily["time_key"] = pd.to_datetime(remote_daily["time_key"])
-                    remote_daily = remote_daily.sort_values("time_key").drop_duplicates(subset=["time_key"], keep="last").reset_index(drop=True)
-                    self._write_kline_day_weekly_csv_if_missing(code, remote_daily)
-                    # Re-read from cache so the live path always uses the same on-disk format.
-                    daily_history = self._load_daily_from_kline_day(code, bars)
+                    merged_daily = self._merge_daily_frames(full_daily_history, remote_daily)
+                    exact_daily = self._tail_daily_history(merged_daily, bars)
+                    if exact_daily is None or exact_daily.empty:
+                        self._logger.error("warm-up daily history unavailable after remote fetch code=%s", code)
+                        histories[code] = pd.DataFrame(columns=HISTORY_COLUMNS)
+                        continue
+                    if not self._daily_history_meets_latest_requirement(exact_daily):
+                        self._logger.error(
+                            "warm-up daily history remains stale after remote fetch code=%s expected_latest=%s daily_latest=%s",
+                            code,
+                            self._expected_latest_trade_date(),
+                            self._latest_trade_date(exact_daily),
+                        )
+                        histories[code] = pd.DataFrame(columns=HISTORY_COLUMNS)
+                        continue
+                    if len(exact_daily) < bars:
+                        self._logger.error(
+                            "warm-up daily history insufficient after remote fetch code=%s required_bars=%d available_bars=%d",
+                            code,
+                            bars,
+                            len(exact_daily),
+                        )
+                    self._rewrite_kline_day_weekly_csv(code, exact_daily)
+                    daily_history = exact_daily
+            elif full_daily_history is not None and daily_history is not None and len(full_daily_history) != len(daily_history):
+                self._rewrite_kline_day_weekly_csv(code, daily_history)
 
             if daily_history is None or daily_history.empty:
                 self._logger.error("warm-up daily data unavailable code=%s", code)
@@ -880,6 +928,36 @@ class PolygonCacheDailyHistoryProvider(LocalDataDailyHistoryProvider):
             histories[code] = daily_history.tail(bars).reset_index(drop=True)
 
         return histories
+
+    def _load_full_daily_from_kline_day(self, code: str) -> pd.DataFrame | None:
+        code_dir = self._kline_day_root / code
+        daily = self._load_local_csv_history(code_dir, code, frame_type="daily", dedupe_error=True)
+        if daily is None:
+            return None
+        self._logger.info("warm-up loaded from kline_day code=%s rows=%d dir=%s", code, len(daily), code_dir)
+        return daily
+
+    def _tail_daily_history(self, daily_history: pd.DataFrame | None, bars: int) -> pd.DataFrame | None:
+        if daily_history is None or daily_history.empty:
+            return daily_history
+        return daily_history.tail(bars).reset_index(drop=True)
+
+    def _merge_daily_frames(self, cached: pd.DataFrame | None, remote: pd.DataFrame | None) -> pd.DataFrame | None:
+        frames = [frame for frame in (cached, remote) if frame is not None and not frame.empty]
+        if not frames:
+            return None
+        merged = pd.concat(frames, ignore_index=True)
+        merged = merged.copy()
+        merged["time_key"] = pd.to_datetime(merged["time_key"])
+        merged = merged.sort_values("time_key").drop_duplicates(subset=["time_key"], keep="last").reset_index(drop=True)
+        return merged
+
+    def _rewrite_kline_day_weekly_csv(self, code: str, daily: pd.DataFrame | None) -> None:
+        if daily is None:
+            return
+        code_dir = self._kline_day_root / code
+        code_dir.mkdir(parents=True, exist_ok=True)
+        self._rewrite_weekly_csv_exact(code_dir, code, daily)
 
     def _should_refresh_remote_daily(self, daily_history: pd.DataFrame | None, bars: int) -> bool:
         expected_latest_trade_date = self._expected_latest_trade_date()
@@ -898,6 +976,39 @@ class PolygonCacheDailyHistoryProvider(LocalDataDailyHistoryProvider):
             return True
         return False
 
+    def _daily_history_meets_latest_requirement(self, daily_history: pd.DataFrame | None) -> bool:
+        expected_latest_trade_date = self._expected_latest_trade_date()
+        if expected_latest_trade_date is None:
+            return True
+        daily_latest_trade_date = self._latest_trade_date(daily_history)
+        return daily_latest_trade_date is not None and daily_latest_trade_date >= expected_latest_trade_date
+
+    def _fetch_remote_daily_history(self, code: str, bars: int) -> pd.DataFrame:
+        raise NotImplementedError
+
+    def _rewrite_weekly_csv_exact(self, code_dir: Path, code: str, frame: pd.DataFrame) -> None:
+        desired_paths: set[Path] = set()
+        if frame is not None and not frame.empty:
+            data = frame.copy()
+            data["time_key"] = pd.to_datetime(data["time_key"])
+            data = data.sort_values("time_key").drop_duplicates(subset=["time_key"], keep="last").reset_index(drop=True)
+            data["week_start"] = data["time_key"].dt.normalize() - pd.to_timedelta(data["time_key"].dt.weekday, unit="D")
+            for week_start, weekly in data.groupby("week_start", sort=True):
+                week_start = pd.Timestamp(week_start)
+                file_path = code_dir / f"{code}_{week_start.date().isoformat()}.csv"
+                desired_paths.add(file_path)
+                payload = weekly[CSV_COLUMNS].copy()
+                payload["time_key"] = payload["time_key"].dt.strftime("%Y-%m-%d %H:%M:%S")
+                action = self._write_csv_payload(file_path, payload)
+                if action is not None:
+                    self._logger.info("warm-up cache file %s path=%s rows=%d", action, file_path, len(payload))
+        for existing in sorted(code_dir.glob("*.csv")):
+            if existing not in desired_paths:
+                existing.unlink()
+                self._logger.info("warm-up cache file removed path=%s", existing)
+
+
+class PolygonCacheDailyHistoryProvider(CachedRemoteDailyHistoryProvider):
     def _fetch_remote_daily_history(self, code: str, bars: int) -> pd.DataFrame:
         if self._remote_daily_fetcher is not None:
             return self._remote_daily_fetcher(code, bars)
@@ -909,23 +1020,33 @@ class PolygonCacheDailyHistoryProvider(LocalDataDailyHistoryProvider):
 
         ticker = code.split(".", 1)[1] if "." in code else code
         end_date = self._expected_latest_trade_date() or self._now_provider().astimezone(NEW_YORK).date()
-        start_date = end_date - timedelta(days=max(bars * 4, 365))
-        query = urlencode(
-            {
-                "adjusted": "true",
-                "sort": "asc",
-                "limit": 50000,
-                "apiKey": api_key,
-            }
-        )
-        url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/{start_date.isoformat()}/{end_date.isoformat()}?{query}"
-        with urlopen(url, timeout=60) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        status = payload.get("status")
-        if status not in {"OK", "DELAYED"}:
-            detail = payload.get("error") or payload.get("message") or payload
-            raise RuntimeError(f"polygon daily fetch failed for {code}: {detail}")
-        results = payload.get("results", [])
+        window_days = self._estimate_polygon_daily_window_days(bars)
+        max_window_days = 3650
+        results: list[dict[str, object]] = []
+        previous_result_count = -1
+        while window_days <= max_window_days:
+            start_date = end_date - timedelta(days=window_days)
+            results = self._request_polygon_daily_results(
+                ticker=ticker,
+                start_date=start_date,
+                end_date=end_date,
+                api_key=api_key,
+                code=code,
+                bars=bars,
+            )
+            if len(results) >= bars or window_days == max_window_days:
+                break
+            if len(results) <= previous_result_count:
+                self._logger.info(
+                    "warm-up polygon daily fetch stalled code=%s target_bars=%d returned_rows=%d window_days=%d",
+                    code,
+                    bars,
+                    len(results),
+                    window_days,
+                )
+                break
+            previous_result_count = len(results)
+            window_days = min(window_days + max(14, bars // 3), max_window_days)
         if not results:
             return pd.DataFrame(columns=HISTORY_COLUMNS)
 
@@ -944,6 +1065,84 @@ class PolygonCacheDailyHistoryProvider(LocalDataDailyHistoryProvider):
                 }
             )
         return pd.DataFrame(rows, columns=HISTORY_COLUMNS)
+
+    def _estimate_polygon_daily_window_days(self, bars: int) -> int:
+        trading_days_as_calendar = max((bars * 7 + 4) // 5, bars)
+        # Add a small buffer for market holidays without expanding into a multi-year fetch by default.
+        return max(trading_days_as_calendar + 14, 30)
+
+    def _request_polygon_daily_results(
+        self,
+        *,
+        ticker: str,
+        start_date: date,
+        end_date: date,
+        api_key: str,
+        code: str,
+        bars: int,
+    ) -> list[dict[str, object]]:
+        query = urlencode(
+            {
+                "adjusted": "true",
+                "sort": "asc",
+                "limit": 50000,
+                "apiKey": api_key,
+            }
+        )
+        url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/{start_date.isoformat()}/{end_date.isoformat()}?{query}"
+        with urlopen(url, timeout=60) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        status = payload.get("status")
+        if status not in {"OK", "DELAYED"}:
+            detail = payload.get("error") or payload.get("message") or payload
+            raise RuntimeError(f"polygon daily fetch failed for {code}: {detail}")
+        results = payload.get("results", [])
+        self._logger.info(
+            "warm-up polygon daily fetch code=%s target_bars=%d start=%s end=%s returned_rows=%d",
+            code,
+            bars,
+            start_date,
+            end_date,
+            len(results),
+        )
+        return results
+
+
+class FutuDailyHistoryProvider(CachedRemoteDailyHistoryProvider):
+    def _fetch_remote_daily_history(self, code: str, bars: int) -> pd.DataFrame:
+        if self._remote_daily_fetcher is not None:
+            return self._remote_daily_fetcher(code, bars)
+
+        futu = _load_futu_api()
+        if not self._config.host or self._config.port is None:
+            raise ValueError("futu history broker requires host and port")
+        expected_latest_trade_date = self._expected_latest_trade_date()
+        request_bars = min(bars + 1, 1000) if expected_latest_trade_date is not None else bars
+        quote_ctx = futu["OpenQuoteContext"](host=self._config.host, port=self._config.port)
+        try:
+            ret, data = quote_ctx.get_cur_kline(code, request_bars, ktype=futu["KLType"].K_DAY)
+        finally:
+            quote_ctx.close()
+        if ret != futu["RET_OK"]:
+            self._logger.warning("get_cur_kline failed for %s: %s", code, data)
+            return pd.DataFrame(columns=HISTORY_COLUMNS)
+
+        history = data.copy()
+        history["time_key"] = pd.to_datetime(history["time_key"])
+        history = history.sort_values("time_key").drop_duplicates(subset=["time_key"], keep="last").reset_index(drop=True)
+        history = history[HISTORY_COLUMNS]
+        if expected_latest_trade_date is not None:
+            trimmed = history.loc[history["time_key"].dt.date <= expected_latest_trade_date].reset_index(drop=True)
+            if len(trimmed) != len(history):
+                self._logger.info(
+                    "trimmed in-progress futu daily bar code=%s expected_latest=%s returned_rows=%d kept_rows=%d",
+                    code,
+                    expected_latest_trade_date,
+                    len(history),
+                    len(trimmed),
+                )
+            history = trimmed
+        return history.tail(bars).reset_index(drop=True)
 
 
 class FutuTradeAccountClient(TradeAccountClient):
@@ -1197,8 +1396,10 @@ def create_daily_history_provider(
     config: HistoryBrokerConfig,
     logger: logging.Logger,
 ) -> DailyHistoryProvider:
-    if config.type == "futu":
+    if config.type == "polygon":
         return PolygonCacheDailyHistoryProvider(config, logger)
+    if config.type == "futu":
+        return FutuDailyHistoryProvider(config, logger)
     raise ValueError(f"unsupported broker type: {config.type}")
 
 

@@ -124,10 +124,12 @@ class LiveTradingEngine:
         self._latest_quotes: dict[str, QuoteUpdate] = {}
         self._latest_bar_prices: dict[str, float] = {}
         self._account_states: dict[str, TradeAccountState] = {}
+        self._history_warmup_pending = False
+        self._warmup_unavailable_codes: tuple[str, ...] = ()
         self._stop_event = threading.Event()
         self._lock = threading.RLock()
 
-    def apply_config(self, config: LiveTradingConfig) -> None:
+    def apply_config(self, config: LiveTradingConfig, *, force_warmup_refresh: bool = False) -> None:
         with self._lock:
             self._logger.setLevel(getattr(logging, config.runtime.log_level, logging.INFO))
             realtime_reconnect = self._current_config is None or (
@@ -136,9 +138,16 @@ class LiveTradingEngine:
             history_refresh = self._current_config is None or (
                 self._current_config.history_broker.connection_signature() != config.history_broker.connection_signature()
             )
-            strategy_refresh = history_refresh or self._current_config is None or self._current_config.stock_pool != config.stock_pool
+            strategy_refresh = (
+                history_refresh
+                or self._current_config is None
+                or self._current_config.stock_pool != config.stock_pool
+                or force_warmup_refresh
+                or self._history_warmup_pending
+            )
             warmup_histories: dict[str, pd.DataFrame] = {}
             warmup_bars: dict[str, int] = {}
+            unavailable_codes: tuple[str, ...] = ()
             new_pool_strategy = self._pool_strategy
             if strategy_refresh:
                 new_pool_strategy = build_pool_strategy(config.stock_pool)
@@ -163,12 +172,26 @@ class LiveTradingEngine:
                 if self._history_provider is None:
                     self._history_provider = self._history_provider_factory(config.history_broker, self._logger)
                 warmup_histories = self._history_provider.fetch_daily_histories(config.stock_pool.codes, warmup_bars)
+                unavailable_codes = self._unavailable_warmup_codes(config.stock_pool.codes, warmup_histories)
 
             self._apply_trade_accounts_config(config)
 
             if strategy_refresh:
-                self._pool_strategy = new_pool_strategy
-                self._pool_strategy.bootstrap(warmup_histories)
+                if unavailable_codes:
+                    self._pool_strategy = None
+                    self._history_warmup_pending = True
+                    self._warmup_unavailable_codes = unavailable_codes
+                    self._logger.error(
+                        "HISTORY_WARMUP_UNAVAILABLE history=%s strategy=%s codes=%s",
+                        config.history_broker.endpoint_summary(),
+                        config.stock_pool.strategy.name,
+                        ",".join(unavailable_codes),
+                    )
+                else:
+                    self._pool_strategy = new_pool_strategy
+                    self._pool_strategy.bootstrap(warmup_histories)
+                    self._history_warmup_pending = False
+                    self._warmup_unavailable_codes = ()
 
             self._sync_shadow_state(config)
             self._current_config = config
@@ -213,8 +236,18 @@ class LiveTradingEngine:
             if refreshed_trade is not None:
                 trade_config = refreshed_trade
                 self._logger.info("CONFIG_CHANGED path=%s", self._trade_config_path)
-            if refreshed_quote is not None or refreshed_trade is not None:
-                self.apply_config(build_live_trading_config(quote_config, trade_config))
+            retry_warmup = self._history_warmup_retry_pending()
+            if refreshed_quote is not None or refreshed_trade is not None or retry_warmup:
+                if retry_warmup and refreshed_quote is None and refreshed_trade is None:
+                    self._logger.error(
+                        "HISTORY_WARMUP_RETRY_PENDING history=%s codes=%s",
+                        self._current_config.history_broker.endpoint_summary() if self._current_config is not None else "N/A",
+                        ",".join(self._warmup_unavailable_codes),
+                    )
+                self.apply_config(
+                    build_live_trading_config(quote_config, trade_config),
+                    force_warmup_refresh=retry_warmup,
+                )
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -303,6 +336,22 @@ class LiveTradingEngine:
             if self._current_config is None:
                 return 10.0
             return self._current_config.runtime.config_reload_interval_seconds
+
+    def _history_warmup_retry_pending(self) -> bool:
+        with self._lock:
+            return self._history_warmup_pending and self._current_config is not None
+
+    def _unavailable_warmup_codes(
+        self,
+        codes: tuple[str, ...],
+        histories: dict[str, pd.DataFrame],
+    ) -> tuple[str, ...]:
+        unavailable = [
+            code
+            for code in codes
+            if code not in histories or histories[code] is None or histories[code].empty
+        ]
+        return tuple(unavailable)
 
     def _apply_trade_accounts_config(self, config: LiveTradingConfig) -> None:
         current_accounts = self._current_config.trade_account_map() if self._current_config is not None else {}
