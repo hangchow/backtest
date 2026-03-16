@@ -683,9 +683,9 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
             else:
                 payload = weekly[CSV_COLUMNS].copy()
                 payload["time_key"] = payload["time_key"].dt.strftime("%Y-%m-%d %H:%M:%S")
-            if self._should_write_csv_payload(file_path, payload):
-                payload.to_csv(file_path, index=False)
-                self._logger.info("warm-up cache file created path=%s rows=%d", file_path, len(payload))
+            action = self._write_csv_payload(file_path, payload)
+            if action is not None:
+                self._logger.info("warm-up cache file %s path=%s rows=%d", action, file_path, len(payload))
             cursor = cursor + pd.Timedelta(days=7)
 
     def _write_daily_csv_if_missing(self, code_dir: Path, code: str, frame: pd.DataFrame) -> None:
@@ -698,9 +698,9 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
             file_path = code_dir / f"{code}_{trade_date.isoformat()}.csv"
             payload = daily[CSV_COLUMNS].copy()
             payload["time_key"] = payload["time_key"].dt.strftime("%Y-%m-%d %H:%M:%S")
-            if self._should_write_csv_payload(file_path, payload):
-                payload.to_csv(file_path, index=False)
-                self._logger.info("warm-up cache file created path=%s rows=%d", file_path, len(payload))
+            action = self._write_csv_payload(file_path, payload)
+            if action is not None:
+                self._logger.info("warm-up cache file %s path=%s rows=%d", action, file_path, len(payload))
 
     def _should_refresh_remote_minute(
         self,
@@ -782,16 +782,33 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
             latest = latest - timedelta(days=1)
         return latest
 
+    def _write_csv_payload(self, file_path: Path, payload: pd.DataFrame) -> str | None:
+        existed = file_path.exists()
+        if not self._should_write_csv_payload(file_path, payload):
+            return None
+        payload.to_csv(file_path, index=False)
+        return "updated" if existed else "created"
+
     def _should_write_csv_payload(self, file_path: Path, payload: pd.DataFrame) -> bool:
         if not file_path.exists():
             return True
-        if payload.empty:
-            return False
         try:
             existing = pd.read_csv(file_path)
         except pd.errors.EmptyDataError:
-            return True
-        return existing.empty
+            existing = pd.DataFrame(columns=CSV_COLUMNS)
+        normalized_existing = self._normalize_csv_payload(existing)
+        normalized_payload = self._normalize_csv_payload(payload)
+        return not normalized_existing.equals(normalized_payload)
+
+    def _normalize_csv_payload(self, frame: pd.DataFrame) -> pd.DataFrame:
+        normalized = frame.copy()
+        for column in CSV_COLUMNS:
+            if column not in normalized.columns:
+                normalized[column] = ""
+        normalized = normalized[CSV_COLUMNS].reset_index(drop=True).fillna("")
+        for column in CSV_COLUMNS:
+            normalized[column] = normalized[column].astype(str)
+        return normalized
 
 
 class FutuTradeAccountClient(TradeAccountClient):
