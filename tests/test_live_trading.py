@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 import json
 import logging
+import threading
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -13,6 +15,7 @@ import pandas as pd
 
 from live_trading.broker import (
     DailyHistoryProvider,
+    FutuDailyHistoryProvider,
     LocalDataDailyHistoryProvider,
     MockRealtimeQuoteClient,
     PolygonCacheDailyHistoryProvider,
@@ -60,7 +63,15 @@ def build_quote_payload(
     realtime_port: int = 11111,
     history_host: str = "127.0.0.1",
     history_port: int = 11111,
+    history_type: str = "futu",
 ) -> dict[str, object]:
+    history_broker: dict[str, object] = {
+        "type": history_type,
+        "market": "US",
+    }
+    if history_type == "futu":
+        history_broker["host"] = history_host
+        history_broker["port"] = history_port
     return {
         "realtime_broker": {
             "type": "futu",
@@ -69,12 +80,7 @@ def build_quote_payload(
             "market": "US",
             "extended_time": False,
         },
-        "history_broker": {
-            "type": "futu",
-            "host": history_host,
-            "port": history_port,
-            "market": "US",
-        },
+        "history_broker": history_broker,
         "runtime": {
             "config_reload_interval_seconds": 5,
             "log_price_updates": False,
@@ -330,6 +336,20 @@ class LiveTradingConfigTests(unittest.TestCase):
         self.assertEqual(config.realtime_broker.host, "127.0.0.1")
         self.assertEqual(config.realtime_broker.port, 19111)
         self.assertEqual(config.history_broker.type, "futu")
+
+    def test_load_quote_config_supports_polygon_history_broker_without_host_port(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "quote.json"
+            path.write_text(
+                json.dumps(build_quote_payload(history_type="polygon")),
+                encoding="utf-8",
+            )
+
+            config = load_quote_config(path)
+
+        self.assertEqual(config.history_broker.type, "polygon")
+        self.assertIsNone(config.history_broker.host)
+        self.assertIsNone(config.history_broker.port)
 
     def test_load_quote_config_rejects_unsupported_quote_broker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -738,16 +758,46 @@ class LocalDataDailyHistoryProviderTests(unittest.TestCase):
             )
 
             with self.assertLogs("test.local_history", level="ERROR") as logs:
-                histories = provider.fetch_daily_histories(["US.AAPL"], {"US.AAPL": 1})
+                histories = provider.fetch_daily_histories(["US.AAPL"], {"US.AAPL": 10})
 
         self.assertTrue(any("duplicate minute time_key" in msg for msg in logs.output))
+        self.assertIn(15.0, list(histories["US.AAPL"]["close"]))
+
+    def test_provider_logs_error_and_deduplicates_local_daily_time_key(self) -> None:
+        cfg = load_live_trading_config_from_payloads(build_quote_payload(), build_trade_payload([build_trade_account_payload("a", "127.0.0.1")])).history_broker
+        with tempfile.TemporaryDirectory() as tmp:
+            daily_dir = Path(tmp) / "kline_day" / "US.AAPL"
+            daily_dir.mkdir(parents=True)
+            (daily_dir / "US.AAPL_2026-03-09.csv").write_text(
+                "time_key,open,close,high,low,volume\n"
+                "2026-03-09 00:00:00,10,11,12,9,100\n"
+                "2026-03-10 00:00:00,11,12,13,10,110\n",
+                encoding="utf-8",
+            )
+            (daily_dir / "US.AAPL_2026-03-16.csv").write_text(
+                "time_key,open,close,high,low,volume\n"
+                "2026-03-10 00:00:00,11,15,16,10,210\n"
+                "2026-03-11 00:00:00,12,13,14,11,120\n",
+                encoding="utf-8",
+            )
+            provider = LocalDataDailyHistoryProvider(
+                cfg,
+                logging.getLogger("test.local_history"),
+                kline_minute_root=Path(tmp) / "kline_minute",
+                kline_day_root=Path(tmp) / "kline_day",
+            )
+
+            with self.assertLogs("test.local_history", level="ERROR") as logs:
+                histories = provider.fetch_daily_histories(["US.AAPL"], {"US.AAPL": 3})
+
+        self.assertTrue(any("duplicate daily time_key" in msg for msg in logs.output))
         self.assertIn(15.0, list(histories["US.AAPL"]["close"]))
 
 
 class PolygonCacheDailyHistoryProviderTests(unittest.TestCase):
     def test_create_daily_history_provider_uses_polygon_cache_provider(self) -> None:
         cfg = load_live_trading_config_from_payloads(
-            build_quote_payload(),
+            build_quote_payload(history_type="polygon"),
             build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
         ).history_broker
 
@@ -756,7 +806,87 @@ class PolygonCacheDailyHistoryProviderTests(unittest.TestCase):
         self.assertIsInstance(provider, PolygonCacheDailyHistoryProvider)
         self.assertEqual(provider._kline_day_root, Path(".kline_day"))
 
-    def test_polygon_cache_provider_reads_dot_kline_day_and_skips_remote_when_fresh(self) -> None:
+    def test_create_daily_history_provider_uses_futu_provider(self) -> None:
+        cfg = load_live_trading_config_from_payloads(
+            build_quote_payload(history_type="futu"),
+            build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
+        ).history_broker
+
+        provider = create_daily_history_provider(cfg, logging.getLogger("test.futu_history_factory"))
+
+        self.assertIsInstance(provider, FutuDailyHistoryProvider)
+
+    def test_futu_provider_excludes_in_progress_daily_bar_and_rewrites_exact_cache(self) -> None:
+        calls: list[tuple[str, int, object]] = []
+
+        class FakeQuoteContext:
+            def __init__(self, host: str, port: int) -> None:
+                self.host = host
+                self.port = port
+
+            def get_cur_kline(self, code: str, bars: int, *, ktype: object) -> tuple[int, pd.DataFrame]:
+                calls.append((code, bars, ktype))
+                return (
+                    0,
+                    pd.DataFrame(
+                        {
+                            "code": [code] * 4,
+                            "time_key": [
+                                "2026-03-16 00:00:00",
+                                "2026-03-17 00:00:00",
+                                "2026-03-18 00:00:00",
+                                "2026-03-19 00:00:00",
+                            ],
+                            "open": [10.0, 11.0, 12.0, 13.0],
+                            "close": [10.5, 11.5, 12.5, 13.5],
+                            "high": [11.0, 12.0, 13.0, 14.0],
+                            "low": [9.5, 10.5, 11.5, 12.5],
+                            "volume": [100.0, 110.0, 120.0, 130.0],
+                        }
+                    ),
+                )
+
+            def close(self) -> None:
+                return None
+
+        fake_futu = {
+            "OpenQuoteContext": FakeQuoteContext,
+            "KLType": type("FakeKLType", (), {"K_DAY": "K_DAY"}),
+            "RET_OK": 0,
+        }
+
+        with tempfile.TemporaryDirectory() as tmp, patch("live_trading.broker._load_futu_api", return_value=fake_futu):
+            cfg = load_live_trading_config_from_payloads(
+                build_quote_payload(history_type="futu"),
+                build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
+            ).history_broker
+            provider = FutuDailyHistoryProvider(
+                cfg,
+                logging.getLogger("test.futu_history_provider"),
+                kline_day_root=Path(tmp) / ".kline_day",
+                now_provider=lambda: datetime(2026, 3, 19, 15, 0, tzinfo=ZoneInfo("America/New_York")),
+            )
+
+            histories = provider.fetch_daily_histories(["US.AAPL"], {"US.AAPL": 3})
+            cached_files = sorted((Path(tmp) / ".kline_day" / "US.AAPL").glob("*.csv"))
+            cached_rows = []
+            for path in cached_files:
+                cached_rows.extend(pd.read_csv(path)["time_key"].tolist())
+
+        self.assertEqual(calls, [("US.AAPL", 4, "K_DAY")])
+        self.assertEqual(list(histories["US.AAPL"]["time_key"].dt.strftime("%Y-%m-%d")), [
+            "2026-03-16",
+            "2026-03-17",
+            "2026-03-18",
+        ])
+        self.assertEqual([path.name for path in cached_files], ["US.AAPL_2026-03-16.csv"])
+        self.assertEqual(cached_rows, [
+            "2026-03-16 00:00:00",
+            "2026-03-17 00:00:00",
+            "2026-03-18 00:00:00",
+        ])
+
+    def test_polygon_cache_provider_reads_dot_kline_day_and_trims_to_requested_bars_when_fresh(self) -> None:
         remote_calls: list[tuple[str, int]] = []
 
         def remote_fetcher(code: str, bars: int) -> pd.DataFrame:
@@ -789,7 +919,7 @@ class PolygonCacheDailyHistoryProviderTests(unittest.TestCase):
             )
 
             cfg = load_live_trading_config_from_payloads(
-                build_quote_payload(),
+                build_quote_payload(history_type="polygon"),
                 build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
             ).history_broker
             provider = PolygonCacheDailyHistoryProvider(
@@ -800,10 +930,20 @@ class PolygonCacheDailyHistoryProviderTests(unittest.TestCase):
                 now_provider=lambda: datetime(2026, 3, 21, 12, 0, tzinfo=ZoneInfo("America/New_York")),
             )
 
-            histories = provider.fetch_daily_histories(["US.MSFT"], {"US.MSFT": 10})
+            histories = provider.fetch_daily_histories(["US.MSFT"], {"US.MSFT": 3})
+            cached_files = sorted((Path(tmp) / ".kline_day" / "US.MSFT").glob("*.csv"))
+            cached_rows = []
+            for path in cached_files:
+                cached_rows.extend(pd.read_csv(path)["time_key"].tolist())
 
         self.assertEqual(remote_calls, [])
-        self.assertEqual(list(histories["US.MSFT"]["close"]), [101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0, 108.0, 109.0, 110.0])
+        self.assertEqual(list(histories["US.MSFT"]["close"]), [108.0, 109.0, 110.0])
+        self.assertEqual([path.name for path in cached_files], ["US.MSFT_2026-03-16.csv"])
+        self.assertEqual(cached_rows, [
+            "2026-03-18 00:00:00",
+            "2026-03-19 00:00:00",
+            "2026-03-20 00:00:00",
+        ])
 
     def test_polygon_cache_provider_fetches_remote_daily_and_writes_weekly_cache_when_missing(self) -> None:
         remote_calls: list[tuple[str, int]] = []
@@ -837,7 +977,7 @@ class PolygonCacheDailyHistoryProviderTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             cfg = load_live_trading_config_from_payloads(
-                build_quote_payload(),
+                build_quote_payload(history_type="polygon"),
                 build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
             ).history_broker
             provider = PolygonCacheDailyHistoryProvider(
@@ -855,7 +995,136 @@ class PolygonCacheDailyHistoryProviderTests(unittest.TestCase):
         self.assertEqual(list(histories["US.NVDA"]["close"]), [10.5, 11.5, 12.5, 13.5, 14.5, 15.5, 16.5, 17.5, 18.5, 19.5])
         self.assertEqual([path.name for path in cached_files], ["US.NVDA_2026-03-09.csv", "US.NVDA_2026-03-16.csv"])
 
-    def test_weekly_cache_uses_natural_monday_start_and_creates_empty_gap_week(self) -> None:
+    def test_polygon_cache_refresh_keeps_exact_requested_bars_when_boundary_week_is_partial(self) -> None:
+        def remote_fetcher(code: str, bars: int) -> pd.DataFrame:
+            self.assertEqual(bars, 3)
+            return pd.DataFrame(
+                {
+                    "code": [code, code, code],
+                    "time_key": pd.to_datetime(["2026-03-11", "2026-03-12", "2026-03-13"]),
+                    "open": [8.0, 9.0, 10.0],
+                    "close": [8.5, 9.5, 10.5],
+                    "high": [9.0, 10.0, 11.0],
+                    "low": [7.5, 8.5, 9.5],
+                    "volume": [180.0, 190.0, 200.0],
+                }
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            code_dir = Path(tmp) / ".kline_day" / "US.MSFT"
+            code_dir.mkdir(parents=True)
+            (code_dir / "US.MSFT_2026-03-02.csv").write_text(
+                "time_key,open,close,high,low,volume\n"
+                "2026-03-02 00:00:00,1,1.5,2,0.5,100\n"
+                "2026-03-03 00:00:00,2,2.5,3,1.5,110\n"
+                "2026-03-04 00:00:00,3,3.5,4,2.5,120\n"
+                "2026-03-05 00:00:00,4,4.5,5,3.5,130\n"
+                "2026-03-06 00:00:00,5,5.5,6,4.5,140\n",
+                encoding="utf-8",
+            )
+            (code_dir / "US.MSFT_2026-03-09.csv").write_text(
+                "time_key,open,close,high,low,volume\n"
+                "2026-03-09 00:00:00,6,6.5,7,5.5,150\n"
+                "2026-03-10 00:00:00,7,7.5,8,6.5,160\n",
+                encoding="utf-8",
+            )
+
+            cfg = load_live_trading_config_from_payloads(
+                build_quote_payload(history_type="polygon"),
+                build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
+            ).history_broker
+            provider = PolygonCacheDailyHistoryProvider(
+                cfg,
+                logging.getLogger("test.polygon_cache_partial_week"),
+                kline_day_root=Path(tmp) / ".kline_day",
+                remote_daily_fetcher=remote_fetcher,
+                now_provider=lambda: datetime(2026, 3, 14, 12, 0, tzinfo=ZoneInfo("America/New_York")),
+            )
+
+            histories = provider.fetch_daily_histories(["US.MSFT"], {"US.MSFT": 3})
+            week_b = pd.read_csv(code_dir / "US.MSFT_2026-03-09.csv")
+            remaining_files = sorted(path.name for path in code_dir.glob("*.csv"))
+
+        self.assertEqual(list(week_b["time_key"]), [
+            "2026-03-11 00:00:00",
+            "2026-03-12 00:00:00",
+            "2026-03-13 00:00:00",
+        ])
+        self.assertEqual(remaining_files, ["US.MSFT_2026-03-09.csv"])
+        self.assertEqual(list(histories["US.MSFT"]["close"]), [8.5, 9.5, 10.5])
+
+    def test_polygon_cache_returns_unavailable_when_stale_cache_refresh_fails(self) -> None:
+        def remote_fetcher(code: str, bars: int) -> pd.DataFrame:
+            return pd.DataFrame(columns=["code", "time_key", "open", "close", "high", "low", "volume"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            code_dir = Path(tmp) / ".kline_day" / "US.MSFT"
+            code_dir.mkdir(parents=True)
+            stale_file = code_dir / "US.MSFT_2026-03-09.csv"
+            stale_file.write_text(
+                "time_key,open,close,high,low,volume\n"
+                "2026-03-09 00:00:00,6,6.5,7,5.5,150\n"
+                "2026-03-10 00:00:00,7,7.5,8,6.5,160\n"
+                "2026-03-11 00:00:00,8,8.5,9,7.5,170\n",
+                encoding="utf-8",
+            )
+
+            cfg = load_live_trading_config_from_payloads(
+                build_quote_payload(history_type="polygon"),
+                build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
+            ).history_broker
+            provider = PolygonCacheDailyHistoryProvider(
+                cfg,
+                logging.getLogger("test.polygon_cache_stale_failure"),
+                kline_day_root=Path(tmp) / ".kline_day",
+                remote_daily_fetcher=remote_fetcher,
+                now_provider=lambda: datetime(2026, 3, 14, 12, 0, tzinfo=ZoneInfo("America/New_York")),
+            )
+
+            histories = provider.fetch_daily_histories(["US.MSFT"], {"US.MSFT": 3})
+            cached_rows = pd.read_csv(stale_file)["time_key"].tolist()
+
+        self.assertTrue(histories["US.MSFT"].empty)
+        self.assertEqual(cached_rows, [
+            "2026-03-09 00:00:00",
+            "2026-03-10 00:00:00",
+            "2026-03-11 00:00:00",
+        ])
+
+    def test_polygon_remote_fetch_stops_expanding_when_larger_window_adds_no_rows(self) -> None:
+        cfg = load_live_trading_config_from_payloads(
+            build_quote_payload(history_type="polygon"),
+            build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
+        ).history_broker
+        provider = PolygonCacheDailyHistoryProvider(
+            cfg,
+            logging.getLogger("test.polygon_cache_stalled"),
+            now_provider=lambda: datetime(2026, 3, 21, 12, 0, tzinfo=ZoneInfo("America/New_York")),
+        )
+        results = []
+        for trade_date in pd.date_range("2026-02-20", periods=20, freq="B"):
+            results.append(
+                {
+                    "t": int(pd.Timestamp(trade_date, tz="America/New_York").timestamp() * 1000),
+                    "o": 10.0,
+                    "c": 10.5,
+                    "h": 11.0,
+                    "l": 9.5,
+                    "v": 100.0,
+                }
+            )
+
+        with patch.dict("os.environ", {"POLYGON_API_KEY": "test-key"}), patch.object(
+            provider,
+            "_request_polygon_daily_results",
+            side_effect=[results, results],
+        ) as request_results:
+            history = provider._fetch_remote_daily_history("US.IPO", 35)
+
+        self.assertEqual(request_results.call_count, 2)
+        self.assertEqual(len(history), 20)
+
+    def test_weekly_cache_uses_natural_monday_start_without_creating_gap_week(self) -> None:
         cfg = load_live_trading_config_from_payloads(build_quote_payload(), build_trade_payload([build_trade_account_payload("a", "127.0.0.1")])).history_broker
 
         def remote_fetcher(code: str, bars: int, page_size: int, max_pages: int) -> pd.DataFrame:
@@ -883,11 +1152,8 @@ class PolygonCacheDailyHistoryProviderTests(unittest.TestCase):
 
             daily_dir = Path(tmp) / "kline_day" / "US.NVDA"
             created = sorted(path.name for path in daily_dir.glob("*.csv"))
-            gap_file = daily_dir / "US.NVDA_2026-03-09.csv"
-            gap_rows = pd.read_csv(gap_file).shape[0]
 
-        self.assertEqual(created, ["US.NVDA_2026-03-02.csv", "US.NVDA_2026-03-09.csv", "US.NVDA_2026-03-16.csv"])
-        self.assertEqual(gap_rows, 0)
+        self.assertEqual(created, ["US.NVDA_2026-03-02.csv", "US.NVDA_2026-03-16.csv"])
 
 
 class DualMomentumPoolStrategyTests(unittest.TestCase):
@@ -1115,6 +1381,73 @@ class LiveTradingEngineTests(unittest.TestCase):
         self.assertEqual(state_secondary.shadow_positions["US.AAPL"], 0)
         self.assertGreater(state_secondary.shadow_positions["US.MSFT"], 0)
         self.assertLess(state_secondary.shadow_cash or 0.0, 20000.0)
+
+    def test_engine_retries_history_warmup_until_provider_recovers(self) -> None:
+        class FlakyHistoryProvider(DailyHistoryProvider):
+            instances: list["FlakyHistoryProvider"] = []
+
+            def __init__(self, config, logger) -> None:
+                self.config = config
+                self.logger = logger
+                self.closed = False
+                self.fetch_calls = 0
+                FlakyHistoryProvider.instances.append(self)
+
+            def fetch_daily_histories(self, codes, daily_warmup_bars):
+                self.fetch_calls += 1
+                codes_tuple = tuple(codes)
+                if self.fetch_calls == 1:
+                    return {code: pd.DataFrame(columns=["code", "time_key", "open", "close", "high", "low", "volume"]) for code in codes_tuple}
+                return {
+                    code: build_daily_history(
+                        code,
+                        [100.0, 101.0, 102.0, 103.0] if code == "US.AAPL" else [100.0, 105.0, 110.0, 120.0],
+                        [1000.0, 1100.0, 1200.0, 1300.0] if code == "US.AAPL" else [1000.0, 1500.0, 1800.0, 2200.0],
+                    )
+                    for code in codes_tuple
+                }
+
+            def close(self) -> None:
+                self.closed = True
+
+        FakeQuoteBroker.instances.clear()
+        FakeTradeAccountClient.instances.clear()
+        FlakyHistoryProvider.instances.clear()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            quote_path = Path(tmp) / "quote.json"
+            trade_path = Path(tmp) / "trade.json"
+            quote_payload = build_quote_payload()
+            quote_payload["runtime"]["config_reload_interval_seconds"] = 0.05
+            quote_path.write_text(json.dumps(quote_payload), encoding="utf-8")
+            trade_path.write_text(
+                json.dumps(build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.9")])),
+                encoding="utf-8",
+            )
+
+            engine = LiveTradingEngine(
+                quote_path,
+                trade_path,
+                quote_broker_factory=FakeQuoteBroker,
+                history_provider_factory=FlakyHistoryProvider,
+                trade_account_factory=FakeTradeAccountClient,
+            )
+            thread = threading.Thread(target=engine.run, daemon=True)
+            thread.start()
+            deadline = time.time() + 1.5
+            while time.time() < deadline:
+                if engine._pool_strategy is not None and FlakyHistoryProvider.instances and FlakyHistoryProvider.instances[0].fetch_calls >= 2:
+                    break
+                time.sleep(0.05)
+            engine.stop()
+            thread.join(timeout=1.0)
+
+        self.assertEqual(len(FlakyHistoryProvider.instances), 1)
+        self.assertGreaterEqual(FlakyHistoryProvider.instances[0].fetch_calls, 2)
+        self.assertFalse(engine._history_warmup_pending)
+        self.assertIsNotNone(engine._pool_strategy)
+        self.assertEqual(len(FakeQuoteBroker.instances), 1)
+        self.assertEqual(FakeQuoteBroker.instances[0].connect_calls, 1)
 
 
 def load_live_trading_config_from_payloads(quote_payload: dict, trade_payload: dict) -> object:

@@ -14,29 +14,33 @@
 
 ## 对齐美股参数后的股票池收益榜
 
-按 `2025-03-07` 到 `2026-03-06` 记分窗口里的收益率排序（股票池为 `HK.00700 HK.09988 HK.00005`）：
+按 `2025-03-07` 到 `2026-03-06` 记分窗口里的收益率排序（股票池为 `HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981`）：
 
 | strategy | frequency | final_value | return_pct | max_drawdown_pct | trade_count |
 | --- | --- | --- | --- | --- | --- |
-| dual momentum | daily | 90959.86 | -9.04 | -35.86 | 44 |
-| EMA cross | minute | 57781.42 | -42.22 | -42.50 | 1107 |
-| RSI reversion | minute | 346.13 | -99.65 | -99.66 | 3540 |
-| EMA + RSI | minute | 110.93 | -99.89 | -99.89 | 1866 |
-| EMA + RSI bull range | minute | 110.93 | -99.89 | -99.89 | 1866 |
+| EMA cross | minute | 531025.84 | -33.62 | -34.11 | 1313 |
+| dual momentum | daily | 520437.21 | -34.95 | -51.79 | 64 |
+| RSI reversion | minute | 378.63 | -99.95 | -99.95 | 16554 |
+| EMA + RSI | minute | 33.33 | -100.00 | -100.00 | 3570 |
+| EMA + RSI bull range | minute | 33.33 | -100.00 | -100.00 | 3570 |
 
 ## 结果解读
 
-- 这次把港股股票池改成“直接套用美股股票池文档里的同一组参数”后，`dual momentum` 仍然是相对最优，但结果已经从旧文档里的大幅正收益回落到 `-9.04%`，说明这组参数对港股并不天然适配。
-- 四个分钟级策略里，`EMA cross` 相对最稳，`return_pct = -42.22%`、`max_drawdown_pct = -42.50%`，明显好于另外三条高换手策略，但仍然跑输日频轮动。
-- `RSI reversion` 在统一费用口径和当前 3 只港股股票池下继续接近“净值归零”，`return_pct = -99.65%`，说明短周期均值回归在港股这组样本里仍然被费用和噪音严重侵蚀。
-- `EMA + RSI` 与 `EMA + RSI bull range` 在这次参数对齐后结果完全一致，都是 `1866` 笔交易、`final_value = 110.93`，说明它们在当前股票池与参数组合下收敛到了同一条执行路径。
-- `dual momentum` 的交易数只有 `44`，远低于分钟级策略（`1107` 到 `3540`），但即使换手优势还在，直接照搬美股参数到港股也没有保住正收益。
+- 把港股股票池从 3 只扩到 8 只之后，收益榜第一名从 `dual momentum` 变成了 `EMA cross`。不过 `EMA cross` 也只有 `return_pct = -33.62%`，说明股票池扩容并没有改善这套参数的样本外表现，只是让相对排序发生了变化。
+- `dual momentum` 这轮退到第二名，`final_value = 520437.21`、`return_pct = -34.95%`、`max_drawdown_pct = -51.79%`。它比 `EMA cross` 少交易很多，但回撤反而更深，说明在这 8 只港股里，日频轮动的筛选优势被明显削弱了。
+- `RSI reversion` 扩池后进一步恶化到几乎归零，`final_value = 378.63`、`return_pct = -99.95%`，交易数暴增到 `16554`。这基本延续了同一个结论：高换手逆势均值回归在港股分钟级样本里会被费用和噪音持续碾压。
+- `EMA + RSI` 与 `EMA + RSI bull range` 这次仍完全一致，都是 `3570` 笔交易、`final_value = 33.33`。这说明在当前参数和股票池下，bull range 约束依旧没有改变实际成交路径。
+- `HK.03750` 的可用历史明显短于另外 7 只股票，分钟数据从 `2025-05-20` 才开始，日线周文件从 `2025-05-19` 那周才开始。回测脚本仍能跑完，说明它会容忍单个标的早期窗口缺失，但这也让 8 只股票池结果不再是完全等长历史样本上的对比。
 
 ## 实现备注
 
 - 本文档结果记录的是 `2026-03-17` 那轮港股股票池实际复跑输出；下方基线命令现已显式补齐 `--initial-cash 800000`，用于对齐统一港股资金口径。
-- `dual momentum` 这次输出为：`Trades = 44 (BUY 22, SELL 22)`、`Final value = 90959.86`、`Total return = -9.04%`、`Max drawdown = -35.86%`。
-- `EMA cross` 这次输出为：`Trades = 1107 (BUY 554, SELL 553)`、`Final value = 57781.42`、`Total return = -42.22%`、`Max drawdown = -42.50%`。
+- 本轮股票池使用：`HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981`。
+- `EMA cross` 这次输出为：`Trades = 1313 (BUY 657, SELL 656)`、`Final value = 531025.84`、`Total return = -33.62%`、`Max drawdown = -34.11%`。
+- `dual momentum` 这次输出为：`Trades = 64 (BUY 32, SELL 32)`、`Final value = 520437.21`、`Total return = -34.95%`、`Max drawdown = -51.79%`。
+- `RSI reversion` 这次输出为：`Trades = 16554 (BUY 8277, SELL 8277)`、`Final value = 378.63`、`Total return = -99.95%`、`Max drawdown = -99.95%`。
+- `EMA + RSI` 与 `EMA + RSI bull range` 这次输出仍完全一致，都是 `Trades = 3570 (BUY 1785, SELL 1785)`、`Final value = 33.33`、`Total return = -100.00%`、`Max drawdown = -100.00%`。
+- `HK.03750` 当前本地数据窗口短于其他标的：分钟文件从 `2025-05-20` 开始，日线周文件从 `2025-05-19` 当周开始。
 - 由于港股 `kline_day/` 已延伸到 `2026-03-16`，而当前分钟数据只到 `2026-03-06 16:00:00`，这次所有命令都显式传入 `--eval-start 2025-03-07 --eval-end 2026-03-06`，保证分钟级与日频结果严格对齐同一评分窗口。
 - 下方基线命令现在统一显式传入 `--initial-cash 800000`，避免港股文档再依赖脚本默认资金。
 - `dual momentum` 现在从 `kline_day/` 读取日线数据；其他分钟策略仍从 `kline_minute/` 读取分钟数据。
@@ -50,7 +54,7 @@
 
 ```bash
 ./.venv/bin/python backtest/backtest_rsi_reversion.py \
-  --codes HK.00700 HK.09988 HK.00005 \
+  --codes HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981 \
   --initial-cash 800000 \
   --fee-account futu_alt \
   --sell-threshold 70 \
@@ -59,7 +63,7 @@
   --show-trades 0
 
 ./.venv/bin/python backtest/backtest_ema_cross.py \
-  --codes HK.00700 HK.09988 HK.00005 \
+  --codes HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981 \
   --initial-cash 800000 \
   --fee-account futu_alt \
   --position-ratio 0.15 \
@@ -69,7 +73,7 @@
   --show-trades 0
 
 ./.venv/bin/python backtest/backtest_ema_rsi_combo.py \
-  --codes HK.00700 HK.09988 HK.00005 \
+  --codes HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981 \
   --initial-cash 800000 \
   --fee-account futu_alt \
   --buy-threshold 35 \
@@ -81,7 +85,7 @@
   --show-trades 0
 
 ./.venv/bin/python backtest/backtest_ema_rsi_bull_range.py \
-  --codes HK.00700 HK.09988 HK.00005 \
+  --codes HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981 \
   --initial-cash 800000 \
   --fee-account futu_alt \
   --fast-span 20 \
@@ -96,7 +100,7 @@
   --show-trades 0
 
 ./.venv/bin/python backtest/backtest_dual_momentum.py \
-  --codes HK.00700 HK.09988 HK.00005 \
+  --codes HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981 \
   --initial-cash 800000 \
   --fee-account futu_alt \
   --lookback-days 40 \

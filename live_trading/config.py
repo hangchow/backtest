@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 
 SUPPORTED_REALTIME_QUOTE_BROKER_TYPES = frozenset({"futu", "mock"})
-SUPPORTED_HISTORY_BROKER_TYPES = frozenset({"futu"})
+SUPPORTED_HISTORY_BROKER_TYPES = frozenset({"futu", "polygon"})
 SUPPORTED_TRADE_BROKER_TYPES = frozenset({"futu"})
 
 
@@ -99,11 +99,16 @@ class RealtimeQuoteBrokerConfig:
 @dataclass(frozen=True)
 class HistoryBrokerConfig:
     type: str
-    host: str
-    port: int
+    host: str | None = None
+    port: int | None = None
     market: str = "US"
 
     def connection_signature(self) -> tuple[object, ...]:
+        if self.type == "polygon":
+            return (
+                self.type,
+                self.market,
+            )
         return (
             self.type,
             self.host,
@@ -112,6 +117,8 @@ class HistoryBrokerConfig:
         )
 
     def endpoint_summary(self) -> str:
+        if self.type == "polygon":
+            return "polygon"
         return f"{self.host}:{self.port}"
 
 
@@ -245,20 +252,34 @@ def _parse_realtime_quote_broker_config(raw: Mapping[str, Any], *, label: str) -
 
 
 def _parse_history_broker_config(raw: Mapping[str, Any], *, label: str) -> HistoryBrokerConfig:
+    broker_type = _parse_broker_type(
+        raw.get("type"),
+        label=f"{label}.type",
+        default="futu",
+        supported_types=SUPPORTED_HISTORY_BROKER_TYPES,
+    )
+    market = _parse_market(raw.get("market"), label=f"{label}.market")
+    if broker_type == "polygon":
+        host_raw = raw.get("history_host", raw.get("host"))
+        port_raw = raw.get("history_port", raw.get("port"))
+        host = None if host_raw is None else str(host_raw).strip() or None
+        port = None if port_raw is None else _coerce_port(port_raw, label=f"{label}.port")
+        return HistoryBrokerConfig(
+            type=broker_type,
+            host=host,
+            port=port,
+            market=market,
+        )
+
     host = str(raw.get("history_host", raw.get("host", ""))).strip()
     if not host:
         raise ValueError(f"{label}.host must not be empty")
     port = _coerce_port(raw.get("history_port", raw.get("port")), label=f"{label}.port")
     return HistoryBrokerConfig(
-        type=_parse_broker_type(
-            raw.get("type"),
-            label=f"{label}.type",
-            default="futu",
-            supported_types=SUPPORTED_HISTORY_BROKER_TYPES,
-        ),
+        type=broker_type,
         host=host,
         port=port,
-        market=_parse_market(raw.get("market"), label=f"{label}.market"),
+        market=market,
     )
 
 

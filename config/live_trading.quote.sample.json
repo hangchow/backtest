@@ -7,9 +7,7 @@
     "extended_time": false
   },
   "history_broker": {
-    "type": "futu",
-    "host": "127.0.0.1",
-    "port": 11111,
+    "type": "polygon",
     "market": "US"
   },
   "runtime": {
