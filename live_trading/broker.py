@@ -432,6 +432,237 @@ class FutuDailyHistoryProvider(DailyHistoryProvider):
         return None
 
 
+class LocalDataDailyHistoryProvider(DailyHistoryProvider):
+    def __init__(
+        self,
+        config: HistoryBrokerConfig,
+        logger: logging.Logger,
+        *,
+        data_root: Path | str = "data",
+        daily_data_root: Path | str = "daily_data",
+        remote_minute_fetcher: Callable[..., pd.DataFrame] | None = None,
+        remote_minute_page_size: int = 1000,
+        remote_minute_max_pages: int = 20,
+    ) -> None:
+        self._config = config
+        self._logger = logger
+        self._data_root = Path(data_root)
+        self._daily_data_root = Path(daily_data_root)
+        self._remote_minute_fetcher = remote_minute_fetcher
+        self._remote_minute_page_size = max(int(remote_minute_page_size), 1)
+        self._remote_minute_max_pages = max(int(remote_minute_max_pages), 1)
+
+    def fetch_daily_histories(
+        self,
+        codes: Iterable[str],
+        daily_warmup_bars: Mapping[str, int],
+    ) -> dict[str, pd.DataFrame]:
+        normalized_codes = sorted({str(code).strip().upper() for code in codes if str(code).strip()})
+        histories: dict[str, pd.DataFrame] = {}
+
+        for code in normalized_codes:
+            bars = min(max(int(daily_warmup_bars.get(code, 10)), 10), 1000)
+            history = self._load_daily_from_daily_data(code, bars)
+            if history is not None:
+                histories[code] = history
+                continue
+
+            minute_history, minute_from_remote = self._load_minute_for_warmup(code, bars)
+            if minute_history is None or minute_history.empty:
+                self._logger.warning("warm-up minute data unavailable code=%s", code)
+                histories[code] = pd.DataFrame(columns=["code", "time_key", "open", "close", "high", "low", "volume"])
+                continue
+
+            daily_history = self._aggregate_minute_to_daily(code, minute_history, bars)
+            self._write_daily_weekly_csv_if_missing(code, daily_history)
+            if minute_from_remote:
+                self._write_minute_weekly_csv_if_missing(code, minute_history)
+            histories[code] = daily_history
+
+        return histories
+
+    def close(self) -> None:
+        return None
+
+    def _load_daily_from_daily_data(self, code: str, bars: int) -> pd.DataFrame | None:
+        code_dir = self._daily_data_root / code
+        daily = self._load_local_csv_history(code_dir, code, frame_type="daily")
+        if daily is None:
+            return None
+        result = daily.tail(bars).reset_index(drop=True)
+        self._logger.info("warm-up loaded from daily_data code=%s rows=%d dir=%s", code, len(result), code_dir)
+        return result
+
+    def _load_minute_for_warmup(self, code: str, bars: int) -> tuple[pd.DataFrame | None, bool]:
+        code_dir = self._data_root / code
+        minute = self._load_local_csv_history(code_dir, code, frame_type="minute", dedupe_error=True)
+        if minute is not None:
+            self._logger.info("warm-up minute loaded from data code=%s rows=%d dir=%s", code, len(minute), code_dir)
+            local_daily_bars = minute["time_key"].dt.date.nunique()
+            if local_daily_bars >= bars:
+                return minute, False
+
+        minute_target_bars = max(bars * 390, 390)
+        if self._remote_minute_fetcher is not None:
+            try:
+                remote = self._remote_minute_fetcher(
+                    code,
+                    minute_target_bars,
+                    self._remote_minute_page_size,
+                    self._remote_minute_max_pages,
+                )
+            except TypeError:
+                remote = self._remote_minute_fetcher(code, minute_target_bars)
+        else:
+            remote = self._fetch_remote_minute_history(code, minute_target_bars)
+        if remote is None or remote.empty:
+            return minute, True
+
+        if minute is not None:
+            remote = pd.concat([minute, remote], ignore_index=True)
+
+        remote = remote.copy()
+        remote["time_key"] = pd.to_datetime(remote["time_key"])
+        remote = remote.sort_values("time_key").reset_index(drop=True)
+        remote = remote.drop_duplicates(subset=["time_key"], keep="last").reset_index(drop=True)
+        self._logger.info("warm-up minute fetched remote code=%s rows=%d", code, len(remote))
+        return remote, True
+
+    def _load_local_csv_history(self, code_dir: Path, code: str, *, frame_type: str, dedupe_error: bool = False) -> pd.DataFrame | None:
+        if not code_dir.is_dir():
+            return None
+        csv_files = sorted(code_dir.glob("*.csv"))
+        if not csv_files:
+            return None
+
+        frames: list[pd.DataFrame] = []
+        required_columns = {"time_key", "open", "close", "high", "low", "volume"}
+        for path in csv_files:
+            frame = pd.read_csv(path)
+            if not required_columns.issubset(set(frame.columns)):
+                self._logger.warning("local %s warm-up file missing columns code=%s path=%s", frame_type, code, path)
+                continue
+            frame = frame.copy()
+            frame["time_key"] = pd.to_datetime(frame["time_key"])
+            frame["code"] = code
+            frames.append(frame[["code", "time_key", "open", "close", "high", "low", "volume"]])
+
+        if not frames:
+            return None
+        merged = pd.concat(frames, ignore_index=True)
+        merged = merged.sort_values("time_key").reset_index(drop=True)
+        duplicated_mask = merged.duplicated(subset=["time_key"], keep="last")
+        duplicated_count = int(duplicated_mask.sum())
+        if duplicated_count > 0:
+            if dedupe_error:
+                self._logger.error(
+                    "duplicate %s time_key detected and deduplicated code=%s dir=%s duplicated_rows=%d",
+                    frame_type,
+                    code,
+                    code_dir,
+                    duplicated_count,
+                )
+            else:
+                self._logger.warning(
+                    "duplicate %s time_key detected and deduplicated code=%s dir=%s duplicated_rows=%d",
+                    frame_type,
+                    code,
+                    code_dir,
+                    duplicated_count,
+                )
+            merged = merged.drop_duplicates(subset=["time_key"], keep="last").reset_index(drop=True)
+        return merged
+
+    def _aggregate_minute_to_daily(self, code: str, minute: pd.DataFrame, bars: int) -> pd.DataFrame:
+        minute = minute.copy()
+        minute["trade_date"] = minute["time_key"].dt.date
+        daily = (
+            minute.groupby("trade_date", as_index=False)
+            .agg(
+                open=("open", "first"),
+                close=("close", "last"),
+                high=("high", "max"),
+                low=("low", "min"),
+                volume=("volume", "sum"),
+            )
+            .sort_values("trade_date")
+            .reset_index(drop=True)
+        )
+        daily["code"] = code
+        daily["time_key"] = pd.to_datetime(daily["trade_date"])
+        daily = daily[["code", "time_key", "open", "close", "high", "low", "volume"]]
+        return daily.tail(bars).reset_index(drop=True)
+
+    def _fetch_remote_minute_history(self, code: str, bars: int) -> pd.DataFrame:
+        futu = _load_futu_api()
+        quote_ctx = futu["OpenQuoteContext"](host=self._config.host, port=self._config.port)
+        try:
+            rows: list[pd.DataFrame] = []
+            remaining = bars
+            page_req_key = None
+            for _ in range(self._remote_minute_max_pages):
+                page_size = min(self._remote_minute_page_size, remaining)
+                ret, data, page_req_key = quote_ctx.request_history_kline(
+                    code,
+                    start=None,
+                    end=None,
+                    ktype=futu["KLType"].K_1M,
+                    max_count=page_size,
+                    page_req_key=page_req_key,
+                )
+                if ret != futu["RET_OK"]:
+                    self._logger.warning("request_history_kline K_1M failed for %s: %s", code, data)
+                    break
+                if data is None or data.empty:
+                    break
+                rows.append(data.copy())
+                remaining -= len(data)
+                if remaining <= 0 or page_req_key is None:
+                    break
+
+            if not rows:
+                return pd.DataFrame(columns=["code", "time_key", "open", "close", "high", "low", "volume"])
+            history = pd.concat(rows, ignore_index=True)
+            history["time_key"] = pd.to_datetime(history["time_key"])
+            history = history.sort_values("time_key").drop_duplicates(subset=["time_key"], keep="last").reset_index(drop=True)
+            return history[["code", "time_key", "open", "close", "high", "low", "volume"]]
+        finally:
+            quote_ctx.close()
+
+    def _write_daily_weekly_csv_if_missing(self, code: str, daily: pd.DataFrame) -> None:
+        code_dir = self._daily_data_root / code
+        code_dir.mkdir(parents=True, exist_ok=True)
+        self._write_weekly_csv_if_missing(code_dir, code, daily)
+
+    def _write_minute_weekly_csv_if_missing(self, code: str, minute: pd.DataFrame) -> None:
+        code_dir = self._data_root / code
+        code_dir.mkdir(parents=True, exist_ok=True)
+        self._write_weekly_csv_if_missing(code_dir, code, minute)
+
+    def _write_weekly_csv_if_missing(self, code_dir: Path, code: str, frame: pd.DataFrame) -> None:
+        if frame.empty:
+            return
+        data = frame.copy()
+        data["time_key"] = pd.to_datetime(data["time_key"])
+        data["week_start"] = data["time_key"].dt.normalize() - pd.to_timedelta(data["time_key"].dt.weekday, unit="D")
+        grouped = {pd.Timestamp(week_start): weekly for week_start, weekly in data.groupby("week_start")}
+        min_week = min(grouped.keys())
+        max_week = max(grouped.keys())
+        cursor = min_week
+        while cursor <= max_week:
+            file_path = code_dir / f"{code}_{cursor.date().isoformat()}.csv"
+            if not file_path.exists():
+                weekly = grouped.get(cursor)
+                if weekly is None:
+                    payload = pd.DataFrame(columns=["time_key", "open", "close", "high", "low", "volume"])
+                else:
+                    payload = weekly[["time_key", "open", "close", "high", "low", "volume"]].copy()
+                    payload["time_key"] = payload["time_key"].dt.strftime("%Y-%m-%d %H:%M:%S")
+                payload.to_csv(file_path, index=False)
+                self._logger.info("warm-up cache file created path=%s rows=%d", file_path, len(payload))
+            cursor = cursor + pd.Timedelta(days=7)
+
+
 class FutuTradeAccountClient(TradeAccountClient):
     def __init__(self, config: TradeAccountConfig, event_sink: TradeAccountEventSink, logger: logging.Logger) -> None:
         self._config = config
@@ -684,7 +915,7 @@ def create_daily_history_provider(
     logger: logging.Logger,
 ) -> DailyHistoryProvider:
     if config.type == "futu":
-        return FutuDailyHistoryProvider(config, logger)
+        return LocalDataDailyHistoryProvider(config, logger)
     raise ValueError(f"unsupported broker type: {config.type}")
 
 

@@ -19,8 +19,9 @@
   - 支持 `futu` 和 `mock`。
   - `futu` 通过 OpenD 订阅 `QUOTE` 和 `K_1M`。
   - `mock` 在本地启动一个 HTTP 推送入口，外部可以在运行中手工推送分钟 K。
-  - `history_broker`
-  - 当前只支持 `futu`，通过 OpenD 拉取日 K 预热策略。
+- `history_broker`
+  - 当前只支持 `futu`。
+  - 启动 warm-up 顺序：先读 `daily_data/<code>/*.csv`（日线，按周文件）→ 若缺失则读 `data/<code>/*.csv`（分钟）并聚合日线 → 若还缺失则通过 OpenD 拉分钟 K 聚合日线并回写 `daily_data/` 与 `data/`。
   - `trade_accounts`
   - 分别查询资金和持仓，并保留未来接真实下单的接口位置。
 - `live_trading/engine.py`
