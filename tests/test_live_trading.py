@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime
 import json
 import logging
 import tempfile
 import unittest
 from unittest.mock import patch
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -444,6 +446,7 @@ class LocalDataDailyHistoryProviderTests(unittest.TestCase):
                 kline_minute_root=Path(tmp) / "kline_minute",
                 kline_day_root=Path(tmp) / "kline_day",
                 remote_minute_fetcher=remote_fetcher,
+                now_provider=lambda: datetime(2026, 3, 10, 17, 0, tzinfo=ZoneInfo("America/New_York")),
             )
             histories = provider.fetch_daily_histories(["US.AAPL", "US.MSFT", "US.NVDA"], {"US.AAPL": 10, "US.MSFT": 10, "US.NVDA": 10})
             provider.close()
@@ -459,7 +462,226 @@ class LocalDataDailyHistoryProviderTests(unittest.TestCase):
         self.assertEqual(list(histories["US.MSFT"]["close"]), [21.0, 32.0])
         self.assertEqual(list(histories["US.NVDA"]["close"]), [32.0])
         self.assertTrue(cached_daily_nvda)
-        self.assertTrue(cached_minute_nvda)
+        self.assertEqual([path.name for path in cached_minute_nvda], ["US.NVDA_2026-03-10.csv"])
+
+    def test_provider_backfills_stale_daily_week_and_missing_remote_minute_day(self) -> None:
+        remote_calls: list[tuple[str, int]] = []
+
+        def remote_fetcher(code: str, bars: int, page_size: int, max_pages: int) -> pd.DataFrame:
+            remote_calls.append((code, bars))
+            return pd.DataFrame(
+                {
+                    "code": [code, code],
+                    "time_key": pd.to_datetime(["2026-03-13 09:30:00", "2026-03-13 15:59:00"]),
+                    "open": [130.0, 131.0],
+                    "close": [131.0, 132.0],
+                    "high": [131.0, 133.0],
+                    "low": [129.0, 130.0],
+                    "volume": [500.0, 700.0],
+                }
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            daily_dir = Path(tmp) / "kline_day" / "US.AMZN"
+            minute_dir = Path(tmp) / "kline_minute" / "US.AMZN"
+            daily_dir.mkdir(parents=True)
+            minute_dir.mkdir(parents=True)
+            (daily_dir / "US.AMZN_2026-03-02.csv").write_text(
+                "time_key,open,close,high,low,volume\n"
+                "2026-03-02 00:00:00,100,101,102,99,1000\n"
+                "2026-03-03 00:00:00,101,102,103,100,1001\n"
+                "2026-03-04 00:00:00,102,103,104,101,1002\n"
+                "2026-03-05 00:00:00,103,104,105,102,1003\n"
+                "2026-03-06 00:00:00,104,105,106,103,1004\n",
+                encoding="utf-8",
+            )
+            for index, trade_date in enumerate(["2026-03-09", "2026-03-10", "2026-03-11", "2026-03-12"], start=1):
+                (minute_dir / f"US.AMZN_{trade_date}.csv").write_text(
+                    "time_key,open,close,high,low,volume\n"
+                    f"{trade_date} 09:30:00,{110 + index},"
+                    f"{111 + index},{112 + index},{109 + index},{100 * index}\n"
+                    f"{trade_date} 15:59:00,{111 + index},"
+                    f"{112 + index},{113 + index},{110 + index},{120 * index}\n",
+                    encoding="utf-8",
+                )
+
+            cfg = load_live_trading_config_from_payloads(
+                build_quote_payload(),
+                build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
+            ).history_broker
+            provider = LocalDataDailyHistoryProvider(
+                cfg,
+                logging.getLogger("test.local_history"),
+                kline_minute_root=Path(tmp) / "kline_minute",
+                kline_day_root=Path(tmp) / "kline_day",
+                remote_minute_fetcher=remote_fetcher,
+                now_provider=lambda: datetime(2026, 3, 14, 12, 0, tzinfo=ZoneInfo("America/New_York")),
+            )
+            histories = provider.fetch_daily_histories(["US.AMZN"], {"US.AMZN": 10})
+
+            backfilled_daily = pd.read_csv(daily_dir / "US.AMZN_2026-03-09.csv")
+            backfilled_minute = pd.read_csv(minute_dir / "US.AMZN_2026-03-13.csv")
+
+        self.assertEqual(remote_calls, [("US.AMZN", 3900)])
+        self.assertEqual(list(histories["US.AMZN"]["time_key"].dt.strftime("%Y-%m-%d")), [
+            "2026-03-02",
+            "2026-03-03",
+            "2026-03-04",
+            "2026-03-05",
+            "2026-03-06",
+            "2026-03-09",
+            "2026-03-10",
+            "2026-03-11",
+            "2026-03-12",
+            "2026-03-13",
+        ])
+        self.assertEqual(list(backfilled_daily["time_key"]), [
+            "2026-03-09 00:00:00",
+            "2026-03-10 00:00:00",
+            "2026-03-11 00:00:00",
+            "2026-03-12 00:00:00",
+            "2026-03-13 00:00:00",
+        ])
+        self.assertEqual(list(backfilled_minute["time_key"]), ["2026-03-13 09:30:00", "2026-03-13 15:59:00"])
+
+    def test_provider_updates_existing_weekly_daily_cache_from_local_minute_history(self) -> None:
+        remote_calls: list[tuple[str, int]] = []
+
+        def remote_fetcher(code: str, bars: int, page_size: int, max_pages: int) -> pd.DataFrame:
+            remote_calls.append((code, bars))
+            return pd.DataFrame(
+                columns=["code", "time_key", "open", "close", "high", "low", "volume"]
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            daily_dir = Path(tmp) / "kline_day" / "US.AMZN"
+            minute_dir = Path(tmp) / "kline_minute" / "US.AMZN"
+            daily_dir.mkdir(parents=True)
+            minute_dir.mkdir(parents=True)
+            (daily_dir / "US.AMZN_2026-03-02.csv").write_text(
+                "time_key,open,close,high,low,volume\n"
+                "2026-03-02 00:00:00,100,101,102,99,1000\n"
+                "2026-03-03 00:00:00,101,102,103,100,1001\n"
+                "2026-03-04 00:00:00,102,103,104,101,1002\n"
+                "2026-03-05 00:00:00,103,104,105,102,1003\n"
+                "2026-03-06 00:00:00,104,105,106,103,1004\n",
+                encoding="utf-8",
+            )
+            (daily_dir / "US.AMZN_2026-03-09.csv").write_text(
+                "time_key,open,close,high,low,volume\n"
+                "2026-03-09 00:00:00,210.45,213.42,213.82,207.11,45432101\n"
+                "2026-03-10 00:00:00,214.19,214.34,215.65,212.43,29280142\n"
+                "2026-03-11 00:00:00,215.705,212.63,217.0,211.35,27566452\n"
+                "2026-03-12 00:00:00,210.39,209.52,211.71,208.15,33119572\n",
+                encoding="utf-8",
+            )
+            minute_rows = {
+                "2026-03-02": (100.0, 101.0, 102.0, 99.0, 1000),
+                "2026-03-03": (101.0, 102.0, 103.0, 100.0, 1001),
+                "2026-03-04": (102.0, 103.0, 104.0, 101.0, 1002),
+                "2026-03-05": (103.0, 104.0, 105.0, 102.0, 1003),
+                "2026-03-06": (104.0, 105.0, 106.0, 103.0, 1004),
+                "2026-03-09": (210.45, 213.42, 213.82, 207.11, 45432101),
+                "2026-03-10": (214.19, 214.34, 215.65, 212.43, 29280142),
+                "2026-03-11": (215.705, 212.63, 217.0, 211.35, 27566452),
+                "2026-03-12": (210.39, 209.52, 211.71, 208.15, 33119572),
+                "2026-03-13": (209.605, 207.49, 210.45, 206.12, 40123456),
+            }
+            for trade_date, values in minute_rows.items():
+                open_price, close_price, high_price, low_price, volume = values
+                (minute_dir / f"US.AMZN_{trade_date}.csv").write_text(
+                    "time_key,open,close,high,low,volume\n"
+                    f"{trade_date} 09:30:00,{open_price},{open_price},{high_price},{low_price},{volume // 2}\n"
+                    f"{trade_date} 15:59:00,{open_price},{close_price},{high_price},{low_price},{volume - (volume // 2)}\n",
+                    encoding="utf-8",
+                )
+
+            cfg = load_live_trading_config_from_payloads(
+                build_quote_payload(),
+                build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
+            ).history_broker
+            provider = LocalDataDailyHistoryProvider(
+                cfg,
+                logging.getLogger("test.local_history"),
+                kline_minute_root=Path(tmp) / "kline_minute",
+                kline_day_root=Path(tmp) / "kline_day",
+                remote_minute_fetcher=remote_fetcher,
+                now_provider=lambda: datetime(2026, 3, 14, 12, 0, tzinfo=ZoneInfo("America/New_York")),
+            )
+            histories = provider.fetch_daily_histories(["US.AMZN"], {"US.AMZN": 10})
+
+            updated_daily = pd.read_csv(daily_dir / "US.AMZN_2026-03-09.csv")
+
+        self.assertEqual(remote_calls, [])
+        self.assertEqual(list(histories["US.AMZN"]["time_key"].dt.strftime("%Y-%m-%d"))[-1], "2026-03-13")
+        self.assertEqual(list(updated_daily["time_key"]), [
+            "2026-03-09 00:00:00",
+            "2026-03-10 00:00:00",
+            "2026-03-11 00:00:00",
+            "2026-03-12 00:00:00",
+            "2026-03-13 00:00:00",
+        ])
+
+    def test_provider_logs_error_when_remote_backfill_needed_but_unavailable(self) -> None:
+        remote_calls: list[tuple[str, int]] = []
+
+        def remote_fetcher(code: str, bars: int, page_size: int, max_pages: int) -> pd.DataFrame:
+            remote_calls.append((code, bars))
+            return pd.DataFrame(columns=["code", "time_key", "open", "close", "high", "low", "volume"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            daily_dir = Path(tmp) / "kline_day" / "US.AMZN"
+            minute_dir = Path(tmp) / "kline_minute" / "US.AMZN"
+            daily_dir.mkdir(parents=True)
+            minute_dir.mkdir(parents=True)
+            (daily_dir / "US.AMZN_2026-03-02.csv").write_text(
+                "time_key,open,close,high,low,volume\n"
+                "2026-03-02 00:00:00,100,101,102,99,1000\n"
+                "2026-03-03 00:00:00,101,102,103,100,1001\n"
+                "2026-03-04 00:00:00,102,103,104,101,1002\n"
+                "2026-03-05 00:00:00,103,104,105,102,1003\n"
+                "2026-03-06 00:00:00,104,105,106,103,1004\n",
+                encoding="utf-8",
+            )
+            for index, trade_date in enumerate(["2026-03-09", "2026-03-10", "2026-03-11", "2026-03-12"], start=1):
+                (minute_dir / f"US.AMZN_{trade_date}.csv").write_text(
+                    "time_key,open,close,high,low,volume\n"
+                    f"{trade_date} 09:30:00,{110 + index},"
+                    f"{111 + index},{112 + index},{109 + index},{100 * index}\n"
+                    f"{trade_date} 15:59:00,{111 + index},"
+                    f"{112 + index},{113 + index},{110 + index},{120 * index}\n",
+                    encoding="utf-8",
+                )
+
+            cfg = load_live_trading_config_from_payloads(
+                build_quote_payload(),
+                build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
+            ).history_broker
+            provider = LocalDataDailyHistoryProvider(
+                cfg,
+                logging.getLogger("test.local_history"),
+                kline_minute_root=Path(tmp) / "kline_minute",
+                kline_day_root=Path(tmp) / "kline_day",
+                remote_minute_fetcher=remote_fetcher,
+                now_provider=lambda: datetime(2026, 3, 14, 12, 0, tzinfo=ZoneInfo("America/New_York")),
+            )
+
+            with self.assertLogs("test.local_history", level="ERROR") as logs:
+                histories = provider.fetch_daily_histories(["US.AMZN"], {"US.AMZN": 10})
+
+        self.assertEqual(remote_calls, [("US.AMZN", 3900)])
+        self.assertTrue(any("warm-up remote minute fetch returned no rows" in msg for msg in logs.output))
+        self.assertEqual(list(histories["US.AMZN"]["time_key"].dt.strftime("%Y-%m-%d")), [
+            "2026-03-02",
+            "2026-03-03",
+            "2026-03-04",
+            "2026-03-05",
+            "2026-03-06",
+            "2026-03-09",
+            "2026-03-10",
+            "2026-03-11",
+            "2026-03-12",
+        ])
 
     def test_provider_logs_error_and_deduplicates_local_minute_time_key(self) -> None:
         cfg = load_live_trading_config_from_payloads(build_quote_payload(), build_trade_payload([build_trade_account_payload("a", "127.0.0.1")])).history_broker
