@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import date, datetime, time as datetime_time, timedelta
+from functools import lru_cache
+from urllib.error import HTTPError
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import logging
@@ -14,6 +16,7 @@ from urllib.parse import urlencode
 from urllib.request import urlopen
 from zoneinfo import ZoneInfo
 
+import exchange_calendars as xcals
 import pandas as pd
 
 try:
@@ -34,6 +37,14 @@ MARKET_SESSIONS: dict[str, tuple[ZoneInfo, datetime_time]] = {
     "US": (NEW_YORK, US_MARKET_CLOSE),
     "HK": (HONG_KONG, HK_MARKET_CLOSE),
 }
+MARKET_CALENDAR_NAMES: dict[str, str] = {
+    "US": "XNYS",
+    "HK": "XHKG",
+}
+MARKET_DAILY_BAR_READY_DELAYS: dict[str, timedelta] = {
+    "US": timedelta(hours=2),
+    "HK": timedelta(hours=2),
+}
 
 
 def _market_session(market: str | None) -> tuple[ZoneInfo, datetime_time] | None:
@@ -47,21 +58,35 @@ def _default_now_provider_for_market(market: str | None) -> Callable[[], datetim
     return lambda: datetime.now(tz=timezone)
 
 
+@lru_cache(maxsize=None)
+def _market_calendar(market: str | None):
+    normalized_market = (market or "US").strip().upper()
+    calendar_name = MARKET_CALENDAR_NAMES.get(normalized_market)
+    if calendar_name is None:
+        return None
+    return xcals.get_calendar(calendar_name)
+
+
 def _expected_latest_trade_date_for_market(market: str | None, now: datetime) -> date | None:
     session = _market_session(market)
     if session is None:
         return None
     timezone, market_close = session
+    calendar = _market_calendar(market)
+    if calendar is None:
+        return None
     current = now
     if current.tzinfo is None:
         current = current.replace(tzinfo=timezone)
     current = current.astimezone(timezone)
-    latest = current.date()
-    if current.weekday() >= 5 or current.time() < market_close:
-        latest = latest - timedelta(days=1)
-    while latest.weekday() >= 5:
-        latest = latest - timedelta(days=1)
-    return latest
+    current_session_label = pd.Timestamp(current.date())
+    ready_delay = MARKET_DAILY_BAR_READY_DELAYS.get((market or "US").strip().upper(), timedelta())
+    if calendar.is_session(current_session_label):
+        current_session_close = calendar.session_close(current_session_label).tz_convert(timezone)
+        if current >= current_session_close + ready_delay:
+            return current.date()
+        return pd.Timestamp(calendar.previous_session(current_session_label)).date()
+    return pd.Timestamp(calendar.date_to_session(current_session_label, direction="previous")).date()
 
 
 class QuoteBrokerEventSink(Protocol):
@@ -450,26 +475,15 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
         config: HistoryBrokerConfig,
         logger: logging.Logger,
         *,
-        kline_minute_root: Path | str = "kline_minute",
         kline_day_root: Path | str = "kline_day",
-        data_root: Path | str | None = None,
         daily_data_root: Path | str | None = None,
-        remote_minute_fetcher: Callable[..., pd.DataFrame] | None = None,
-        remote_minute_page_size: int = 1000,
-        remote_minute_max_pages: int = 20,
         now_provider: Callable[[], datetime] | None = None,
     ) -> None:
         self._config = config
         self._logger = logger
-        if data_root is not None:
-            kline_minute_root = data_root
         if daily_data_root is not None:
             kline_day_root = daily_data_root
-        self._kline_minute_root = Path(kline_minute_root)
         self._kline_day_root = Path(kline_day_root)
-        self._remote_minute_fetcher = remote_minute_fetcher
-        self._remote_minute_page_size = max(int(remote_minute_page_size), 1)
-        self._remote_minute_max_pages = max(int(remote_minute_max_pages), 1)
         self._now_provider = now_provider or _default_now_provider_for_market(config.market)
 
     def fetch_daily_histories(
@@ -483,18 +497,11 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
         for code in normalized_codes:
             bars = min(max(int(daily_warmup_bars.get(code, 1)), 1), 1000)
             daily_history = self._load_daily_from_kline_day(code, bars)
-            minute_history, minute_from_remote = self._load_minute_for_warmup(code, bars, daily_history)
-            merged_daily = self._merge_daily_histories(code, daily_history, minute_history, bars)
-            if merged_daily is None or merged_daily.empty:
-                self._logger.error("warm-up minute data unavailable code=%s", code)
+            if daily_history is None or daily_history.empty:
+                self._logger.error("warm-up daily data unavailable code=%s", code)
                 histories[code] = pd.DataFrame(columns=HISTORY_COLUMNS)
                 continue
-
-            if minute_history is not None and not minute_history.empty:
-                self._write_kline_day_weekly_csv_if_missing(code, merged_daily)
-                if minute_from_remote:
-                    self._write_kline_minute_daily_csv_if_missing(code, minute_history)
-            histories[code] = merged_daily
+            histories[code] = daily_history
 
         return histories
 
@@ -509,52 +516,6 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
         result = daily.tail(bars).reset_index(drop=True)
         self._logger.info("warm-up loaded from kline_day code=%s rows=%d dir=%s", code, len(result), code_dir)
         return result
-
-    def _load_minute_for_warmup(
-        self,
-        code: str,
-        bars: int,
-        daily_history: pd.DataFrame | None,
-    ) -> tuple[pd.DataFrame | None, bool]:
-        code_dir = self._kline_minute_root / code
-        minute = self._load_local_csv_history(code_dir, code, frame_type="minute", dedupe_error=True)
-        if minute is not None:
-            self._logger.info("warm-up minute loaded from kline_minute code=%s rows=%d dir=%s", code, len(minute), code_dir)
-        if not self._should_refresh_remote_minute(code, minute, daily_history, bars):
-            return minute, False
-
-        minute_target_bars = max(bars * 390, 390)
-        if self._remote_minute_fetcher is not None:
-            try:
-                remote = self._remote_minute_fetcher(
-                    code,
-                    minute_target_bars,
-                    self._remote_minute_page_size,
-                    self._remote_minute_max_pages,
-                )
-            except TypeError:
-                remote = self._remote_minute_fetcher(code, minute_target_bars)
-        else:
-            remote = self._fetch_remote_minute_history(code, minute_target_bars)
-        if remote is None or remote.empty:
-            self._logger.error(
-                "warm-up remote minute fetch returned no rows code=%s expected_latest=%s daily_latest=%s minute_latest=%s",
-                code,
-                self._expected_latest_trade_date(),
-                self._latest_trade_date(daily_history),
-                self._latest_trade_date(minute),
-            )
-            return minute, True
-
-        if minute is not None:
-            remote = pd.concat([minute, remote], ignore_index=True)
-
-        remote = remote.copy()
-        remote["time_key"] = pd.to_datetime(remote["time_key"])
-        remote = remote.sort_values("time_key").reset_index(drop=True)
-        remote = remote.drop_duplicates(subset=["time_key"], keep="last").reset_index(drop=True)
-        self._logger.info("warm-up minute fetched remote code=%s rows=%d", code, len(remote))
-        return remote, True
 
     def _load_local_csv_history(self, code_dir: Path, code: str, *, frame_type: str, dedupe_error: bool = False) -> pd.DataFrame | None:
         if not code_dir.is_dir():
@@ -601,214 +562,6 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
             merged = merged.drop_duplicates(subset=["time_key"], keep="last").reset_index(drop=True)
         return merged
 
-    def _aggregate_minute_to_daily(self, code: str, minute: pd.DataFrame, bars: int | None = None) -> pd.DataFrame:
-        minute = minute.copy()
-        minute["time_key"] = pd.to_datetime(minute["time_key"])
-        minute = minute.sort_values("time_key").reset_index(drop=True)
-        minute["trade_date"] = minute["time_key"].dt.date
-        daily_rows: list[dict[str, object]] = []
-        for trade_date, day_frame in minute.groupby("trade_date", sort=True):
-            day_frame = day_frame.sort_values("time_key").reset_index(drop=True)
-            close_value = day_frame["close"].iloc[-1]
-            if code.startswith("US."):
-                market_close_rows = day_frame.loc[day_frame["time_key"].dt.time == US_MARKET_CLOSE]
-                if not market_close_rows.empty:
-                    # Polygon's official daily close aligns with the first print in the 16:00 minute bar.
-                    close_value = market_close_rows.iloc[0]["open"]
-            daily_rows.append(
-                {
-                    "trade_date": trade_date,
-                    "open": day_frame["open"].iloc[0],
-                    "close": close_value,
-                    "high": day_frame["high"].max(),
-                    "low": day_frame["low"].min(),
-                    "volume": day_frame["volume"].sum(),
-                }
-            )
-        daily = pd.DataFrame(daily_rows).sort_values("trade_date").reset_index(drop=True)
-        daily["code"] = code
-        daily["time_key"] = pd.to_datetime(daily["trade_date"])
-        daily = daily[HISTORY_COLUMNS]
-        if bars is None:
-            return daily.reset_index(drop=True)
-        return daily.tail(bars).reset_index(drop=True)
-
-    def _fetch_remote_minute_history(self, code: str, bars: int) -> pd.DataFrame:
-        futu = _load_futu_api()
-        if not self._config.host or self._config.port is None:
-            raise ValueError("futu history broker requires host and port")
-        quote_ctx = futu["OpenQuoteContext"](host=self._config.host, port=self._config.port)
-        try:
-            rows: list[pd.DataFrame] = []
-            remaining = bars
-            page_req_key = None
-            for _ in range(self._remote_minute_max_pages):
-                page_size = min(self._remote_minute_page_size, remaining)
-                ret, data, page_req_key = quote_ctx.request_history_kline(
-                    code,
-                    start=None,
-                    end=None,
-                    ktype=futu["KLType"].K_1M,
-                    max_count=page_size,
-                    page_req_key=page_req_key,
-                )
-                if ret != futu["RET_OK"]:
-                    self._logger.error("request_history_kline K_1M failed for %s: %s", code, data)
-                    break
-                if data is None or data.empty:
-                    break
-                rows.append(data.copy())
-                remaining -= len(data)
-                if remaining <= 0 or page_req_key is None:
-                    break
-
-            if not rows:
-                return pd.DataFrame(columns=HISTORY_COLUMNS)
-            history = pd.concat(rows, ignore_index=True)
-            history["time_key"] = pd.to_datetime(history["time_key"])
-            history = history.sort_values("time_key").drop_duplicates(subset=["time_key"], keep="last").reset_index(drop=True)
-            return history[HISTORY_COLUMNS]
-        finally:
-            quote_ctx.close()
-
-    def _write_kline_day_weekly_csv_if_missing(self, code: str, daily: pd.DataFrame) -> None:
-        code_dir = self._kline_day_root / code
-        code_dir.mkdir(parents=True, exist_ok=True)
-        self._write_weekly_csv_if_missing(code_dir, code, daily)
-
-    def _write_kline_minute_daily_csv_if_missing(self, code: str, minute: pd.DataFrame) -> None:
-        code_dir = self._kline_minute_root / code
-        code_dir.mkdir(parents=True, exist_ok=True)
-        self._write_daily_csv_if_missing(code_dir, code, minute)
-
-    def _write_weekly_csv_if_missing(self, code_dir: Path, code: str, frame: pd.DataFrame) -> None:
-        if frame.empty:
-            return
-        data = frame.copy()
-        data["time_key"] = pd.to_datetime(data["time_key"])
-        data["week_start"] = data["time_key"].dt.normalize() - pd.to_timedelta(data["time_key"].dt.weekday, unit="D")
-        for week_start, weekly in data.groupby("week_start", sort=True):
-            week_start = pd.Timestamp(week_start)
-            file_path = code_dir / f"{code}_{week_start.date().isoformat()}.csv"
-            payload = self._merge_weekly_csv_payload(
-                file_path,
-                week_start,
-                weekly[CSV_COLUMNS].copy(),
-            )
-            action = self._write_csv_payload(file_path, payload)
-            if action is not None:
-                self._logger.info("warm-up cache file %s path=%s rows=%d", action, file_path, len(payload))
-
-    def _merge_weekly_csv_payload(
-        self,
-        file_path: Path,
-        week_start: pd.Timestamp,
-        payload: pd.DataFrame,
-    ) -> pd.DataFrame:
-        incoming = payload.copy()
-        incoming["time_key"] = pd.to_datetime(incoming["time_key"], errors="coerce")
-
-        existing = pd.DataFrame(columns=CSV_COLUMNS)
-        if file_path.exists():
-            try:
-                existing = pd.read_csv(file_path)
-            except pd.errors.EmptyDataError:
-                existing = pd.DataFrame(columns=CSV_COLUMNS)
-            for column in CSV_COLUMNS:
-                if column not in existing.columns:
-                    existing[column] = pd.NA
-            existing = existing[CSV_COLUMNS]
-            existing["time_key"] = pd.to_datetime(existing["time_key"], errors="coerce")
-
-        merged = pd.concat([existing, incoming], ignore_index=True)
-        week_end = week_start + pd.Timedelta(days=7)
-        merged = merged.dropna(subset=["time_key"])
-        merged = merged.loc[
-            (merged["time_key"] >= week_start) & (merged["time_key"] < week_end),
-            CSV_COLUMNS,
-        ]
-        merged["time_key"] = pd.to_datetime(merged["time_key"], errors="coerce")
-        merged = merged.dropna(subset=["time_key"])
-        merged = merged.sort_values("time_key").drop_duplicates(subset=["time_key"], keep="last").reset_index(drop=True)
-        if merged.empty:
-            return pd.DataFrame(columns=CSV_COLUMNS)
-
-        merged["time_key"] = merged["time_key"].dt.strftime("%Y-%m-%d %H:%M:%S")
-        return merged
-
-    def _write_daily_csv_if_missing(self, code_dir: Path, code: str, frame: pd.DataFrame) -> None:
-        if frame.empty:
-            return
-        data = frame.copy()
-        data["time_key"] = pd.to_datetime(data["time_key"])
-        data["trade_date"] = data["time_key"].dt.date
-        for trade_date, daily in data.groupby("trade_date", sort=True):
-            file_path = code_dir / f"{code}_{trade_date.isoformat()}.csv"
-            payload = daily[CSV_COLUMNS].copy()
-            payload["time_key"] = payload["time_key"].dt.strftime("%Y-%m-%d %H:%M:%S")
-            action = self._write_csv_payload(file_path, payload)
-            if action is not None:
-                self._logger.info("warm-up cache file %s path=%s rows=%d", action, file_path, len(payload))
-
-    def _should_refresh_remote_minute(
-        self,
-        code: str,
-        minute_history: pd.DataFrame | None,
-        daily_history: pd.DataFrame | None,
-        bars: int,
-    ) -> bool:
-        daily_latest_trade_date = self._latest_trade_date(daily_history)
-        expected_latest_trade_date = self._expected_latest_trade_date()
-
-        if minute_history is None or minute_history.empty:
-            if (
-                expected_latest_trade_date is not None
-                and daily_latest_trade_date is not None
-                and daily_latest_trade_date >= expected_latest_trade_date
-            ):
-                return False
-            return True
-
-        local_daily_bars = minute_history["time_key"].dt.date.nunique()
-        if local_daily_bars < bars:
-            return True
-
-        minute_latest_trade_date = self._latest_trade_date(minute_history)
-        if (
-            expected_latest_trade_date is not None
-            and minute_latest_trade_date is not None
-            and (daily_latest_trade_date is None or daily_latest_trade_date < expected_latest_trade_date)
-            and minute_latest_trade_date < expected_latest_trade_date
-        ):
-            self._logger.info(
-                "warm-up minute cache stale code=%s minute_latest=%s daily_latest=%s expected_latest=%s",
-                code,
-                minute_latest_trade_date,
-                daily_latest_trade_date,
-                expected_latest_trade_date,
-            )
-            return True
-        return False
-
-    def _merge_daily_histories(
-        self,
-        code: str,
-        daily_history: pd.DataFrame | None,
-        minute_history: pd.DataFrame | None,
-        bars: int,
-    ) -> pd.DataFrame | None:
-        frames: list[pd.DataFrame] = []
-        if daily_history is not None and not daily_history.empty:
-            frames.append(daily_history)
-        if minute_history is not None and not minute_history.empty:
-            frames.append(self._aggregate_minute_to_daily(code, minute_history))
-        if not frames:
-            return None
-
-        merged = pd.concat(frames, ignore_index=True)
-        merged["time_key"] = pd.to_datetime(merged["time_key"])
-        merged = merged.sort_values("time_key").drop_duplicates(subset=["time_key"], keep="last").reset_index(drop=True)
-        return merged.tail(bars).reset_index(drop=True)
 
     def _latest_trade_date(self, history: pd.DataFrame | None) -> date | None:
         if history is None or history.empty or "time_key" not in history.columns:
@@ -863,7 +616,6 @@ class CachedRemoteDailyHistoryProvider(LocalDataDailyHistoryProvider):
         super().__init__(
             config,
             logger,
-            kline_minute_root=".kline_minute",
             kline_day_root=kline_day_root,
             now_provider=now_provider,
         )
@@ -882,7 +634,44 @@ class CachedRemoteDailyHistoryProvider(LocalDataDailyHistoryProvider):
             full_daily_history = self._load_full_daily_from_kline_day(code)
             daily_history = self._tail_daily_history(full_daily_history, bars)
             if self._should_refresh_remote_daily(daily_history, bars):
-                remote_daily = self._fetch_remote_daily_history(code, bars)
+                try:
+                    remote_daily = self._fetch_remote_daily_history(code, bars)
+                except HTTPError as exc:
+                    try:
+                        if exc.code == 429 and self._can_use_stale_daily_history(daily_history, bars):
+                            self._logger.warning(
+                                "warm-up using stale local daily history due to remote rate limit code=%s bars=%d expected_latest=%s daily_latest=%s stale_business_days=%d",
+                                code,
+                                bars,
+                                self._expected_latest_trade_date(),
+                                self._latest_trade_date(daily_history),
+                                self._daily_history_business_day_lag(daily_history) or 0,
+                            )
+                            histories[code] = daily_history.tail(bars).reset_index(drop=True)
+                            continue
+                        self._logger.error(
+                            "warm-up remote daily fetch failed code=%s bars=%d expected_latest=%s daily_latest=%s error=%s",
+                            code,
+                            bars,
+                            self._expected_latest_trade_date(),
+                            self._latest_trade_date(daily_history),
+                            exc,
+                        )
+                        histories[code] = pd.DataFrame(columns=HISTORY_COLUMNS)
+                        continue
+                    finally:
+                        exc.close()
+                except Exception as exc:
+                    self._logger.exception(
+                        "warm-up remote daily fetch failed code=%s bars=%d expected_latest=%s daily_latest=%s error=%s",
+                        code,
+                        bars,
+                        self._expected_latest_trade_date(),
+                        self._latest_trade_date(daily_history),
+                        exc,
+                    )
+                    histories[code] = pd.DataFrame(columns=HISTORY_COLUMNS)
+                    continue
                 if remote_daily is None or remote_daily.empty:
                     self._logger.error(
                         "warm-up remote daily fetch returned no rows code=%s expected_latest=%s daily_latest=%s",
@@ -982,6 +771,30 @@ class CachedRemoteDailyHistoryProvider(LocalDataDailyHistoryProvider):
             return True
         daily_latest_trade_date = self._latest_trade_date(daily_history)
         return daily_latest_trade_date is not None and daily_latest_trade_date >= expected_latest_trade_date
+
+    def _daily_history_business_day_lag(self, daily_history: pd.DataFrame | None) -> int | None:
+        expected_latest_trade_date = self._expected_latest_trade_date()
+        daily_latest_trade_date = self._latest_trade_date(daily_history)
+        if expected_latest_trade_date is None or daily_latest_trade_date is None:
+            return None
+        if daily_latest_trade_date >= expected_latest_trade_date:
+            return 0
+        calendar = _market_calendar(self._config.market)
+        if calendar is None:
+            return None
+        lag_sessions = calendar.sessions_in_range(
+            pd.Timestamp(daily_latest_trade_date + timedelta(days=1)),
+            pd.Timestamp(expected_latest_trade_date),
+        )
+        return len(lag_sessions)
+
+    def _can_use_stale_daily_history(self, daily_history: pd.DataFrame | None, bars: int) -> bool:
+        if daily_history is None or daily_history.empty:
+            return False
+        if len(daily_history) < bars:
+            return False
+        lag = self._daily_history_business_day_lag(daily_history)
+        return lag is not None and lag <= 1
 
     def _fetch_remote_daily_history(self, code: str, bars: int) -> pd.DataFrame:
         raise NotImplementedError
@@ -1090,8 +903,33 @@ class PolygonCacheDailyHistoryProvider(CachedRemoteDailyHistoryProvider):
             }
         )
         url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/{start_date.isoformat()}/{end_date.isoformat()}?{query}"
-        with urlopen(url, timeout=60) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        max_attempts = 3
+        payload: dict[str, Any] | None = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                with urlopen(url, timeout=60) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                break
+            except HTTPError as exc:
+                try:
+                    if exc.code != 429 or attempt >= max_attempts:
+                        raise
+                    retry_after = self._polygon_retry_delay_seconds(exc, attempt)
+                    self._logger.warning(
+                        "warm-up polygon daily fetch rate limited code=%s target_bars=%d start=%s end=%s attempt=%d/%d retry_after=%.2fs",
+                        code,
+                        bars,
+                        start_date,
+                        end_date,
+                        attempt,
+                        max_attempts,
+                        retry_after,
+                    )
+                    time.sleep(retry_after)
+                finally:
+                    exc.close()
+        if payload is None:
+            return []
         status = payload.get("status")
         if status not in {"OK", "DELAYED"}:
             detail = payload.get("error") or payload.get("message") or payload
@@ -1106,6 +944,17 @@ class PolygonCacheDailyHistoryProvider(CachedRemoteDailyHistoryProvider):
             len(results),
         )
         return results
+
+    def _polygon_retry_delay_seconds(self, exc: HTTPError, attempt: int) -> float:
+        retry_after_raw = exc.headers.get("Retry-After") if exc.headers is not None else None
+        if retry_after_raw:
+            try:
+                retry_after = float(retry_after_raw)
+            except (TypeError, ValueError):
+                retry_after = 0.0
+            else:
+                return max(0.5, min(retry_after, 5.0))
+        return float(min(2**(attempt - 1), 5))
 
 
 class FutuDailyHistoryProvider(CachedRemoteDailyHistoryProvider):

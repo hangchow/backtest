@@ -126,11 +126,14 @@ class LiveTradingEngine:
         self._account_states: dict[str, TradeAccountState] = {}
         self._history_warmup_pending = False
         self._warmup_unavailable_codes: tuple[str, ...] = ()
+        self._pending_account_log_ids: set[str] = set()
+        self._pending_position_log_ids: set[str] = set()
         self._stop_event = threading.Event()
         self._lock = threading.RLock()
 
     def apply_config(self, config: LiveTradingConfig, *, force_warmup_refresh: bool = False) -> None:
         with self._lock:
+            config_changed = self._current_config is None or self._current_config != config
             self._logger.setLevel(getattr(logging, config.runtime.log_level, logging.INFO))
             realtime_reconnect = self._current_config is None or (
                 self._current_config.realtime_broker.connection_signature() != config.realtime_broker.connection_signature()
@@ -195,6 +198,10 @@ class LiveTradingEngine:
 
             self._sync_shadow_state(config)
             self._current_config = config
+            if config_changed:
+                tracked_account_ids = set(config.trade_account_map())
+                self._pending_account_log_ids = tracked_account_ids.copy()
+                self._pending_position_log_ids = tracked_account_ids.copy()
             accounts_summary = ",".join(
                 f"{account.account_id}@{account.broker.host}:{account.broker.port}/{account.broker.trade_env}"
                 for account in config.trade_accounts
@@ -293,12 +300,14 @@ class LiveTradingEngine:
             if self._current_config is None or account_id not in self._current_config.trade_account_map():
                 return
             state = self._account_states.setdefault(account_id, TradeAccountState())
-            previous = state.actual_account
             state.actual_account = snapshot
             if state.shadow_cash is None and snapshot.available_funds is not None:
                 state.shadow_cash = snapshot.available_funds
             runtime = self._current_config.runtime
-        if runtime.log_account_updates and snapshot != previous:
+            should_log = runtime.log_account_updates and account_id in self._pending_account_log_ids
+            if should_log:
+                self._pending_account_log_ids.discard(account_id)
+        if should_log:
             self._logger.info(
                 "ACCOUNT account_id=%s total_assets=%s cash=%s available_funds=%s buying_power=%s currency=%s",
                 account_id,
@@ -314,14 +323,16 @@ class LiveTradingEngine:
             if self._current_config is None or account_id not in self._current_config.trade_account_map():
                 return
             state = self._account_states.setdefault(account_id, TradeAccountState())
-            previous = state.actual_positions
             state.actual_positions = positions
             active_codes = self._current_config.all_codes()
             for code in active_codes:
                 state.shadow_positions.setdefault(code, positions.get(code).qty if code in positions else 0)
             runtime = self._current_config.runtime
+            should_log = runtime.log_position_updates and account_id in self._pending_position_log_ids
+            if should_log:
+                self._pending_position_log_ids.discard(account_id)
 
-        if runtime.log_position_updates and positions != previous:
+        if should_log:
             summary = [
                 f"{code}:actual_qty={positions.get(code).qty if code in positions else 0},shadow_qty={state.shadow_positions.get(code, 0)}"
                 for code in sorted(active_codes)

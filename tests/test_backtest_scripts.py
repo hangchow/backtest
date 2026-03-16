@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import pandas as pd
 
@@ -15,6 +17,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from backtest.backtest_rsi_reversion import compute_rsi
 from tests.fetch_futu_day import save_weekly_files as save_futu_weekly_files
+from tests.fetch_futu_1m import FUTU_RUNTIME_ENV, prepare_futu_home
 from tests.fetch_polygon_day import save_weekly_files as save_polygon_weekly_files
 from tests.minute_csv_utils import remove_stale_daily_files, save_daily_files
 
@@ -176,6 +179,24 @@ class SaveWeeklyFilesTests(unittest.TestCase):
 
         self.assertEqual(written_count, 1)
         self.assertEqual(list(merged["time_key"]), [f"2026-03-0{day} 00:00:00" for day in range(2, 6)])
+
+
+class PrepareFutuHomeTests(unittest.TestCase):
+    def test_prepare_futu_home_uses_workspace_runtime_home(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_home = Path(tmp) / "runtime"
+            original_home = os.environ.get("HOME")
+            with mock.patch.dict(os.environ, {FUTU_RUNTIME_ENV: str(runtime_home)}, clear=False):
+                resolved_home = prepare_futu_home()
+
+                self.assertEqual(resolved_home, runtime_home.resolve())
+                self.assertEqual(Path(os.environ["HOME"]), runtime_home.resolve())
+                self.assertTrue((runtime_home / ".com.futunn.FutuOpenD" / "Log").is_dir())
+
+            if original_home is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = original_home
 
 
 if __name__ == "__main__":

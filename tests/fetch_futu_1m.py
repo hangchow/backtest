@@ -18,14 +18,18 @@ except ModuleNotFoundError:  # package-style import
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 11111
 MAX_COUNT = 1000
+FUTU_RUNTIME_ENV = "FUTU_RUNTIME_HOME"
+DEFAULT_FUTU_RUNTIME_DIRNAME = ".futu_runtime"
 
 
-def prepare_futu_home() -> None:
-    default_log_root = Path(os.environ.get("HOME", str(Path.home()))) / ".com.futunn.FutuOpenD"
-    try:
-        default_log_root.mkdir(parents=True, exist_ok=True)
-    except PermissionError:
-        os.environ["HOME"] = str(Path.cwd())
+def prepare_futu_home() -> Path:
+    runtime_home = Path(
+        os.environ.get(FUTU_RUNTIME_ENV, str(Path.cwd() / DEFAULT_FUTU_RUNTIME_DIRNAME))
+    ).resolve()
+    runtime_log_root = runtime_home / ".com.futunn.FutuOpenD" / "Log"
+    runtime_log_root.mkdir(parents=True, exist_ok=True)
+    os.environ["HOME"] = str(runtime_home)
+    return runtime_home
 
 
 def load_futu():

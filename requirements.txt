@@ -2,3 +2,4 @@ pandas
 futu-api
 requests
 beautifulsoup4
+exchange-calendars
