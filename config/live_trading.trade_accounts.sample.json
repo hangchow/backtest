@@ -19,7 +19,7 @@
       "account_id": "real_user_a",
       "broker": {
         "type": "futu",
-        "host": "127.0.0.2",
+        "host": "127.0.0.1",
         "port": 22222,
         "market": "US",
         "trade_env": "REAL",
