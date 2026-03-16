@@ -28,7 +28,7 @@
 ## 常用参数
 
 - `--codes`：股票池代码列表（必填）
-- `--data-root`：数据根目录，默认 `data`
+- `--data-root`：数据根目录，默认 `kline_minute`
 - `--initial-cash`：初始资金，默认 `100000`
 - `--lookback-days`：短周期动量回看窗口，默认 `90`
 - `--long-lookback-days`：长周期动量回看窗口，默认 `180`

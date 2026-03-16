@@ -44,7 +44,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--code", required=True, help="Security code, for example HK.00700.")
     parser.add_argument("--start", required=True, help="Start date in YYYY-MM-DD format.")
     parser.add_argument("--end", required=True, help="End date in YYYY-MM-DD format.")
-    parser.add_argument("--output-dir", default="data")
+    parser.add_argument("--output-dir", default="kline_minute")
     parser.add_argument(
         "--keep-existing",
         action="store_true",

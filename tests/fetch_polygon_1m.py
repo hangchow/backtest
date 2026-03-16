@@ -23,7 +23,7 @@ except ModuleNotFoundError:  # package-style import
 
 
 BASE_URL = "https://api.polygon.io/v2/aggs/ticker"
-DEFAULT_OUTPUT_DIR = Path("data")
+DEFAULT_OUTPUT_DIR = Path("kline_minute")
 DEFAULT_RATE_LIMIT_SECONDS = 13.0
 NEW_YORK = ZoneInfo("America/New_York")
 REGULAR_OPEN = time(9, 30)

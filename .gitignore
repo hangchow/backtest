@@ -1,7 +1,9 @@
 __pycache__/
 *.pyc
 .DS_Store
-.com.futunn.FutuOpenD/
 .venv
+.com.futunn.FutuOpenD/
+.futu_runtime/
+kline_day/
 output/
 
