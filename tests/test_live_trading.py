@@ -402,7 +402,7 @@ class MockRealtimeQuoteClientTests(unittest.TestCase):
 
 
 class LocalDataDailyHistoryProviderTests(unittest.TestCase):
-    def test_provider_prefers_daily_data_then_uses_data_then_remote_and_caches(self) -> None:
+    def test_provider_prefers_kline_day_then_uses_kline_minute_then_remote_and_caches(self) -> None:
         remote_calls: list[tuple[str, int]] = []
 
         def remote_fetcher(code: str, bars: int, page_size: int, max_pages: int) -> pd.DataFrame:
@@ -420,7 +420,7 @@ class LocalDataDailyHistoryProviderTests(unittest.TestCase):
             )
 
         with tempfile.TemporaryDirectory() as tmp:
-            daily_dir_aapl = Path(tmp) / "daily_data" / "US.AAPL"
+            daily_dir_aapl = Path(tmp) / "kline_day" / "US.AAPL"
             daily_dir_aapl.mkdir(parents=True)
             (daily_dir_aapl / "US.AAPL_2026-03-10.csv").write_text(
                 "time_key,open,close,high,low,volume\n"
@@ -428,7 +428,7 @@ class LocalDataDailyHistoryProviderTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            minute_dir_msft = Path(tmp) / "data" / "US.MSFT"
+            minute_dir_msft = Path(tmp) / "kline_minute" / "US.MSFT"
             minute_dir_msft.mkdir(parents=True)
             (minute_dir_msft / "US.MSFT_2026-03-09.csv").write_text(
                 "time_key,open,close,high,low,volume\n"
@@ -441,15 +441,15 @@ class LocalDataDailyHistoryProviderTests(unittest.TestCase):
             provider = LocalDataDailyHistoryProvider(
                 cfg,
                 logging.getLogger("test.local_history"),
-                data_root=Path(tmp) / "data",
-                daily_data_root=Path(tmp) / "daily_data",
+                kline_minute_root=Path(tmp) / "kline_minute",
+                kline_day_root=Path(tmp) / "kline_day",
                 remote_minute_fetcher=remote_fetcher,
             )
             histories = provider.fetch_daily_histories(["US.AAPL", "US.MSFT", "US.NVDA"], {"US.AAPL": 10, "US.MSFT": 10, "US.NVDA": 10})
             provider.close()
 
-            cached_daily_nvda = sorted((Path(tmp) / "daily_data" / "US.NVDA").glob("*.csv"))
-            cached_minute_nvda = sorted((Path(tmp) / "data" / "US.NVDA").glob("*.csv"))
+            cached_daily_nvda = sorted((Path(tmp) / "kline_day" / "US.NVDA").glob("*.csv"))
+            cached_minute_nvda = sorted((Path(tmp) / "kline_minute" / "US.NVDA").glob("*.csv"))
 
         self.assertEqual(remote_calls, [("US.MSFT", 3900), ("US.NVDA", 3900)])
         self.assertIn("US.AAPL", histories)
@@ -464,7 +464,7 @@ class LocalDataDailyHistoryProviderTests(unittest.TestCase):
     def test_provider_logs_error_and_deduplicates_local_minute_time_key(self) -> None:
         cfg = load_live_trading_config_from_payloads(build_quote_payload(), build_trade_payload([build_trade_account_payload("a", "127.0.0.1")])).history_broker
         with tempfile.TemporaryDirectory() as tmp:
-            minute_dir = Path(tmp) / "data" / "US.AAPL"
+            minute_dir = Path(tmp) / "kline_minute" / "US.AAPL"
             minute_dir.mkdir(parents=True)
             rows = ["time_key,open,close,high,low,volume"]
             for i in range(10):
@@ -478,8 +478,8 @@ class LocalDataDailyHistoryProviderTests(unittest.TestCase):
             provider = LocalDataDailyHistoryProvider(
                 cfg,
                 logging.getLogger("test.local_history"),
-                data_root=Path(tmp) / "data",
-                daily_data_root=Path(tmp) / "daily_data",
+                kline_minute_root=Path(tmp) / "kline_minute",
+                kline_day_root=Path(tmp) / "kline_day",
             )
 
             with self.assertLogs("test.local_history", level="ERROR") as logs:
@@ -508,13 +508,13 @@ class LocalDataDailyHistoryProviderTests(unittest.TestCase):
             provider = LocalDataDailyHistoryProvider(
                 cfg,
                 logging.getLogger("test.local_history"),
-                data_root=Path(tmp) / "data",
-                daily_data_root=Path(tmp) / "daily_data",
+                kline_minute_root=Path(tmp) / "kline_minute",
+                kline_day_root=Path(tmp) / "kline_day",
                 remote_minute_fetcher=remote_fetcher,
             )
             provider.fetch_daily_histories(["US.NVDA"], {"US.NVDA": 10})
 
-            daily_dir = Path(tmp) / "daily_data" / "US.NVDA"
+            daily_dir = Path(tmp) / "kline_day" / "US.NVDA"
             created = sorted(path.name for path in daily_dir.glob("*.csv"))
             gap_file = daily_dir / "US.NVDA_2026-03-09.csv"
             gap_rows = pd.read_csv(gap_file).shape[0]

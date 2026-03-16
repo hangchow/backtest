@@ -50,7 +50,7 @@ export POLYGON_API_KEY=your_api_key
 
 - `--code`：输出目录和文件名前缀；默认等于 `symbol`
 - `--api-key`：直接传入 Polygon API key；默认读取 `POLYGON_API_KEY`
-- `--output-dir`：输出根目录，默认 `data`
+- `--output-dir`：输出根目录，默认 `kline_minute`
 - `--adjusted`：请求复权后的分钟数据；默认请求原始成交价
 - `--include-extended-hours`：保留盘前和盘后数据；默认只保留美东 `09:30-16:00`
 - `--keep-existing`：保留请求区间之外的旧 CSV；默认不保留
@@ -104,13 +104,13 @@ export POLYGON_API_KEY=your_api_key
 默认输出到：
 
 ```text
-data/<输出代码>/
+kline_minute/<输出代码>/
 ```
 
 例如：
 
 ```text
-data/US.MSFT/
+kline_minute/US.MSFT/
 ```
 
 文件名格式：

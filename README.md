@@ -1,8 +1,18 @@
-# 实盘信号框架说明
+# 项目说明
 
 这个仓库提供一个“只出信号、不真实下单”的实时交易框架，当前只支持“股票池 + 单一组合策略”的模式。当前行情和交易实现都基于 `Futu OpenD`，并保留了未来切到其他行情源或券商 API 的架构分层。
 
 如果你要看回测相关文档，入口在 [backtest/README.md](backtest/README.md)。
+
+## 环境准备
+
+在仓库根目录执行：
+
+```bash
+python3 -m venv .venv
+./.venv/bin/python -m pip install --upgrade pip
+./.venv/bin/pip install -r requirements.txt
+```
 
 ## 架构
 
@@ -21,7 +31,7 @@
   - `mock` 在本地启动一个 HTTP 推送入口，外部可以在运行中手工推送分钟 K。
 - `history_broker`
   - 当前只支持 `futu`。
-  - 启动 warm-up 顺序：先读 `daily_data/<code>/*.csv`（日线，按周文件）→ 若缺失则读 `data/<code>/*.csv`（分钟）并聚合日线 → 若还缺失则通过 OpenD 拉分钟 K 聚合日线并回写 `daily_data/` 与 `data/`。
+  - 启动 warm-up 顺序：先读 `kline_day/<code>/*.csv`（日线，按周文件）→ 若缺失则读 `kline_minute/<code>/*.csv`（分钟）并聚合日线 → 若还缺失则通过 OpenD 拉分钟 K 聚合日线并回写 `kline_day/` 与 `kline_minute/`。
   - `trade_accounts`
   - 分别查询资金和持仓，并保留未来接真实下单的接口位置。
 - `live_trading/engine.py`

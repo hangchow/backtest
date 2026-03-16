@@ -15,7 +15,7 @@ from strategy.fees import FEE_ACCOUNT_PROFILES, compute_order_fees
 from strategy.volume import compute_relative_volume, compute_volume_scale, validate_volume_filter
 
 
-DEFAULT_DATA_ROOT = Path("data")
+DEFAULT_DATA_ROOT = Path("kline_minute")
 
 
 def add_data_source_args(parser: argparse.ArgumentParser) -> None:

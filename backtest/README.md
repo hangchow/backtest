@@ -6,23 +6,13 @@
 
 这个项目基于港美股样本股票的 `1分钟 K 线` 数据，做单标与股票池的量化策略回测，并提供一个基于 `Futu OpenD` 的实时信号 dry-run 框架。
 
-## 环境准备
-
-在仓库根目录执行：
-
-```bash
-python3 -m venv .venv
-./.venv/bin/python -m pip install --upgrade pip
-./.venv/bin/pip install -r requirements.txt
-```
-
 ## 回测数据
 
-- 数据目录：`data/<股票代码>/`，如 `data/HK.00700/`、`data/US.MSFT/`
+- 数据目录：`kline_minute/<股票代码>/`，如 `kline_minute/HK.00700/`、`kline_minute/US.MSFT/`
 - 数据文件格式：`<股票代码>_YYYY-MM-DD.csv`
 - 数据文件字段：`time_key, open, close, high, low, volume`
 - 频率：每分钟一行
-- 回测脚本本身只读取本地 `data/` 目录下的 CSV，不依赖外部服务
+- 回测脚本本身只读取本地 `kline_minute/` 目录下的 CSV，不依赖外部服务
 
 ## 文档入口
 
@@ -42,7 +32,7 @@ python3 -m venv .venv
 
 ## 回测统一口径
 
-- 数据目录：`data/`
+- 数据目录：`kline_minute/`
 - 预热数据时间范围：`2025-03-06` 之前的数据
 - 回测数据时间范围：`2025-03-07` 到 `2026-03-06`
 - 初始资金：`港股：800000港币` `美股：100000美元`

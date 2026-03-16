@@ -18,7 +18,7 @@ except ImportError:
     import backtest_rsi_reversion as rsi_reversion
 
 
-DEFAULT_DATA_ROOT = Path("data")
+DEFAULT_DATA_ROOT = Path("kline_minute")
 
 
 def parse_args() -> argparse.Namespace:

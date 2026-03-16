@@ -34,8 +34,8 @@
 
 ## 常用参数
 
-- `--codes`：股票代码列表（空格分隔），脚本会从 `data/<code>/` 读取数据
-- `--data-root`：配合 `--codes` 使用的数据根目录，默认 `data`
+- `--codes`：股票代码列表（空格分隔），脚本会从 `kline_minute/<code>/` 读取数据
+- `--data-root`：配合 `--codes` 使用的数据根目录，默认 `kline_minute`
 - `--data-dir`：直接指定单标的数据目录；不能和 `--codes` 同时使用
 - `--initial-cash`：初始资金，默认 `100000`
 - `--rsi-period`：RSI 周期，默认 `6`

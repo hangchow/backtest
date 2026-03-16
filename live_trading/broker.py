@@ -438,16 +438,22 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
         config: HistoryBrokerConfig,
         logger: logging.Logger,
         *,
-        data_root: Path | str = "data",
-        daily_data_root: Path | str = "daily_data",
+        kline_minute_root: Path | str = "kline_minute",
+        kline_day_root: Path | str = "kline_day",
+        data_root: Path | str | None = None,
+        daily_data_root: Path | str | None = None,
         remote_minute_fetcher: Callable[..., pd.DataFrame] | None = None,
         remote_minute_page_size: int = 1000,
         remote_minute_max_pages: int = 20,
     ) -> None:
         self._config = config
         self._logger = logger
-        self._data_root = Path(data_root)
-        self._daily_data_root = Path(daily_data_root)
+        if data_root is not None:
+            kline_minute_root = data_root
+        if daily_data_root is not None:
+            kline_day_root = daily_data_root
+        self._kline_minute_root = Path(kline_minute_root)
+        self._kline_day_root = Path(kline_day_root)
         self._remote_minute_fetcher = remote_minute_fetcher
         self._remote_minute_page_size = max(int(remote_minute_page_size), 1)
         self._remote_minute_max_pages = max(int(remote_minute_max_pages), 1)
@@ -462,7 +468,7 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
 
         for code in normalized_codes:
             bars = min(max(int(daily_warmup_bars.get(code, 10)), 10), 1000)
-            history = self._load_daily_from_daily_data(code, bars)
+            history = self._load_daily_from_kline_day(code, bars)
             if history is not None:
                 histories[code] = history
                 continue
@@ -474,9 +480,9 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
                 continue
 
             daily_history = self._aggregate_minute_to_daily(code, minute_history, bars)
-            self._write_daily_weekly_csv_if_missing(code, daily_history)
+            self._write_kline_day_weekly_csv_if_missing(code, daily_history)
             if minute_from_remote:
-                self._write_minute_weekly_csv_if_missing(code, minute_history)
+                self._write_kline_minute_weekly_csv_if_missing(code, minute_history)
             histories[code] = daily_history
 
         return histories
@@ -484,20 +490,20 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
     def close(self) -> None:
         return None
 
-    def _load_daily_from_daily_data(self, code: str, bars: int) -> pd.DataFrame | None:
-        code_dir = self._daily_data_root / code
+    def _load_daily_from_kline_day(self, code: str, bars: int) -> pd.DataFrame | None:
+        code_dir = self._kline_day_root / code
         daily = self._load_local_csv_history(code_dir, code, frame_type="daily")
         if daily is None:
             return None
         result = daily.tail(bars).reset_index(drop=True)
-        self._logger.info("warm-up loaded from daily_data code=%s rows=%d dir=%s", code, len(result), code_dir)
+        self._logger.info("warm-up loaded from kline_day code=%s rows=%d dir=%s", code, len(result), code_dir)
         return result
 
     def _load_minute_for_warmup(self, code: str, bars: int) -> tuple[pd.DataFrame | None, bool]:
-        code_dir = self._data_root / code
+        code_dir = self._kline_minute_root / code
         minute = self._load_local_csv_history(code_dir, code, frame_type="minute", dedupe_error=True)
         if minute is not None:
-            self._logger.info("warm-up minute loaded from data code=%s rows=%d dir=%s", code, len(minute), code_dir)
+            self._logger.info("warm-up minute loaded from kline_minute code=%s rows=%d dir=%s", code, len(minute), code_dir)
             local_daily_bars = minute["time_key"].dt.date.nunique()
             if local_daily_bars >= bars:
                 return minute, False
@@ -629,13 +635,13 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
         finally:
             quote_ctx.close()
 
-    def _write_daily_weekly_csv_if_missing(self, code: str, daily: pd.DataFrame) -> None:
-        code_dir = self._daily_data_root / code
+    def _write_kline_day_weekly_csv_if_missing(self, code: str, daily: pd.DataFrame) -> None:
+        code_dir = self._kline_day_root / code
         code_dir.mkdir(parents=True, exist_ok=True)
         self._write_weekly_csv_if_missing(code_dir, code, daily)
 
-    def _write_minute_weekly_csv_if_missing(self, code: str, minute: pd.DataFrame) -> None:
-        code_dir = self._data_root / code
+    def _write_kline_minute_weekly_csv_if_missing(self, code: str, minute: pd.DataFrame) -> None:
+        code_dir = self._kline_minute_root / code
         code_dir.mkdir(parents=True, exist_ok=True)
         self._write_weekly_csv_if_missing(code_dir, code, minute)
 

@@ -39,7 +39,7 @@
 
 - `--host`：OpenD 地址，默认 `127.0.0.1`
 - `--port`：OpenD 端口，默认 `11111`
-- `--output-dir`：输出目录根目录，默认 `data`
+- `--output-dir`：输出目录根目录，默认 `kline_minute`
 - `--keep-existing`：保留请求区间之外的旧 CSV；默认不保留
 
 必填参数：
@@ -82,13 +82,13 @@
 默认输出到：
 
 ```text
-data/<股票代码>/
+kline_minute/<股票代码>/
 ```
 
 例如：
 
 ```text
-data/HK.00700/
+kline_minute/HK.00700/
 ```
 
 文件名格式：
