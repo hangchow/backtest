@@ -14,6 +14,12 @@ python3 -m venv .venv
 ./.venv/bin/pip install -r requirements.txt
 ```
 
+美股实盘 warm-up 需要 Polygon 日线 API key：
+
+```bash
+export POLYGON_API_KEY=your_api_key
+```
+
 ## 架构
 
 - `live_trading/config.py`
@@ -31,7 +37,8 @@ python3 -m venv .venv
   - `mock` 在本地启动一个 HTTP 推送入口，外部可以在运行中手工推送分钟 K。
 - `history_broker`
   - 当前只支持 `futu`。
-  - 启动 warm-up 顺序：先读 `kline_day/<code>/*.csv`（日线，按周文件）→ 若缺失则读 `kline_minute/<code>/*.csv`（分钟）并聚合日线 → 若还缺失则通过 OpenD 拉分钟 K 聚合日线并回写 `kline_day/` 与 `kline_minute/`。
+  - 启动 warm-up 顺序：先读 `.kline_day/<code>/*.csv`（实盘缓存日线，按周文件）→ 若缓存缺失或过期，则直接从 Polygon 拉日线写回 `.kline_day/`，再从缓存读取。
+  - `kline_day/` 与 `kline_minute/` 仅保留给回测和离线研究使用，不参与实盘 warm-up。
   - `trade_accounts`
   - 分别查询资金和持仓，并保留未来接真实下单的接口位置。
 - `live_trading/engine.py`
@@ -50,7 +57,7 @@ python3 -m venv .venv
   - `history_broker`
   - 负责策略 warm-up 用的历史日线获取。
 - `realtime_broker` 支持 `futu` 和 `mock`；`history_broker` 当前只支持 `futu`。
-- 如果当前 OpenD 账号没有开通美股实时订阅，可以把 `realtime_broker` 切到 `mock`，保留 `history_broker` 继续走 Futu 日线 warm-up。
+- 如果当前 OpenD 账号没有开通美股实时订阅，可以把 `realtime_broker` 切到 `mock`；实盘 warm-up 仍然会走 `.kline_day/` + Polygon 日线缓存。
 - `dual_momentum` 用日线维度计算，在收到“新交易日第一根分钟 bar”时，使用上一交易日的已完成日线数据生成调仓信号。
 - 资金、持仓目前先用“定时查询 + 差异日志”实现成统一事件流；后续切到其他券商时可替换成原生 push。
 - 每个交易账户都会维护自己独立的 `shadow_positions` / `shadow_cash`，用于 dry-run 模式下避免重复买入卖出逻辑失真。
@@ -80,7 +87,7 @@ python3 -m venv .venv
   - `history_broker.type`
   - 当前只支持 `futu`。
   - `history_broker.host` / `history_broker.port`
-  - 历史日线读取使用的 OpenD 地址。
+  - 保留给兼容旧配置；当前美股实盘 warm-up 不再通过 OpenD 拉历史日线。
   - `stock_pool.codes`
   - 股票池代码列表。
   - `stock_pool.strategy`

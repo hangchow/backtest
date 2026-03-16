@@ -52,7 +52,7 @@ export POLYGON_API_KEY=your_api_key
 - `--api-key`：直接传入 Polygon API key；默认读取 `POLYGON_API_KEY`
 - `--output-dir`：输出根目录，默认 `kline_minute`
 - `--adjusted`：请求复权后的分钟数据；默认请求原始成交价
-- `--include-extended-hours`：保留盘前和盘后数据；默认只保留美东 `09:30-16:00`
+- `--include-extended-hours`：保留盘前和盘后数据；默认只保留美东 `09:30-16:00`，包含 `16:00:00`
 - `--keep-existing`：保留请求区间之外的旧 CSV；默认不保留
 - `--rate-limit-seconds`：每次月度请求之间的等待秒数，默认 `13.0`
 - `--insecure`：禁用 TLS 证书校验，仅在本机 CA 环境异常时使用
@@ -61,7 +61,7 @@ export POLYGON_API_KEY=your_api_key
 
 - `start` 不能晚于 `end`
 - 脚本会按月份拆请求，再合并、去重并转成仓库本地 CSV 格式
-- 默认会过滤掉美股盘前和盘后分钟线；如果需要完整时段，显式加 `--include-extended-hours`
+- 默认会过滤掉美股盘前和盘后分钟线，但会保留 `16:00:00` 这根收盘分钟 bar；如果需要完整时段，显式加 `--include-extended-hours`
 - 默认会把输出目录里不在这次请求范围内的旧日文件删掉，避免后续回测混入陈旧数据
 
 ## 使用示例

@@ -20,15 +20,18 @@
 ```bash
 ./.venv/bin/python backtest/backtest_dual_momentum.py \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA US.AMZN US.AAPL US.V US.VOO \
+  --initial-cash 100000 \
   --eval-start 2025-03-07 \
   --eval-end 2026-03-06 \
   --fee-account futu_alt
 ```
 
+默认会从 `kline_day/<code>/` 读取按自然周拆分的日线 CSV。
+
 ## 常用参数
 
 - `--codes`：股票池代码列表（必填）
-- `--data-root`：数据根目录，默认 `kline_minute`
+- `--data-root`：数据根目录，默认 `kline_day`
 - `--initial-cash`：初始资金，默认 `100000`
 - `--lookback-days`：短周期动量回看窗口，默认 `90`
 - `--long-lookback-days`：长周期动量回看窗口，默认 `180`

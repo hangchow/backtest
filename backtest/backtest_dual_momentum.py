@@ -68,7 +68,6 @@ from strategy.rebalance import (
 
 try:
     from .backtest_common import (
-        DEFAULT_DATA_ROOT,
         add_eval_end_arg,
         add_eval_start_arg,
         add_fee_args,
@@ -81,7 +80,6 @@ try:
     )
 except ImportError:
     from backtest_common import (
-        DEFAULT_DATA_ROOT,
         add_eval_end_arg,
         add_eval_start_arg,
         add_fee_args,
@@ -95,6 +93,7 @@ except ImportError:
 
 
 DEFAULT_INITIAL_CASH = 100_000.0
+DEFAULT_DAILY_DATA_ROOT = Path("kline_day")
 
 
 def parse_args() -> argparse.Namespace:
@@ -102,7 +101,12 @@ def parse_args() -> argparse.Namespace:
         description="Backtest a daily dual-momentum stock-pool rotation strategy."
     )
     parser.add_argument("--codes", nargs="+", required=True, help="Stock pool codes under --data-root.")
-    parser.add_argument("--data-root", type=Path, default=DEFAULT_DATA_ROOT)
+    parser.add_argument(
+        "--data-root",
+        type=Path,
+        default=DEFAULT_DAILY_DATA_ROOT,
+        help="Base directory for per-code daily CSVs. Defaults to kline_day.",
+    )
     parser.add_argument("--initial-cash", type=float, default=DEFAULT_INITIAL_CASH)
     parser.add_argument("--lookback-days", type=int, default=DEFAULT_LOOKBACK_DAYS)
     parser.add_argument(
@@ -177,23 +181,21 @@ def load_daily_data(data_root: Path, codes: list[str]) -> tuple[pd.DataFrame, pd
     price_map: dict[str, pd.Series] = {}
     volume_map: dict[str, pd.Series] = {}
     for code in codes:
-        # 回测输入是按日分文件的分钟级 CSV，这里把每个文件压成一条日线：
-        # 收盘价取最后一根 bar 的 close，成交量取全日 volume 求和。
-        close_parts: list[pd.Series] = []
-        volume_parts: list[pd.Series] = []
+        history_parts: list[pd.DataFrame] = []
         for path in sorted((data_root / code).glob("*.csv")):
-            daily = pd.read_csv(path, usecols=["time_key", "close", "volume"])
-            if daily.empty:
+            history = pd.read_csv(path, usecols=["time_key", "close", "volume"])
+            if history.empty:
                 continue
-            trade_date = pd.to_datetime(daily.iloc[-1]["time_key"]).date()
-            close_price = float(daily.iloc[-1]["close"])
-            total_volume = float(daily["volume"].sum())
-            close_parts.append(pd.Series([close_price], index=[trade_date]))
-            volume_parts.append(pd.Series([total_volume], index=[trade_date]))
-        if not close_parts:
+            history_parts.append(history)
+        if not history_parts:
             raise FileNotFoundError(f"No CSV files found in {data_root / code}")
-        price_map[code] = pd.concat(close_parts).sort_index()
-        volume_map[code] = pd.concat(volume_parts).sort_index()
+
+        history = pd.concat(history_parts, ignore_index=True)
+        history["time_key"] = pd.to_datetime(history["time_key"])
+        history = history.sort_values("time_key").drop_duplicates(subset=["time_key"], keep="last").reset_index(drop=True)
+        trade_dates = history["time_key"].dt.date
+        price_map[code] = pd.Series(history["close"].astype(float).to_numpy(), index=trade_dates)
+        volume_map[code] = pd.Series(history["volume"].astype(float).to_numpy(), index=trade_dates)
 
     prices = pd.DataFrame(price_map).sort_index()
     volumes = pd.DataFrame(volume_map).sort_index()

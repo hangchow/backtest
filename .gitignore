@@ -4,6 +4,7 @@ __pycache__/
 .venv
 .com.futunn.FutuOpenD/
 .futu_runtime/
-kline_day/
+.kline_day/
+.kline_minute/
 output/
 

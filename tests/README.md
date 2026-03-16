@@ -6,7 +6,9 @@
 ## 说明文档入口
 
 - [Futu 1 分钟抓取说明](README_fetch_futu_1m.md)
+- [Futu 日线抓取说明](README_fetch_futu_day.md)
 - [Polygon 1 分钟抓取说明](README_fetch_polygon_1m.md)
+- [Polygon 日线抓取说明](README_fetch_polygon_day.md)
 - [实时行情 Mock 触发买卖点说明](README_live_trading_mock_signal.md)
 
 ## 文件清单
@@ -15,18 +17,24 @@
   - 校验 `fetch_futu_1m.py` 默认会清理请求区间之外的旧 CSV
 - `fetch_futu_1m.py`
   - 通过 Futu OpenD 抓取 1 分钟历史数据
+- `fetch_futu_day.py`
+  - 通过 Futu OpenD 抓取日线历史数据，并按 `kline_day/` 周文件格式写出
 - `fetch_polygon_1m.py`
   - 通过 Polygon API 抓取 1 分钟历史数据
+- `fetch_polygon_day.py`
+  - 通过 Polygon API 抓取美股日线历史数据，并按 `kline_day/` 周文件格式写出
 - `minute_csv_utils.py`
   - 保存和清理按交易日拆分 CSV 的共用逻辑
 - [README_fetch_futu_1m.md](README_fetch_futu_1m.md)
   - `fetch_futu_1m.py` 的使用说明
+- [README_fetch_futu_day.md](README_fetch_futu_day.md)
+  - `fetch_futu_day.py` 的使用说明
 - [README_fetch_polygon_1m.md](README_fetch_polygon_1m.md)
   - `fetch_polygon_1m.py` 的使用说明
+- [README_fetch_polygon_day.md](README_fetch_polygon_day.md)
+  - `fetch_polygon_day.py` 的使用说明
 - [README_live_trading_mock_signal.md](README_live_trading_mock_signal.md)
   - live_trading 使用 mock 行情推送触发 dry-run 买卖点的说明
-- `backtest_three_minute_momentum.py`
-  - 最早的三分钟连涨买入 / 连跌卖出实验
 - `search_better_strategy.py`
   - 用来批量搜索简单策略和参数组合的研究脚本
   - 支持单标的（`--data-dir`）和股票池（`--codes`）两种模式

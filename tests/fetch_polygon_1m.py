@@ -27,7 +27,7 @@ DEFAULT_OUTPUT_DIR = Path("kline_minute")
 DEFAULT_RATE_LIMIT_SECONDS = 13.0
 NEW_YORK = ZoneInfo("America/New_York")
 REGULAR_OPEN = time(9, 30)
-REGULAR_CLOSE_EXCLUSIVE = time(16, 0)
+REGULAR_CLOSE = time(16, 0)
 LOCAL_COLUMNS = ["time_key", "open", "close", "high", "low", "volume"]
 
 
@@ -147,7 +147,7 @@ def convert_to_local_layout(history: pd.DataFrame, include_extended_hours: bool)
 
     if not include_extended_hours:
         local_time = renamed["time_key"].dt.time
-        mask = (local_time >= REGULAR_OPEN) & (local_time < REGULAR_CLOSE_EXCLUSIVE)
+        mask = (local_time >= REGULAR_OPEN) & (local_time <= REGULAR_CLOSE)
         renamed = renamed.loc[mask].reset_index(drop=True)
 
     renamed["time_key"] = renamed["time_key"].dt.strftime("%Y-%m-%d %H:%M:%S")

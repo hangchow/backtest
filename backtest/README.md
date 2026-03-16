@@ -4,20 +4,23 @@
 
 ## 项目概览
 
-这个项目基于港美股样本股票的 `1分钟 K 线` 数据，做单标与股票池的量化策略回测，并提供一个基于 `Futu OpenD` 的实时信号 dry-run 框架。
+这个项目基于港美股样本股票的 `1分钟 K 线` 与 `日 K 线` 数据，做单标与股票池的量化策略回测，并提供一个基于 `Futu OpenD` 的实时信号 dry-run 框架。
 
 ## 回测数据
 
-- 数据目录：`kline_minute/<股票代码>/`，如 `kline_minute/HK.00700/`、`kline_minute/US.MSFT/`
-- 数据文件格式：`<股票代码>_YYYY-MM-DD.csv`
-- 数据文件字段：`time_key, open, close, high, low, volume`
-- 频率：每分钟一行
-- 回测脚本本身只读取本地 `kline_minute/` 目录下的 CSV，不依赖外部服务
+- 分钟级目录：`kline_minute/<股票代码>/`，如 `kline_minute/HK.00700/`、`kline_minute/US.MSFT/`
+- 日线目录：`kline_day/<股票代码>/`，如 `kline_day/HK.00700/`、`kline_day/US.MSFT/`
+- 分钟级文件格式：按交易日拆分，文件名为 `<股票代码>_YYYY-MM-DD.csv`
+- 日线文件格式：按自然周拆分，文件名为 `<股票代码>_YYYY-MM-DD.csv`，其中日期是该周周一
+- 两类 CSV 字段统一为：`time_key, open, close, high, low, volume`
+- `dual_momentum` 从本地 `kline_day/` 读取日线数据
+- 其他分钟策略从本地 `kline_minute/` 读取分钟数据
+- 回测脚本本身只读取本地 CSV，不依赖外部服务
 
 ## 文档入口
 
-- [港股股票池回测结果与分析](README_backtest_hk_stock_pool.md)
-- [美股股票池回测结果与分析](README_backtest_us_stock_pool.md)
+- [港股股票池回测结果与分析](README_backtest_pool_hk.md)
+- [美股股票池回测结果与分析](README_backtest_pool_us.md)
 - [港股单标回测说明](README_backtest_single_symbol_hk.md)
 - [美股单标回测说明](README_backtest_single_symbol_us.md)
 - [RSI reversion 策略说明](README_backtest_rsi_reversion.md)
@@ -28,11 +31,12 @@
 - [实时交易信号框架说明](../README.md)
 - [tests 目录说明](../tests/README.md)
 - [Futu 抓取说明](../tests/README_fetch_futu_1m.md)
+- [Polygon 日线抓取说明](../tests/README_fetch_polygon_day.md)
 - [Polygon 抓取说明](../tests/README_fetch_polygon_1m.md)
 
 ## 回测统一口径
 
-- 数据目录：`kline_minute/`
+- 回测数据目录：`kline_minute/` `kline_day/`
 - 预热数据时间范围：`2025-03-06` 之前的数据
 - 回测数据时间范围：`2025-03-07` 到 `2026-03-06`
 - 初始资金：`港股：800000港币` `美股：100000美元`

@@ -58,9 +58,12 @@ class ConvertToLocalLayoutTests(unittest.TestCase):
 
         converted = convert_to_local_layout(raw, include_extended_hours=False)
 
-        self.assertEqual(list(converted["time_key"]), ["2025-03-07 09:30:00", "2025-03-07 09:31:00"])
+        self.assertEqual(
+            list(converted["time_key"]),
+            ["2025-03-07 09:30:00", "2025-03-07 09:31:00", "2025-03-07 16:00:00"],
+        )
         self.assertEqual(list(converted.columns), ["time_key", "open", "close", "high", "low", "volume"])
-        self.assertEqual(list(converted["volume"]), [20, 30])
+        self.assertEqual(list(converted["volume"]), [20, 30, 40])
 
 
 if __name__ == "__main__":

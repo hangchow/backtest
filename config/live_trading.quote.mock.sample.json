@@ -25,7 +25,10 @@
       "US.MSFT",
       "US.NVDA",
       "US.AMZN",
-      "US.GOOG"
+      "US.GOOG",
+      "US.TSLA",
+      "US.V",
+      "US.VOO"
     ],
     "strategy": {
       "name": "dual_momentum",

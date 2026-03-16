@@ -39,9 +39,9 @@
 ## 复现命令示例
 
 ```bash
-./.venv/bin/python backtest/backtest_rsi_reversion.py --codes US.MSFT --fee-account futu_alt --show-trades 0
-./.venv/bin/python backtest/backtest_ema_cross.py --codes US.MSFT --fee-account futu_alt --show-trades 0
-./.venv/bin/python backtest/backtest_ema_rsi_combo.py --codes US.MSFT --fee-account futu_alt --show-trades 0
-./.venv/bin/python backtest/backtest_ema_rsi_bull_range.py --codes US.MSFT --fee-account futu_alt --show-trades 0
-./.venv/bin/python backtest/backtest_dual_momentum.py --codes US.MSFT --fee-account futu_alt --show-trades 0
+./.venv/bin/python backtest/backtest_rsi_reversion.py --codes US.MSFT --initial-cash 100000 --fee-account futu_alt --show-trades 0
+./.venv/bin/python backtest/backtest_ema_cross.py --codes US.MSFT --initial-cash 100000 --fee-account futu_alt --show-trades 0
+./.venv/bin/python backtest/backtest_ema_rsi_combo.py --codes US.MSFT --initial-cash 100000 --fee-account futu_alt --show-trades 0
+./.venv/bin/python backtest/backtest_ema_rsi_bull_range.py --codes US.MSFT --initial-cash 100000 --fee-account futu_alt --show-trades 0
+./.venv/bin/python backtest/backtest_dual_momentum.py --codes US.MSFT --initial-cash 100000 --fee-account futu_alt --show-trades 0
 ```

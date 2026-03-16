@@ -302,30 +302,49 @@ class DualMomentumBacktestTests(unittest.TestCase):
 
             pd.DataFrame(
                 {
-                    "time_key": ["2025-01-02 16:00:00"],
-                    "close": [100.0],
-                    "volume": [1000.0],
+                    "time_key": ["2025-01-02 00:00:00", "2025-01-03 00:00:00"],
+                    "close": [100.0, 101.0],
+                    "volume": [1000.0, 1100.0],
                 }
-            ).to_csv(data_root / "US.A" / "US.A_2025-01-02.csv", index=False)
+            ).to_csv(data_root / "US.A" / "US.A_2024-12-30.csv", index=False)
             pd.DataFrame(
                 {
-                    "time_key": ["2025-01-03 16:00:00"],
-                    "close": [101.0],
-                    "volume": [1100.0],
-                }
-            ).to_csv(data_root / "US.A" / "US.A_2025-01-03.csv", index=False)
-            pd.DataFrame(
-                {
-                    "time_key": ["2025-01-02 16:00:00"],
+                    "time_key": ["2025-01-02 00:00:00"],
                     "close": [50.0],
                     "volume": [500.0],
                 }
-            ).to_csv(data_root / "US.B" / "US.B_2025-01-02.csv", index=False)
+            ).to_csv(data_root / "US.B" / "US.B_2024-12-30.csv", index=False)
 
             prices, volumes = load_daily_data(data_root, ["US.A", "US.B"])
 
         self.assertTrue(pd.isna(prices.loc[pd.Timestamp("2025-01-03").date(), "US.B"]))
         self.assertTrue(pd.isna(volumes.loc[pd.Timestamp("2025-01-03").date(), "US.B"]))
+
+    def test_load_daily_data_reads_and_deduplicates_weekly_daily_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            (data_root / "US.A").mkdir()
+
+            pd.DataFrame(
+                {
+                    "time_key": ["2025-01-06 00:00:00", "2025-01-07 00:00:00"],
+                    "close": [100.0, 101.0],
+                    "volume": [1000.0, 1100.0],
+                }
+            ).to_csv(data_root / "US.A" / "US.A_2025-01-06.csv", index=False)
+            pd.DataFrame(
+                {
+                    "time_key": ["2025-01-07 00:00:00", "2025-01-08 00:00:00"],
+                    "close": [102.0, 103.0],
+                    "volume": [1200.0, 1300.0],
+                }
+            ).to_csv(data_root / "US.A" / "US.A_2025-01-06_extra.csv", index=False)
+
+            prices, volumes = load_daily_data(data_root, ["US.A"])
+
+        self.assertEqual(list(prices.index), list(pd.to_datetime(["2025-01-06", "2025-01-07", "2025-01-08"]).date))
+        self.assertEqual(float(prices.loc[pd.Timestamp("2025-01-07").date(), "US.A"]), 102.0)
+        self.assertEqual(float(volumes.loc[pd.Timestamp("2025-01-07").date(), "US.A"]), 1200.0)
 
     def test_dual_momentum_prefers_stronger_positive_trend(self) -> None:
         prices = pd.DataFrame(

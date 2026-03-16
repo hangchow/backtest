@@ -14,6 +14,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from backtest.backtest_rsi_reversion import compute_rsi
+from tests.fetch_futu_day import save_weekly_files as save_futu_weekly_files
+from tests.fetch_polygon_day import save_weekly_files as save_polygon_weekly_files
 from tests.minute_csv_utils import remove_stale_daily_files, save_daily_files
 
 
@@ -110,6 +112,70 @@ class SaveDailyFilesTests(unittest.TestCase):
             self.assertEqual(removed_count, 0)
             self.assertTrue((output_root / f"{TEST_CODE}_2026-03-02.csv").exists())
             self.assertFalse((output_root / "OLD.00001_2026-03-02.csv").exists())
+
+
+class SaveWeeklyFilesTests(unittest.TestCase):
+    def build_weekly_rows(self, dates: list[str]) -> pd.DataFrame:
+        base = []
+        for index, trade_date in enumerate(dates, start=1):
+            base.append(
+                {
+                    "time_key": f"{trade_date} 00:00:00",
+                    "open": float(index),
+                    "close": float(index) + 0.5,
+                    "high": float(index) + 0.6,
+                    "low": float(index) - 0.1,
+                    "volume": index * 100,
+                }
+            )
+        return pd.DataFrame(base)
+
+    def test_polygon_weekly_save_merges_existing_boundary_rows(self) -> None:
+        history = self.build_weekly_rows(["2026-03-04", "2026-03-05"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "US.TEST"
+            output_root.mkdir(parents=True, exist_ok=True)
+            weekly_path = output_root / "US.TEST_2026-03-02.csv"
+            self.build_weekly_rows(["2026-03-02", "2026-03-03"]).to_csv(weekly_path, index=False)
+            stale_path = output_root / "US.TEST_2026-02-23.csv"
+            self.build_weekly_rows(["2026-02-23"]).to_csv(stale_path, index=False)
+
+            written_count, removed_count = save_polygon_weekly_files(
+                history=history,
+                output_root=output_root,
+                keep_existing=False,
+                code="US.TEST",
+            )
+
+            merged = pd.read_csv(weekly_path)
+
+        self.assertEqual(written_count, 1)
+        self.assertEqual(removed_count, 1)
+        self.assertEqual(list(merged["time_key"]), [f"2026-03-0{day} 00:00:00" for day in range(2, 6)])
+        self.assertFalse(stale_path.exists())
+
+    def test_futu_weekly_save_merges_existing_boundary_rows(self) -> None:
+        history = self.build_weekly_rows(["2026-03-04", "2026-03-05"])
+        history["trade_date"] = pd.to_datetime(history["time_key"]).dt.normalize()
+        history["week_start"] = history["trade_date"] - pd.to_timedelta(history["trade_date"].dt.weekday, unit="D")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "HK.TEST"
+            output_root.mkdir(parents=True, exist_ok=True)
+            weekly_path = output_root / "HK.TEST_2026-03-02.csv"
+            self.build_weekly_rows(["2026-03-02", "2026-03-03"]).to_csv(weekly_path, index=False)
+
+            written_count = save_futu_weekly_files(
+                history=history,
+                output_root=output_root,
+                code="HK.TEST",
+            )
+
+            merged = pd.read_csv(weekly_path)
+
+        self.assertEqual(written_count, 1)
+        self.assertEqual(list(merged["time_key"]), [f"2026-03-0{day} 00:00:00" for day in range(2, 6)])
 
 
 if __name__ == "__main__":
