@@ -7,7 +7,6 @@
 
 - [Futu 1 分钟抓取说明](README_fetch_futu_1m.md)
 - [Polygon 1 分钟抓取说明](README_fetch_polygon_1m.md)
-- [ValueSider 持仓抓取说明](README_valuesider_holdings.md)
 - [实时行情 Mock 触发买卖点说明](README_live_trading_mock_signal.md)
 
 ## 文件清单
@@ -24,8 +23,6 @@
   - `fetch_futu_1m.py` 的使用说明
 - [README_fetch_polygon_1m.md](README_fetch_polygon_1m.md)
   - `fetch_polygon_1m.py` 的使用说明
-- [README_valuesider_holdings.md](README_valuesider_holdings.md)
-  - ValueSider 持仓抓取的使用说明
 - [README_live_trading_mock_signal.md](README_live_trading_mock_signal.md)
   - live_trading 使用 mock 行情推送触发 dry-run 买卖点的说明
 - `backtest_three_minute_momentum.py`

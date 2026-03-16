@@ -39,7 +39,6 @@ python3 -m venv .venv
 - [tests 目录说明](../tests/README.md)
 - [Futu 抓取说明](../tests/README_fetch_futu_1m.md)
 - [Polygon 抓取说明](../tests/README_fetch_polygon_1m.md)
-- [ValueSider 抓取说明](../tests/README_valuesider_holdings.md)
 
 ## 回测统一口径
 
