@@ -14,6 +14,7 @@
 - 日线文件格式：按自然周拆分，文件名为 `<股票代码>_YYYY-MM-DD.csv`，其中日期是该周周一
 - 两类 CSV 字段统一为：`time_key, open, close, high, low, volume`
 - `dual_momentum` 从本地 `kline_day/` 读取日线数据
+- `dual_momentum_ema_rsi_hybrid` 同时读取 `kline_day/` + `kline_minute/`（日线选股 + 分钟择时）
 - 其他分钟策略从本地 `kline_minute/` 读取分钟数据
 - 回测脚本本身只读取本地 CSV，不依赖外部服务
 
@@ -28,6 +29,7 @@
 - [EMA + RSI 策略说明](README_backtest_ema_rsi_combo.md)
 - [EMA + RSI bull range 策略说明](README_backtest_ema_rsi_bull_range.md)
 - [dual momentum 策略说明](README_backtest_dual_momentum.md)
+- [dual momentum + EMA + RSI hybrid 策略说明](README_backtest_dual_momentum_ema_rsi_hybrid.md)
 - [实时交易信号框架说明](../README.md)
 - [tests 目录说明](../tests/README.md)
 - [Futu 抓取说明](../tests/README_fetch_futu_1m.md)
