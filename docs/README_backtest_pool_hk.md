@@ -163,5 +163,5 @@
 
 - 只要是港股股票池结果、分析、结论更新，优先修改这份文档。
 - 如果是美股股票池结果更新，修改 [美股股票池回测结果与分析](README_backtest_pool_us.md)。
-- 如果是单标结果更新，修改 [港股单标回测（`--codes`）](README_backtest_single_symbol_hk.md) 或 [美股单标回测（`--codes`）](README_backtest_single_symbol_us.md)。
+- 如果是单标结果更新，修改 [港股单标回测（`--codes`）](README_backtest_single_hk.md) 或 [美股单标回测（`--codes`）](README_backtest_single_us.md)。
 - 如果未来把股票池评估从单一窗口升级成滚动 walk-forward，也优先直接更新这份文档顶部口径，而不是只在根目录 `README.md` 里补一句。
