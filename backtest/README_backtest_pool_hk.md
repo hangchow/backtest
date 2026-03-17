@@ -18,6 +18,7 @@
 
 | strategy | frequency | final_value | return_pct | max_drawdown_pct | trade_count |
 | --- | --- | --- | --- | --- | --- |
+| dual momentum + EMA + RSI hybrid | day+minute | 1091988.83 | 36.50 | -25.89 | 8 |
 | EMA cross | minute | 531025.84 | -33.62 | -34.11 | 1313 |
 | dual momentum | daily | 520437.21 | -34.95 | -51.79 | 64 |
 | RSI reversion | minute | 378.63 | -99.95 | -99.95 | 16554 |
@@ -26,7 +27,10 @@
 
 ## 结果解读
 
-- 把港股股票池从 3 只扩到 8 只之后，收益榜第一名从 `dual momentum` 变成了 `EMA cross`。不过 `EMA cross` 也只有 `return_pct = -33.62%`，说明股票池扩容并没有改善这套参数的样本外表现，只是让相对排序发生了变化。
+
+- 新增 `dual momentum + EMA + RSI hybrid`（日线做选股、分钟做择时）后，当前窗口下收益显著提升：`final_value = 1091988.83`、`return_pct = 36.50%`、`max_drawdown_pct = -25.89%`、`trades = 8`。
+- 这个组合的直觉是：先用日线 dual momentum 决定“该持有谁”，再用分钟 EMA+RSI 过滤具体进出场，从而减少纯分钟策略的噪音交易，也缓解纯日频轮动的慢响应。
+- 这轮第三版 hybrid 参数把收益榜第一名改写为 `dual momentum + EMA + RSI hybrid`，并显著高于其余基线策略；但它的回撤仍有 `-25.89%`，说明“收益达标”和“稳健性达标”还不是同一件事。
 - `dual momentum` 这轮退到第二名，`final_value = 520437.21`、`return_pct = -34.95%`、`max_drawdown_pct = -51.79%`。它比 `EMA cross` 少交易很多，但回撤反而更深，说明在这 8 只港股里，日频轮动的筛选优势被明显削弱了。
 - `RSI reversion` 扩池后进一步恶化到几乎归零，`final_value = 378.63`、`return_pct = -99.95%`，交易数暴增到 `16554`。这基本延续了同一个结论：高换手逆势均值回归在港股分钟级样本里会被费用和噪音持续碾压。
 - `EMA + RSI` 与 `EMA + RSI bull range` 这次仍完全一致，都是 `3570` 笔交易、`final_value = 33.33`。这说明在当前参数和股票池下，bull range 约束依旧没有改变实际成交路径。
@@ -34,8 +38,9 @@
 
 ## 实现备注
 
-- 本文档结果记录的是 `2026-03-17` 那轮港股股票池实际复跑输出；下方基线命令现已显式补齐 `--initial-cash 800000`，用于对齐统一港股资金口径。
+- 本文档结果记录的是 `2026-03-17` 最新一轮港股股票池复跑输出；下方基线命令现已显式补齐 `--initial-cash 800000`，用于对齐统一港股资金口径。
 - 本轮股票池使用：`HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981`。
+- `dual momentum + EMA + RSI hybrid` 这次输出为：`Trades = 8 (BUY 4, SELL 4)`、`Final value = 1091988.83`、`Total return = 36.50%`、`Max drawdown = -25.89%`。
 - `EMA cross` 这次输出为：`Trades = 1313 (BUY 657, SELL 656)`、`Final value = 531025.84`、`Total return = -33.62%`、`Max drawdown = -34.11%`。
 - `dual momentum` 这次输出为：`Trades = 64 (BUY 32, SELL 32)`、`Final value = 520437.21`、`Total return = -34.95%`、`Max drawdown = -51.79%`。
 - `RSI reversion` 这次输出为：`Trades = 16554 (BUY 8277, SELL 8277)`、`Final value = 378.63`、`Total return = -99.95%`、`Max drawdown = -99.95%`。
@@ -117,6 +122,33 @@
   --eval-start 2025-03-07 \
   --eval-end 2026-03-06 \
   --show-trades 0
+
+
+./.venv/bin/python backtest/backtest_dual_momentum_ema_rsi_hybrid.py \
+  --codes HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981 \
+  --initial-cash 800000 \
+  --fee-account futu_alt \
+  --lookback-days 20 \
+  --long-lookback-days 120 \
+  --long-lookback-weight 0.0 \
+  --market-filter-window 20 \
+  --daily-vol-window 20 \
+  --min-momentum-score -1.0 \
+  --rebalance-days 40 \
+  --switch-score-buffer 0.0 \
+  --min-hold-days 0 \
+  --timing-score-weight 0.2 \
+  --fast-span 20 \
+  --slow-span 120 \
+  --rsi-period 14 \
+  --entry-rsi-min 35 \
+  --entry-rsi-max 85 \
+  --exit-rsi-min 25 \
+  --stop-loss-pct 0.30 \
+  --take-profit-pct 2.0 \
+  --position-ratio 1.0 \
+  --eval-start 2025-03-07 \
+  --eval-end 2026-03-06
 ```
 
 ## 更新约定
