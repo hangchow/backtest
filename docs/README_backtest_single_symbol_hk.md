@@ -11,6 +11,7 @@
 
 - 本文档仅保留港股单标结果表；统一回测口径与账户费用请以上方链接为准。
 - 下方复现命令示例已显式补齐 `--initial-cash 800000`，用于统一港股资金口径；上方结果表仍以当前文档记录为准。
+- 所有回测脚本现在都要求显式传入 `--market HK`。
 
 ## 默认参数结果
 
@@ -35,9 +36,9 @@
 ## 复现命令示例
 
 ```bash
-./.venv/bin/python backtest/backtest_rsi_reversion.py --codes HK.00700 --initial-cash 800000 --fee-account futu_alt --show-trades 0
-./.venv/bin/python backtest/backtest_ema_cross.py --codes HK.00700 --initial-cash 800000 --fee-account futu_alt --show-trades 0
-./.venv/bin/python backtest/backtest_ema_rsi_combo.py --codes HK.00700 --initial-cash 800000 --fee-account futu_alt --show-trades 0
-./.venv/bin/python backtest/backtest_ema_rsi_bull_range.py --codes HK.00700 --initial-cash 800000 --fee-account futu_alt --show-trades 0
-./.venv/bin/python backtest/backtest_dual_momentum.py --codes HK.00700 --initial-cash 800000 --fee-account futu_alt --show-trades 0
+./.venv/bin/python backtest/backtest_rsi_reversion.py --codes HK.00700 --market HK --initial-cash 800000 --fee-account futu_alt --show-trades 0
+./.venv/bin/python backtest/backtest_ema_cross.py --codes HK.00700 --market HK --initial-cash 800000 --fee-account futu_alt --show-trades 0
+./.venv/bin/python backtest/backtest_ema_rsi_combo.py --codes HK.00700 --market HK --initial-cash 800000 --fee-account futu_alt --show-trades 0
+./.venv/bin/python backtest/backtest_ema_rsi_bull_range.py --codes HK.00700 --market HK --initial-cash 800000 --fee-account futu_alt --show-trades 0
+./.venv/bin/python backtest/backtest_dual_momentum.py --codes HK.00700 --market HK --initial-cash 800000 --fee-account futu_alt --show-trades 0
 ```

@@ -16,6 +16,7 @@ from strategy.volume import compute_relative_volume, compute_volume_scale, valid
 
 
 DEFAULT_DATA_ROOT = Path("kline_minute")
+SUPPORTED_BACKTEST_MARKETS = ("HK", "US")
 
 
 def add_data_source_args(parser: argparse.ArgumentParser) -> None:
@@ -55,6 +56,46 @@ def add_fee_args(parser: argparse.ArgumentParser) -> None:
         type=str,
         default="stock",
         help="Security type used by fee rules (stock/etf/warrant/cbbc).",
+    )
+
+
+def normalize_market(market: str, *, label: str = "market") -> str:
+    normalized = str(market or "").strip().upper()
+    if normalized not in SUPPORTED_BACKTEST_MARKETS:
+        supported = ", ".join(SUPPORTED_BACKTEST_MARKETS)
+        raise ValueError(f"{label} must be one of: {supported}")
+    return normalized
+
+
+def extract_market_from_symbol(symbol: str) -> str | None:
+    normalized = str(symbol or "").strip().upper()
+    if normalized.startswith("HK."):
+        return "HK"
+    if normalized.startswith("US."):
+        return "US"
+    return None
+
+
+def validate_market_for_symbols(symbols: list[str], market: str, *, label: str) -> str:
+    normalized_market = normalize_market(market)
+    encoded_markets = sorted({item for symbol in symbols if (item := extract_market_from_symbol(symbol)) is not None})
+    if len(encoded_markets) > 1:
+        raise ValueError(f"{label} must all belong to the same market, got: {', '.join(encoded_markets)}")
+    if encoded_markets and encoded_markets[0] != normalized_market:
+        raise ValueError(f"{label} encode market {encoded_markets[0]} but --market is {normalized_market}")
+    return normalized_market
+
+
+def validate_market_for_symbol(symbol: str, market: str, *, label: str) -> str:
+    return validate_market_for_symbols([symbol], market, label=label)
+
+
+def add_market_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--market",
+        type=normalize_market,
+        required=True,
+        help="Trading market used by the backtest. Required; backtest scripts do not infer a default market.",
     )
 
 
@@ -202,23 +243,6 @@ def load_history(data_dir: Path) -> pd.DataFrame:
     history["trade_date"] = history["time_key"].dt.date
     history["is_day_end"] = history["trade_date"] != history["trade_date"].shift(-1)
     return history
-
-
-def infer_market_from_code(code: str) -> str:
-    if code.startswith("HK."):
-        return "HK"
-    if code.startswith("US."):
-        return "US"
-    raise ValueError(f"Cannot infer market from code: {code}")
-
-
-def infer_market_from_codes(codes: list[str]) -> str:
-    if not codes:
-        raise ValueError("codes must not be empty")
-    markets = {infer_market_from_code(code) for code in codes}
-    if len(markets) != 1:
-        raise ValueError(f"All codes must be in the same market, got: {sorted(markets)}")
-    return next(iter(markets))
 
 
 def compute_buy_quantity_with_fees(

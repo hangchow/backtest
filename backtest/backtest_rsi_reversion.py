@@ -32,19 +32,22 @@ try:
         add_eval_end_arg,
         add_eval_start_arg,
         add_fee_args,
+        add_market_arg,
         add_volume_filter_args,
         compute_buy_quantity_with_fees,
         compute_order_fees,
         compute_relative_volume,
-        infer_market_from_codes,
         load_histories,
         load_history,
         normalize_max_open_positions,
+        normalize_market,
         parse_eval_end,
         parse_eval_start,
         resolve_codes,
         resolve_data_dir,
         resolve_eval_window,
+        validate_market_for_symbol,
+        validate_market_for_symbols,
         validate_volume_filter,
     )
 except ImportError:
@@ -53,19 +56,22 @@ except ImportError:
         add_eval_end_arg,
         add_eval_start_arg,
         add_fee_args,
+        add_market_arg,
         add_volume_filter_args,
         compute_buy_quantity_with_fees,
         compute_order_fees,
         compute_relative_volume,
-        infer_market_from_codes,
         load_histories,
         load_history,
         normalize_max_open_positions,
+        normalize_market,
         parse_eval_end,
         parse_eval_start,
         resolve_codes,
         resolve_data_dir,
         resolve_eval_window,
+        validate_market_for_symbol,
+        validate_market_for_symbols,
         validate_volume_filter,
     )
 
@@ -86,6 +92,7 @@ def parse_args() -> argparse.Namespace:
     )
     add_data_source_args(parser)
     add_fee_args(parser)
+    add_market_arg(parser)
     parser.add_argument("--initial-cash", type=float, default=DEFAULT_INITIAL_CASH)
     parser.add_argument("--rsi-period", type=int, default=DEFAULT_RSI_PERIOD)
     parser.add_argument("--buy-threshold", type=float, default=DEFAULT_BUY_THRESHOLD)
@@ -142,9 +149,11 @@ def run_backtest(
     eval_start: pd.Timestamp | None = None,
     eval_end: pd.Timestamp | None = None,
     fee_account: str | None = None,
-    market: str = "US",
+    *,
+    market: str,
     security_type: str = "stock",
 ) -> tuple[dict, pd.DataFrame]:
+    market = normalize_market(market)
     if rsi_period <= 0:
         raise ValueError("rsi-period must be positive")
     if not 0 < position_ratio <= 1:
@@ -279,9 +288,11 @@ def run_portfolio_backtest(
     eval_start: pd.Timestamp | None = None,
     eval_end: pd.Timestamp | None = None,
     fee_account: str | None = None,
-    market: str = "US",
+    *,
+    market: str,
     security_type: str = "stock",
 ) -> tuple[dict, pd.DataFrame]:
+    market = normalize_market(market)
     max_open_positions = normalize_max_open_positions(max_open_positions, len(histories))
     validate_volume_filter(volume_window, min_volume_ratio)
 
@@ -434,8 +445,8 @@ def main() -> int:
         if args.data_dir is not None:
             raise ValueError("--codes cannot be used with --data-dir")
         codes = resolve_codes(args.data_root, args.codes)
+        market = validate_market_for_symbols(codes, args.market, label="--codes")
         histories = load_histories(args.data_root, codes)
-        market = infer_market_from_codes(codes)
         summary, trades = run_portfolio_backtest(
             histories=histories,
             initial_cash=args.initial_cash,
@@ -454,8 +465,9 @@ def main() -> int:
             security_type=args.security_type,
         )
     else:
-        history = load_history(resolve_data_dir(args.data_dir))
-        market = infer_market_from_codes([resolve_data_dir(args.data_dir).name])
+        data_dir = resolve_data_dir(args.data_dir)
+        market = validate_market_for_symbol(data_dir.name, args.market, label="--data-dir")
+        history = load_history(data_dir)
         summary, trades = run_backtest(
             history=history,
             initial_cash=args.initial_cash,

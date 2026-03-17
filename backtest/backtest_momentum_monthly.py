@@ -22,12 +22,14 @@ from backtest.backtest_common import (
     add_eval_end_arg,
     add_eval_start_arg,
     add_fee_args,
+    add_market_arg,
     compute_order_fees,
-    infer_market_from_codes,
+    normalize_market,
     parse_eval_end,
     parse_eval_start,
     resolve_codes,
     resolve_eval_window,
+    validate_market_for_symbols,
 )
 from backtest.backtest_dual_momentum import load_daily_data, run_backtest as run_baseline
 from strategy.rebalance import (
@@ -50,6 +52,7 @@ def parse_args() -> argparse.Namespace:
     add_eval_start_arg(p)
     add_eval_end_arg(p)
     add_fee_args(p)
+    add_market_arg(p)
     return p.parse_args()
 
 
@@ -63,9 +66,10 @@ def run_monthly_momentum(
     eval_start: pd.Timestamp | None,
     eval_end: pd.Timestamp | None,
     fee_account: str | None,
-    market: str | None,
+    market: str,
     security_type: str,
 ) -> tuple[dict, pd.DataFrame]:
+    market = normalize_market(market)
     eval_mask, warmup_start_time, start_time, end_time = resolve_eval_window(prices.index, eval_start, eval_end)
     eval_dates = [d for d, ok in zip(prices.index, eval_mask) if ok]
     eval_start_date = eval_dates[0]
@@ -123,7 +127,7 @@ def run_monthly_momentum(
             sell_qty = qty - desired_shares[code]
             fee_total, fee_breakdown = compute_order_fees(
                 fee_account=fee_account,
-                market=market if market is not None else "",
+                market=market,
                 side="sell",
                 price=price,
                 shares=sell_qty,
@@ -145,7 +149,7 @@ def run_monthly_momentum(
                 price=price,
                 desired_qty=needed_qty,
                 fee_account=fee_account,
-                market=market if market is not None else "",
+                market=market,
                 security_type=security_type,
             )
             if affordable_qty <= 0:
@@ -181,10 +185,10 @@ def run_monthly_momentum(
 def main() -> int:
     args = parse_args()
     codes = resolve_codes(args.data_root, args.codes)
+    market = validate_market_for_symbols(codes, args.market, label="--codes")
     prices, volumes = load_daily_data(args.data_root, codes)
     eval_start = parse_eval_start(args.eval_start)
     eval_end = parse_eval_end(args.eval_end)
-    market = infer_market_from_codes(codes)
 
     summary, _ = run_monthly_momentum(
         prices=prices,

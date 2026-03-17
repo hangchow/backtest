@@ -22,13 +22,13 @@
 ## 基本用法
 
 ```bash
-./.venv/bin/python backtest/backtest_ema_cross.py --codes HK.00700 --initial-cash 800000
+./.venv/bin/python backtest/backtest_ema_cross.py --codes HK.00700 --market HK --initial-cash 800000
 ```
 
 如果你不想隔夜持仓：
 
 ```bash
-./.venv/bin/python backtest/backtest_ema_cross.py --codes HK.00700 --initial-cash 800000 --flat-at-close
+./.venv/bin/python backtest/backtest_ema_cross.py --codes HK.00700 --market HK --initial-cash 800000 --flat-at-close
 ```
 
 ## 常用参数
@@ -36,6 +36,7 @@
 - `--codes`：股票代码列表（空格分隔），脚本会从 `kline_minute/<code>/` 读取数据
 - `--data-root`：配合 `--codes` 使用的数据根目录，默认 `kline_minute`
 - `--data-dir`：直接指定单标的数据目录；不能和 `--codes` 同时使用
+- `--market`：必传，指定 `HK` 或 `US`；backtest 不会再从代码或目录名自动推断 market
 - `--initial-cash`：初始资金，默认 `100000`
 - `--fast-span`：短周期 EMA，默认 `30`
 - `--slow-span`：长周期 EMA，默认 `120`

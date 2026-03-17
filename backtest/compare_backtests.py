@@ -7,11 +7,13 @@ from pathlib import Path
 import pandas as pd
 
 try:
+    from .backtest_common import add_market_arg, normalize_market, validate_market_for_symbols
     from . import backtest_ema_cross as ema_cross
     from . import backtest_ema_rsi_bull_range as ema_rsi_bull_range
     from . import backtest_ema_rsi_combo as ema_rsi_combo
     from . import backtest_rsi_reversion as rsi_reversion
 except ImportError:
+    from backtest_common import add_market_arg, normalize_market, validate_market_for_symbols
     import backtest_ema_cross as ema_cross
     import backtest_ema_rsi_bull_range as ema_rsi_bull_range
     import backtest_ema_rsi_combo as ema_rsi_combo
@@ -32,10 +34,12 @@ def parse_args() -> argparse.Namespace:
         help="Symbol directory under --data-root. Repeat this flag to compare multiple symbols.",
     )
     parser.add_argument("--data-root", type=Path, default=DEFAULT_DATA_ROOT)
+    add_market_arg(parser)
     return parser.parse_args()
 
 
-def run_all(codes: list[str], data_root: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
+def run_all(codes: list[str], data_root: Path, market: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    market = validate_market_for_symbols(codes, normalize_market(market), label="--code")
     data_rows: list[dict] = []
     result_rows: list[dict] = []
 
@@ -60,6 +64,7 @@ def run_all(codes: list[str], data_root: Path) -> tuple[pd.DataFrame, pd.DataFra
             volume_window=rsi_reversion.DEFAULT_VOLUME_WINDOW,
             min_volume_ratio=rsi_reversion.DEFAULT_MIN_VOLUME_RATIO,
             flat_at_close=False,
+            market=market,
         )
         result_rows.append(
             {
@@ -81,6 +86,7 @@ def run_all(codes: list[str], data_root: Path) -> tuple[pd.DataFrame, pd.DataFra
             volume_window=ema_cross.DEFAULT_VOLUME_WINDOW,
             min_volume_ratio=ema_cross.DEFAULT_MIN_VOLUME_RATIO,
             flat_at_close=True,
+            market=market,
         )
         result_rows.append(
             {
@@ -105,6 +111,7 @@ def run_all(codes: list[str], data_root: Path) -> tuple[pd.DataFrame, pd.DataFra
             volume_window=ema_rsi_combo.DEFAULT_VOLUME_WINDOW,
             min_volume_ratio=ema_rsi_combo.DEFAULT_MIN_VOLUME_RATIO,
             flat_at_close=False,
+            market=market,
         )
         result_rows.append(
             {
@@ -129,6 +136,7 @@ def run_all(codes: list[str], data_root: Path) -> tuple[pd.DataFrame, pd.DataFra
             volume_window=ema_rsi_bull_range.DEFAULT_VOLUME_WINDOW,
             min_volume_ratio=ema_rsi_bull_range.DEFAULT_MIN_VOLUME_RATIO,
             flat_at_close=False,
+            market=market,
         )
         result_rows.append(
             {
@@ -185,7 +193,7 @@ def build_report(data_summary: pd.DataFrame, results: pd.DataFrame) -> str:
 
 def main() -> int:
     args = parse_args()
-    data_summary, results = run_all(args.code, args.data_root)
+    data_summary, results = run_all(args.code, args.data_root, args.market)
     print(build_report(data_summary, results))
     return 0
 

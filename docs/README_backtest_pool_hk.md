@@ -57,9 +57,12 @@
 
 后续更新这份文档时，优先复用下面这组命令（即当前与美股文档对齐的参数口径）：
 
+所有命令都必须显式传入 `--market HK`。
+
 ```bash
 ./.venv/bin/python backtest/backtest_rsi_reversion.py \
   --codes HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981 \
+  --market HK \
   --initial-cash 800000 \
   --fee-account futu_alt \
   --sell-threshold 70 \
@@ -69,6 +72,7 @@
 
 ./.venv/bin/python backtest/backtest_ema_cross.py \
   --codes HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981 \
+  --market HK \
   --initial-cash 800000 \
   --fee-account futu_alt \
   --position-ratio 0.15 \
@@ -79,6 +83,7 @@
 
 ./.venv/bin/python backtest/backtest_ema_rsi_combo.py \
   --codes HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981 \
+  --market HK \
   --initial-cash 800000 \
   --fee-account futu_alt \
   --buy-threshold 35 \
@@ -91,6 +96,7 @@
 
 ./.venv/bin/python backtest/backtest_ema_rsi_bull_range.py \
   --codes HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981 \
+  --market HK \
   --initial-cash 800000 \
   --fee-account futu_alt \
   --fast-span 20 \
@@ -106,6 +112,7 @@
 
 ./.venv/bin/python backtest/backtest_dual_momentum.py \
   --codes HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981 \
+  --market HK \
   --initial-cash 800000 \
   --fee-account futu_alt \
   --lookback-days 40 \
@@ -126,6 +133,7 @@
 
 ./.venv/bin/python backtest/backtest_dual_momentum_ema_rsi_hybrid.py \
   --codes HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981 \
+  --market HK \
   --initial-cash 800000 \
   --fee-account futu_alt \
   --lookback-days 20 \

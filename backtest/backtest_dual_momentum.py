@@ -71,24 +71,28 @@ try:
         add_eval_end_arg,
         add_eval_start_arg,
         add_fee_args,
+        add_market_arg,
         compute_order_fees,
-        infer_market_from_codes,
+        normalize_market,
         parse_eval_end,
         parse_eval_start,
         resolve_eval_window,
         resolve_codes,
+        validate_market_for_symbols,
     )
 except ImportError:
     from backtest_common import (
         add_eval_end_arg,
         add_eval_start_arg,
         add_fee_args,
+        add_market_arg,
         compute_order_fees,
-        infer_market_from_codes,
+        normalize_market,
         parse_eval_end,
         parse_eval_start,
         resolve_eval_window,
         resolve_codes,
+        validate_market_for_symbols,
     )
 
 
@@ -125,6 +129,7 @@ def parse_args() -> argparse.Namespace:
     add_eval_start_arg(parser)
     add_eval_end_arg(parser)
     add_fee_args(parser)
+    add_market_arg(parser)
     parser.add_argument(
         "--volume-window",
         type=int,
@@ -222,9 +227,11 @@ def run_backtest(
     eval_start: pd.Timestamp | None = None,
     eval_end: pd.Timestamp | None = None,
     fee_account: str | None = None,
-    market: str | None = None,
+    *,
+    market: str,
     security_type: str = "stock",
 ) -> tuple[dict, pd.DataFrame]:
+    market = normalize_market(market)
     # 回测入口继续保留原有函数签名，但内部统一转换成 strategy 层的参数对象，
     # 这样 backtest 和 live_trading 会严格共用同一套参数口径和校验逻辑。
     strategy_params = DualMomentumParams(
@@ -244,8 +251,6 @@ def run_backtest(
     rebalance_policy.validate()
     if not prices.index.equals(volumes.index) or not prices.columns.equals(volumes.columns):
         raise ValueError("prices and volumes must share the same index and columns")
-    if fee_account and not market:
-        raise ValueError("market is required when fee-account is enabled")
 
     effective_top_n = min(strategy_params.top_n, len(prices.columns))
     # eval window 允许只回测其中一段区间，但信号仍可使用区间之前的数据做 warm-up。
@@ -303,7 +308,7 @@ def run_backtest(
             sell_qty = qty - desired_shares[code]
             fee_total, fee_breakdown = compute_order_fees(
                 fee_account=fee_account,
-                market=market if market is not None else "",
+                market=market,
                 side="sell",
                 price=price,
                 shares=sell_qty,
@@ -340,7 +345,7 @@ def run_backtest(
                     price=price,
                     desired_qty=needed_qty,
                     fee_account=fee_account,
-                    market=market if market is not None else "",
+                    market=market,
                     security_type=security_type,
                 )
                 if affordable_qty <= 0:
@@ -407,10 +412,10 @@ def run_backtest(
 def main() -> int:
     args = parse_args()
     codes = resolve_codes(args.data_root, args.codes)
+    market = validate_market_for_symbols(codes, args.market, label="--codes")
     prices, volumes = load_daily_data(args.data_root, codes)
     eval_start = parse_eval_start(args.eval_start)
     eval_end = parse_eval_end(args.eval_end)
-    market = infer_market_from_codes(codes)
     summary, trades = run_backtest(
         prices=prices,
         volumes=volumes,

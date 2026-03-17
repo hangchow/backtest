@@ -15,10 +15,12 @@ from backtest.backtest_common import (
     add_eval_end_arg,
     add_eval_start_arg,
     add_fee_args,
+    add_market_arg,
     compute_buy_quantity_with_fees,
     compute_order_fees,
     parse_eval_end,
     parse_eval_start,
+    validate_market_for_symbols,
 )
 from backtest.backtest_rsi_reversion import compute_rsi
 
@@ -55,6 +57,7 @@ def parse_args() -> argparse.Namespace:
     add_eval_start_arg(parser)
     add_eval_end_arg(parser)
     add_fee_args(parser)
+    add_market_arg(parser)
     return parser.parse_args()
 
 
@@ -113,6 +116,7 @@ def load_day_end_minute_indicators(
 
 def main() -> int:
     args = parse_args()
+    market = validate_market_for_symbols(args.codes, args.market, label="--codes")
     eval_start = parse_eval_start(args.eval_start)
     eval_end = parse_eval_end(args.eval_end)
     closes = load_daily_closes(args.daily_data_root, args.codes)
@@ -195,7 +199,7 @@ def main() -> int:
                 price = float(row["close"])
                 fee_total, _ = compute_order_fees(
                     fee_account=args.fee_account,
-                    market="HK",
+                    market=market,
                     side="sell",
                     price=price,
                     shares=hold_qty,
@@ -215,7 +219,7 @@ def main() -> int:
                 budget=cash * args.position_ratio,
                 price=float(row["close"]),
                 fee_account=args.fee_account,
-                market="HK",
+                market=market,
                 security_type=args.security_type,
             )
             if qty > 0:
@@ -243,7 +247,7 @@ def main() -> int:
         last_price = float(last_row["close"])
         fee_total, _ = compute_order_fees(
             fee_account=args.fee_account,
-            market="HK",
+            market=market,
             side="sell",
             price=last_price,
             shares=hold_qty,

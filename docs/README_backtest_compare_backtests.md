@@ -9,7 +9,7 @@
 - `EMA + RSI`
 - `EMA + RSI bull range`
 
-脚本会依次读取每个标的的分钟 K 线，运行上述 4 个脚本的默认参数回测，然后把结果整理成一份 Markdown 报告输出到标准输出。
+脚本会依次读取每个标的的分钟 K 线，运行上述 4 个脚本的默认参数回测，然后把结果整理成一份 Markdown 报告输出到标准输出。`--market` 是必传参数，脚本不会再从代码前缀自动推断市场。
 
 ## 脚本位置
 
@@ -32,13 +32,14 @@
 比较单个标的：
 
 ```bash
-./.venv/bin/python backtest/compare_backtests.py --code US.MSFT
+./.venv/bin/python backtest/compare_backtests.py --market US --code US.MSFT
 ```
 
 比较多个标的：
 
 ```bash
 ./.venv/bin/python backtest/compare_backtests.py \
+  --market US \
   --code US.MSFT \
   --code US.NVDA \
   --code US.AAPL
@@ -49,6 +50,7 @@
 ```bash
 ./.venv/bin/python backtest/compare_backtests.py \
   --data-root /path/to/kline_minute \
+  --market HK \
   --code HK.00700 \
   --code HK.09988
 ```
@@ -57,6 +59,7 @@
 
 ```bash
 ./.venv/bin/python backtest/compare_backtests.py \
+  --market US \
   --code US.MSFT \
   --code US.NVDA \
   > /tmp/compare_backtests_report.md
@@ -66,6 +69,7 @@
 
 - `--code`：要比较的标的代码；必须重复传入，不能写成一个参数后面跟多个值
 - `--data-root`：分钟数据根目录，默认是 `kline_minute`
+- `--market`：必传，指定 `HK` 或 `US`；底层 4 个回测脚本都会显式使用这个 market
 
 ## 输出内容
 

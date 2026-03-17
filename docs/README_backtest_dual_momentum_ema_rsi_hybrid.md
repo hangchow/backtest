@@ -6,8 +6,10 @@
 
 ```bash
 # HK 两组
+--market HK
 --initial-cash 800000
 # US 两组
+--market US
 --initial-cash 100000
 
 # 其余参数四组一致
@@ -32,6 +34,8 @@
 --take-profit-pct 0.2
 --position-ratio 1.0
 ```
+
+`--market` 现在是必传参数，脚本不会再从股票代码自动推断市场。
 
 ## 股票池
 

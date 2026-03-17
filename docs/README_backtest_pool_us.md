@@ -63,9 +63,12 @@
 
 后续更新这份文档时，优先复用下面这组命令（即当前排行榜口径，`dual momentum` 显式写出最佳参数）：
 
+所有命令都必须显式传入 `--market US`。
+
 ```bash
 python3 backtest/backtest_rsi_reversion.py \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA US.AMZN US.AAPL US.V US.VOO \
+  --market US \
   --initial-cash 100000 \
   --fee-account futu_alt \
   --sell-threshold 70 \
@@ -75,6 +78,7 @@ python3 backtest/backtest_rsi_reversion.py \
 
 python3 backtest/backtest_ema_cross.py \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA US.AMZN US.AAPL US.V US.VOO \
+  --market US \
   --initial-cash 100000 \
   --fee-account futu_alt \
   --position-ratio 0.15 \
@@ -85,6 +89,7 @@ python3 backtest/backtest_ema_cross.py \
 
 python3 backtest/backtest_ema_rsi_combo.py \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA US.AMZN US.AAPL US.V US.VOO \
+  --market US \
   --initial-cash 100000 \
   --fee-account futu_alt \
   --buy-threshold 35 \
@@ -97,6 +102,7 @@ python3 backtest/backtest_ema_rsi_combo.py \
 
 python3 backtest/backtest_ema_rsi_bull_range.py \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA US.AMZN US.AAPL US.V US.VOO \
+  --market US \
   --initial-cash 100000 \
   --fee-account futu_alt \
   --fast-span 20 \
@@ -112,6 +118,7 @@ python3 backtest/backtest_ema_rsi_bull_range.py \
 
 python3 backtest/backtest_dual_momentum.py \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA US.AMZN US.AAPL US.V US.VOO \
+  --market US \
   --initial-cash 100000 \
   --fee-account futu_alt \
   --lookback-days 40 \

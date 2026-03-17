@@ -9,10 +9,13 @@ import pandas as pd
 from backtest.backtest_common import (
     compute_relative_volume,
     compute_volume_scale,
+    extract_market_from_symbol,
     normalize_max_open_positions,
     parse_eval_end,
     resolve_eval_window,
     resolve_codes,
+    validate_market_for_symbol,
+    validate_market_for_symbols,
 )
 from backtest.backtest_ema_cross import DEFAULT_MAX_OPEN_POSITIONS as EMA_CROSS_DEFAULT_MAX_OPEN_POSITIONS
 from backtest.backtest_ema_rsi_combo import DEFAULT_MAX_OPEN_POSITIONS as EMA_RSI_DEFAULT_MAX_OPEN_POSITIONS
@@ -50,6 +53,23 @@ class NormalizeMaxOpenPositionsTests(unittest.TestCase):
     def test_normalize_max_open_positions_rejects_zero(self) -> None:
         with self.assertRaises(ValueError):
             normalize_max_open_positions(0, 4)
+
+
+class MarketValidationTests(unittest.TestCase):
+    def test_extract_market_from_symbol_returns_none_for_unknown_prefix(self) -> None:
+        self.assertIsNone(extract_market_from_symbol("TEST.00001"))
+
+    def test_validate_market_for_symbols_rejects_mixed_code_markets(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_market_for_symbols(["HK.00700", "US.MSFT"], "US", label="--codes")
+
+    def test_validate_market_for_symbols_rejects_mismatched_market_argument(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_market_for_symbols(["US.MSFT", "US.NVDA"], "HK", label="--codes")
+
+    def test_validate_market_for_symbol_rejects_mismatched_data_dir_market(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_market_for_symbol("US.MSFT", "HK", label="--data-dir")
 
 
 class RelativeVolumeTests(unittest.TestCase):
@@ -146,6 +166,7 @@ class PortfolioBacktestTests(unittest.TestCase):
             min_volume_ratio=1.0,
             flat_at_close=False,
             max_open_positions=2,
+            market="US",
         )
 
         self.assertIn("codes", summary)
@@ -170,6 +191,7 @@ class PortfolioBacktestTests(unittest.TestCase):
             min_volume_ratio=1.0,
             flat_at_close=False,
             max_open_positions=-1,
+            market="US",
         )
 
         self.assertEqual(summary["max_open_positions"], 2)
@@ -194,6 +216,7 @@ class PortfolioBacktestTests(unittest.TestCase):
             max_open_positions=1,
             eval_start=eval_start,
             eval_end=eval_end,
+            market="US",
         )
 
         self.assertEqual(summary["warmup_start_time"], pd.Timestamp("2025-01-02 09:30:00"))
@@ -378,6 +401,7 @@ class DualMomentumBacktestTests(unittest.TestCase):
             volatility_window=2,
             target_annual_vol=10.0,
             max_gross_exposure=1.0,
+            market="US",
         )
 
         self.assertGreater(summary["trade_count"], 0)
@@ -417,6 +441,7 @@ class DualMomentumBacktestTests(unittest.TestCase):
             volatility_window=2,
             target_annual_vol=10.0,
             max_gross_exposure=1.0,
+            market="US",
         )
 
         rebalance_day = trades[trades["time_key"] == pd.Timestamp("2025-01-07").date()]
@@ -464,6 +489,7 @@ class DualMomentumBacktestTests(unittest.TestCase):
             target_annual_vol=10.0,
             max_gross_exposure=1.0,
             eval_start=pd.Timestamp("2025-01-07"),
+            market="US",
         )
 
         self.assertEqual(summary["warmup_start_time"], pd.Timestamp("2025-01-02").date())
@@ -506,6 +532,7 @@ class DualMomentumBacktestTests(unittest.TestCase):
             max_gross_exposure=1.0,
             eval_start=pd.Timestamp("2025-01-06"),
             eval_end=pd.Timestamp("2025-01-07"),
+            market="US",
         )
 
         self.assertEqual(summary["start_time"], pd.Timestamp("2025-01-06").date())

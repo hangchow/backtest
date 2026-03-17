@@ -35,13 +35,15 @@ try:
         add_eval_end_arg,
         add_eval_start_arg,
         add_fee_args,
-        infer_market_from_codes,
+        add_market_arg,
         load_histories,
         load_history,
         parse_eval_end,
         parse_eval_start,
         resolve_codes,
         resolve_data_dir,
+        validate_market_for_symbol,
+        validate_market_for_symbols,
     )
 except ImportError:
     from backtest_common import (
@@ -49,13 +51,15 @@ except ImportError:
         add_eval_end_arg,
         add_eval_start_arg,
         add_fee_args,
-        infer_market_from_codes,
+        add_market_arg,
         load_histories,
         load_history,
         parse_eval_end,
         parse_eval_start,
         resolve_codes,
         resolve_data_dir,
+        validate_market_for_symbol,
+        validate_market_for_symbols,
     )
 
 
@@ -77,6 +81,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     add_data_source_args(parser)
     add_fee_args(parser)
+    add_market_arg(parser)
     parser.add_argument("--initial-cash", type=float, default=DEFAULT_INITIAL_CASH)
     parser.add_argument("--fast-span", type=int, default=DEFAULT_FAST_SPAN)
     parser.add_argument("--slow-span", type=int, default=DEFAULT_SLOW_SPAN)
@@ -118,7 +123,8 @@ def run_backtest(
     eval_start=None,
     eval_end=None,
     fee_account: str | None = None,
-    market: str = "US",
+    *,
+    market: str,
     security_type: str = "stock",
 ):
     return combo.run_backtest(
@@ -149,8 +155,8 @@ def main() -> int:
         if args.data_dir is not None:
             raise ValueError("--codes cannot be used with --data-dir")
         codes = resolve_codes(args.data_root, args.codes)
+        market = validate_market_for_symbols(codes, args.market, label="--codes")
         histories = load_histories(args.data_root, codes)
-        market = infer_market_from_codes(codes)
         summary, trades = combo.run_portfolio_backtest(
             histories=histories,
             initial_cash=args.initial_cash,
@@ -172,8 +178,8 @@ def main() -> int:
         )
     else:
         data_dir = resolve_data_dir(args.data_dir)
+        market = validate_market_for_symbol(data_dir.name, args.market, label="--data-dir")
         history = load_history(data_dir)
-        market = infer_market_from_codes([data_dir.name])
         summary, trades = run_backtest(
             history=history,
             initial_cash=args.initial_cash,

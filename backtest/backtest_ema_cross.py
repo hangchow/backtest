@@ -32,19 +32,22 @@ try:
         add_eval_end_arg,
         add_eval_start_arg,
         add_fee_args,
+        add_market_arg,
         compute_buy_quantity_with_fees,
         compute_order_fees,
         compute_relative_volume,
         compute_volume_scale,
-        infer_market_from_codes,
         load_histories,
         load_history,
         normalize_max_open_positions,
+        normalize_market,
         parse_eval_end,
         parse_eval_start,
         resolve_codes,
         resolve_data_dir,
         resolve_eval_window,
+        validate_market_for_symbol,
+        validate_market_for_symbols,
         validate_volume_filter,
     )
 except ImportError:
@@ -53,19 +56,22 @@ except ImportError:
         add_eval_end_arg,
         add_eval_start_arg,
         add_fee_args,
+        add_market_arg,
         compute_buy_quantity_with_fees,
         compute_order_fees,
         compute_relative_volume,
         compute_volume_scale,
-        infer_market_from_codes,
         load_histories,
         load_history,
         normalize_max_open_positions,
+        normalize_market,
         parse_eval_end,
         parse_eval_start,
         resolve_codes,
         resolve_data_dir,
         resolve_eval_window,
+        validate_market_for_symbol,
+        validate_market_for_symbols,
         validate_volume_filter,
     )
 
@@ -85,6 +91,7 @@ def parse_args() -> argparse.Namespace:
     )
     add_data_source_args(parser)
     add_fee_args(parser)
+    add_market_arg(parser)
     parser.add_argument("--initial-cash", type=float, default=DEFAULT_INITIAL_CASH)
     parser.add_argument("--fast-span", type=int, default=DEFAULT_FAST_SPAN)
     parser.add_argument("--slow-span", type=int, default=DEFAULT_SLOW_SPAN)
@@ -130,9 +137,11 @@ def run_backtest(
     eval_start: pd.Timestamp | None = None,
     eval_end: pd.Timestamp | None = None,
     fee_account: str | None = None,
-    market: str = "US",
+    *,
+    market: str,
     security_type: str = "stock",
 ) -> tuple[dict, pd.DataFrame]:
+    market = normalize_market(market)
     if fast_span <= 0 or slow_span <= 0:
         raise ValueError("fast-span and slow-span must be positive")
     if fast_span >= slow_span:
@@ -275,9 +284,11 @@ def run_portfolio_backtest(
     eval_start: pd.Timestamp | None = None,
     eval_end: pd.Timestamp | None = None,
     fee_account: str | None = None,
-    market: str = "US",
+    *,
+    market: str,
     security_type: str = "stock",
 ) -> tuple[dict, pd.DataFrame]:
+    market = normalize_market(market)
     max_open_positions = normalize_max_open_positions(max_open_positions, len(histories))
     validate_volume_filter(volume_window, min_volume_ratio)
 
@@ -437,8 +448,8 @@ def main() -> int:
         if args.data_dir is not None:
             raise ValueError("--codes cannot be used with --data-dir")
         codes = resolve_codes(args.data_root, args.codes)
+        market = validate_market_for_symbols(codes, args.market, label="--codes")
         histories = load_histories(args.data_root, codes)
-        market = infer_market_from_codes(codes)
         summary, trades = run_portfolio_backtest(
             histories=histories,
             initial_cash=args.initial_cash,
@@ -457,8 +468,8 @@ def main() -> int:
         )
     else:
         data_dir = resolve_data_dir(args.data_dir)
+        market = validate_market_for_symbol(data_dir.name, args.market, label="--data-dir")
         history = load_history(data_dir)
-        market = infer_market_from_codes([data_dir.name])
         summary, trades = run_backtest(
             history=history,
             initial_cash=args.initial_cash,

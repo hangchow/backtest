@@ -10,6 +10,7 @@
 ## 结果范围
 
 - 本文档仅保留美股单标结果表；统一回测口径与账户费用请以上方链接为准。
+- 所有回测脚本现在都要求显式传入 `--market US`。
 
 ## 默认参数结果
 
@@ -39,9 +40,9 @@
 ## 复现命令示例
 
 ```bash
-./.venv/bin/python backtest/backtest_rsi_reversion.py --codes US.MSFT --initial-cash 100000 --fee-account futu_alt --show-trades 0
-./.venv/bin/python backtest/backtest_ema_cross.py --codes US.MSFT --initial-cash 100000 --fee-account futu_alt --show-trades 0
-./.venv/bin/python backtest/backtest_ema_rsi_combo.py --codes US.MSFT --initial-cash 100000 --fee-account futu_alt --show-trades 0
-./.venv/bin/python backtest/backtest_ema_rsi_bull_range.py --codes US.MSFT --initial-cash 100000 --fee-account futu_alt --show-trades 0
-./.venv/bin/python backtest/backtest_dual_momentum.py --codes US.MSFT --initial-cash 100000 --fee-account futu_alt --show-trades 0
+./.venv/bin/python backtest/backtest_rsi_reversion.py --codes US.MSFT --market US --initial-cash 100000 --fee-account futu_alt --show-trades 0
+./.venv/bin/python backtest/backtest_ema_cross.py --codes US.MSFT --market US --initial-cash 100000 --fee-account futu_alt --show-trades 0
+./.venv/bin/python backtest/backtest_ema_rsi_combo.py --codes US.MSFT --market US --initial-cash 100000 --fee-account futu_alt --show-trades 0
+./.venv/bin/python backtest/backtest_ema_rsi_bull_range.py --codes US.MSFT --market US --initial-cash 100000 --fee-account futu_alt --show-trades 0
+./.venv/bin/python backtest/backtest_dual_momentum.py --codes US.MSFT --market US --initial-cash 100000 --fee-account futu_alt --show-trades 0
 ```

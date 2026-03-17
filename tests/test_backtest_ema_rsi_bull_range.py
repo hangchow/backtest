@@ -27,7 +27,7 @@ from backtest.backtest_ema_rsi_bull_range import (
 
 class ParseArgsTests(unittest.TestCase):
     def test_defaults_match_optimized_profile(self) -> None:
-        args = parse_args(["--data-dir", "kline_minute/TEST.00001"])
+        args = parse_args(["--data-dir", "kline_minute/TEST.00001", "--market", "HK"])
 
         self.assertEqual(args.fast_span, DEFAULT_FAST_SPAN)
         self.assertEqual(args.slow_span, DEFAULT_SLOW_SPAN)
@@ -38,6 +38,11 @@ class ParseArgsTests(unittest.TestCase):
         self.assertEqual(args.min_volume_ratio, DEFAULT_MIN_VOLUME_RATIO)
         self.assertEqual(args.max_open_positions, DEFAULT_MAX_OPEN_POSITIONS)
         self.assertFalse(args.flat_at_close)
+        self.assertEqual(args.market, "HK")
+
+    def test_market_is_required(self) -> None:
+        with self.assertRaises(SystemExit):
+            parse_args(["--data-dir", "kline_minute/TEST.00001"])
 
 
 class RunBacktestTests(unittest.TestCase):
@@ -68,6 +73,7 @@ class RunBacktestTests(unittest.TestCase):
                 volume_window=10,
                 min_volume_ratio=1.0,
                 flat_at_close=True,
+                market="HK",
             )
 
 

@@ -43,7 +43,7 @@
   - `rebalance_band_pct=0.01`
   - `initial_cash=100000`
 
-其余参数使用脚本默认值与统一费用口径（`--fee-account futu_alt`）。
+其余参数使用脚本默认值与统一费用口径（`--fee-account futu_alt`）；`--market` 为必传参数，不再从股票代码自动推断。
 
 ## 四组回测结果对比
 
@@ -60,6 +60,7 @@
 ```bash
 python3 backtest/backtest_momentum_monthly.py \
   --codes HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981 \
+  --market HK \
   --initial-cash 800000 \
   --fee-account futu_alt \
   --lookback-days 20 \
@@ -74,6 +75,7 @@ python3 backtest/backtest_momentum_monthly.py \
 ```bash
 python3 backtest/backtest_momentum_monthly.py \
   --codes HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981 \
+  --market HK \
   --initial-cash 800000 \
   --fee-account futu_alt \
   --lookback-days 20 \
@@ -88,6 +90,7 @@ python3 backtest/backtest_momentum_monthly.py \
 ```bash
 python3 backtest/backtest_momentum_monthly.py \
   --codes US.AAPL US.MSFT US.GOOG US.AMZN US.NVDA US.TSLA US.V US.VOO \
+  --market US \
   --initial-cash 100000 \
   --fee-account futu_alt \
   --lookback-days 10 \
@@ -102,6 +105,7 @@ python3 backtest/backtest_momentum_monthly.py \
 ```bash
 python3 backtest/backtest_momentum_monthly.py \
   --codes US.AAPL US.MSFT US.GOOG US.AMZN US.NVDA US.TSLA US.V US.VOO \
+  --market US \
   --initial-cash 100000 \
   --fee-account futu_alt \
   --lookback-days 10 \
