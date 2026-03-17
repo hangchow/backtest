@@ -1,6 +1,6 @@
-# `backtest_hk_momentum_monthly.py` 回测说明（港股/美股，双时间窗口）
+# `backtest_momentum_monthly.py` 回测说明（港股/美股，双时间窗口）
 
-本文档给出 `backtest/backtest_hk_momentum_monthly.py` 的四组回测结果：
+本文档给出 `backtest/backtest_momentum_monthly.py` 的四组回测结果：
 - 市场：港股股票池、美股股票池（各 8 只）
 - 时间窗口：
   - `2025-01-01` ~ `2026-01-01`
@@ -58,7 +58,7 @@
 
 ### HK（窗口1）
 ```bash
-python3 backtest/backtest_hk_momentum_monthly.py \
+python3 backtest/backtest_momentum_monthly.py \
   --codes HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981 \
   --initial-cash 800000 \
   --fee-account futu_alt \
@@ -72,7 +72,7 @@ python3 backtest/backtest_hk_momentum_monthly.py \
 
 ### HK（窗口2）
 ```bash
-python3 backtest/backtest_hk_momentum_monthly.py \
+python3 backtest/backtest_momentum_monthly.py \
   --codes HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981 \
   --initial-cash 800000 \
   --fee-account futu_alt \
@@ -86,7 +86,7 @@ python3 backtest/backtest_hk_momentum_monthly.py \
 
 ### US（窗口1）
 ```bash
-python3 backtest/backtest_hk_momentum_monthly.py \
+python3 backtest/backtest_momentum_monthly.py \
   --codes US.AAPL US.MSFT US.GOOG US.AMZN US.NVDA US.TSLA US.V US.VOO \
   --initial-cash 100000 \
   --fee-account futu_alt \
@@ -100,7 +100,7 @@ python3 backtest/backtest_hk_momentum_monthly.py \
 
 ### US（窗口2）
 ```bash
-python3 backtest/backtest_hk_momentum_monthly.py \
+python3 backtest/backtest_momentum_monthly.py \
   --codes US.AAPL US.MSFT US.GOOG US.AMZN US.NVDA US.TSLA US.V US.VOO \
   --initial-cash 100000 \
   --fee-account futu_alt \

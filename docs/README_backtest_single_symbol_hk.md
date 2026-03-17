@@ -4,8 +4,8 @@
 
 ## 统一回测口径与账户费用
 
-- [回测统一口径（backtest/README.md）](README.md#回测统一口径)
-- [账户费用规则（backtest/README.md）](README.md#费用规则futu_alt)
+- [回测统一口径（backtest/README.md）](../backtest/README.md#回测统一口径)
+- [账户费用规则（backtest/README.md）](../backtest/README.md#费用规则futu_alt)
 
 ## 结果范围
 

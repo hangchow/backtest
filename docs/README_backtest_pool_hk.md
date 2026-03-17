@@ -7,8 +7,8 @@
 
 ## 统一回测口径与账户费用
 
-- [回测统一口径（backtest/README.md）](README.md#回测统一口径)
-- [账户费用规则（backtest/README.md）](README.md#费用规则futu_alt)
+- [回测统一口径（backtest/README.md）](../backtest/README.md#回测统一口径)
+- [账户费用规则（backtest/README.md）](../backtest/README.md#费用规则futu_alt)
 
 - 本文档聚焦港股股票池结果、解读与复现命令，不再重复维护统一口径与费用细则。
 
@@ -51,7 +51,7 @@
 - `dual momentum` 现在从 `kline_day/` 读取日线数据；其他分钟策略仍从 `kline_minute/` 读取分钟数据。
 - 分钟级股票池脚本与 `dual momentum` 都支持 `--eval-start` / `--eval-end`；窗口外数据只用于预热，不再混入评分结果。
 - `dual momentum` 当前也使用与美股文档相同的显式参数：`lookback 40/120`、`top_n 1`、`market_filter_window 60`、`target_annual_vol 0.60`、`max_gross_exposure 1.20`。
-- [`backtest_ema_rsi_bull_range.py`](backtest_ema_rsi_bull_range.py) 复用了 [`backtest_ema_rsi_combo.py`](backtest_ema_rsi_combo.py) 的股票池引擎，只是默认参数不同。
+- [`backtest_ema_rsi_bull_range.py`](../backtest/backtest_ema_rsi_bull_range.py) 复用了 [`backtest_ema_rsi_combo.py`](../backtest/backtest_ema_rsi_combo.py) 的股票池引擎，只是默认参数不同。
 
 ## 当前基线命令
 
@@ -155,5 +155,5 @@
 
 - 只要是港股股票池结果、分析、结论更新，优先修改这份文档。
 - 如果是美股股票池结果更新，修改 [美股股票池回测结果与分析](README_backtest_pool_us.md)。
-- 如果是单标结果更新，修改 [单标的回测结果与分析](README_backtest_single_symbol.md)。
+- 如果是单标结果更新，修改 [港股单标回测（`--codes`）](README_backtest_single_symbol_hk.md) 或 [美股单标回测（`--codes`）](README_backtest_single_symbol_us.md)。
 - 如果未来把股票池评估从单一窗口升级成滚动 walk-forward，也优先直接更新这份文档顶部口径，而不是只在根目录 `README.md` 里补一句。

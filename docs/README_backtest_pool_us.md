@@ -3,8 +3,8 @@
 
 ## 统一回测口径与账户费用
 
-- [回测统一口径（backtest/README.md）](README.md#回测统一口径)
-- [账户费用规则（backtest/README.md）](README.md#费用规则futu_alt)
+- [回测统一口径（backtest/README.md）](../backtest/README.md#回测统一口径)
+- [账户费用规则（backtest/README.md）](../backtest/README.md#费用规则futu_alt)
 
 - 本文档聚焦美股股票池结果、解读与复现命令，不再重复维护统一口径与费用细则。
 - `dual momentum` 已于 `2026-03-17` 按本文“当前基线命令”完成双窗口复跑：在 `2025-03-07 ~ 2026-03-06` 窗口结果为 `final_value = 221343.02`、`return_pct = 121.34%`、`max_drawdown_pct = -14.44%`、`trade_count = 50`；在新增窗口 `2025-01-01 ~ 2026-01-01`（实际交易日落点 `2025-01-02 ~ 2025-12-31`）结果为 `final_value = 185287.43`、`return_pct = 85.29%`、`max_drawdown_pct = -20.22%`、`trade_count = 53`。
@@ -57,7 +57,7 @@
 - 由于数据目录已延伸到 `2026-03-13`，本文档现在维护两套固定评分窗口：`2025-03-07 ~ 2026-03-06`（窗口一）与 `2025-01-01 ~ 2026-01-01`（窗口二）；两套命令都显式传入 `--eval-start/--eval-end`，保证可复现且不混入窗口外统计。
 - 分钟级股票池脚本与 `dual momentum` 现在都支持 `--eval-start` / `--eval-end`；窗口外数据只用于预热，不再混入评分结果。
 - `dual momentum` 现支持 `--max-gross-exposure`（默认 `1.0`），用于限制最大总仓位倍率；默认值不改变历史口径，只有显式提高该参数时才会使用受控杠杆。
-- [`backtest_ema_rsi_bull_range.py`](backtest_ema_rsi_bull_range.py) 复用了 [`backtest_ema_rsi_combo.py`](backtest_ema_rsi_combo.py) 的股票池引擎，只是默认参数不同。
+- [`backtest_ema_rsi_bull_range.py`](../backtest/backtest_ema_rsi_bull_range.py) 复用了 [`backtest_ema_rsi_combo.py`](../backtest/backtest_ema_rsi_combo.py) 的股票池引擎，只是默认参数不同。
 
 ## 当前基线命令
 
