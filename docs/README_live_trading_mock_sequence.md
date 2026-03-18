@@ -14,6 +14,7 @@
 - [live_trading/engine.py](/Users/sean/workspace/backtest-feature-livetrading-startup/live_trading/engine.py)
 - [live_trading/config.py](/Users/sean/workspace/backtest-feature-livetrading-startup/live_trading/config.py)
 - [live_trading/broker.py](/Users/sean/workspace/backtest-feature-livetrading-startup/live_trading/broker.py)
+- [live_trading/quote_brokers/mock.py](/Users/sean/workspace/backtest-feature-livetrading-startup/live_trading/quote_brokers/mock.py)
 - [live_trading/pool_strategies.py](/Users/sean/workspace/backtest-feature-livetrading-startup/live_trading/pool_strategies.py)
 - [strategy/dual_momentum_state.py](/Users/sean/workspace/backtest-feature-livetrading-startup/strategy/dual_momentum_state.py)
 - [strategy/dual_momentum.py](/Users/sean/workspace/backtest-feature-livetrading-startup/strategy/dual_momentum.py)
@@ -28,7 +29,7 @@ sequenceDiagram
     participant CLI as run_live_trading.py
     participant ENG as live_trading/engine.py
     participant CFG as live_trading/config.py
-    participant QB as broker.py\nMockRealtimeQuoteClient
+    participant QB as quote_brokers/mock.py\nMockRealtimeQuoteClient
     participant HB as broker.py\nHistoryProvider
     participant PLS as pool_strategies.py\nDualMomentumPoolStrategy
     participant STATE as dual_momentum_state.py\nDualMomentumDailyState
@@ -56,12 +57,16 @@ sequenceDiagram
     ENG->>PLS: bootstrap(warmup_histories)
     PLS->>STATE: bootstrap(histories)
 
+    ENG->>ENG: _apply_trade_accounts_config()
     ENG->>TB: create_trade_account_client(trade_accounts[].broker.type=futu)
     ENG->>TB: connect()
-    TB-->>ENG: async poll account / positions
-
     ENG->>ENG: _sync_shadow_state()
-    ENG-->>CLI: CONFIG_APPLIED / ACCOUNT / POSITIONS logs
+    ENG-->>CLI: CONFIG_APPLIED log
+
+    Note over TB,ENG: connect() 之后，账户/持仓是后台异步轮询进入 engine
+    TB-->>ENG: on_account(AccountSnapshot)
+    TB-->>ENG: on_positions(dict[code, PositionSnapshot])
+    ENG-->>CLI: ACCOUNT / POSITIONS logs
 ```
 
 这一步的关键点：
@@ -99,7 +104,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     actor C as curl / external pusher
-    participant QB as broker.py\nMockRealtimeQuoteClient
+    participant QB as quote_brokers/mock.py\nMockRealtimeQuoteClient
     participant ENG as live_trading/engine.py
     participant PLS as pool_strategies.py\nDualMomentumPoolStrategy
     participant STATE as dual_momentum_state.py\nDualMomentumDailyState
@@ -167,9 +172,12 @@ sequenceDiagram
   - 解析 quote / trade 两份配置，拼成 `LiveTradingConfig`
 - [live_trading/broker.py](/Users/sean/workspace/backtest-feature-livetrading-startup/live_trading/broker.py)
   - 提供：
-    - mock 实时行情入口
+    - quote broker factory
     - history provider
     - trade account client
+- [live_trading/quote_brokers/mock.py](/Users/sean/workspace/backtest-feature-livetrading-startup/live_trading/quote_brokers/mock.py)
+  - mock 实时行情入口
+  - 负责 `/health` / `/push`、bar 归一化、合成 quote、再推 bar
 - [live_trading/engine.py](/Users/sean/workspace/backtest-feature-livetrading-startup/live_trading/engine.py)
   - 把行情、账户、策略、dry-run 执行串起来
 - [live_trading/pool_strategies.py](/Users/sean/workspace/backtest-feature-livetrading-startup/live_trading/pool_strategies.py)
@@ -189,7 +197,7 @@ sequenceDiagram
 
 ```text
 HTTP push 的分钟 bar
--> broker.py(mock)
+-> quote_brokers/mock.py
 -> engine.py
 -> pool_strategies.py
 -> dual_momentum_state.py
@@ -202,15 +210,15 @@ HTTP push 的分钟 bar
 
 结论先说：
 
-- 优先重构 `live_trading/broker.py`
+- 优先重构 realtime quote mock 这一层，也就是 `live_trading/quote_brokers/mock.py`
 - 第二优先重构 `live_trading/engine.py`
 - `strategy/*.py` 暂时不是主要矛盾
 
-原因很直接：从时序图看，策略层已经基本按“状态聚合 -> 信号生成 -> 执行计算”分层了；真正职责过密的是实盘接线层。
+原因很直接：从时序图看，策略层已经基本按“状态聚合 -> 信号生成 -> 执行计算”分层了；真正职责过密的是实盘接线层，尤其是 realtime mock 和 engine。
 
-### 6.1 `broker.py` 里的 mock 最适合先拆
+### 6.1 `quote_brokers/mock.py` 里的 mock realtime 适合继续细拆
 
-当前 [live_trading/broker.py](/Users/sean/workspace/backtest-feature-livetrading-startup/live_trading/broker.py#L273) 这一段 `MockRealtimeQuoteClient` 同时承担了：
+当前 [live_trading/quote_brokers/mock.py#L16](/Users/sean/workspace/backtest-feature-livetrading-startup/live_trading/quote_brokers/mock.py#L16) 这一段 `MockRealtimeQuoteClient` 同时承担了：
 
 - HTTP server 生命周期
 - `/health` / `/push` 协议
@@ -223,7 +231,7 @@ HTTP push 的分钟 bar
 
 - 单测粒度太粗
 - replay / 文件回放没法复用核心逻辑
-- 后面如果要加 mock account，也会继续把 `broker.py` 堆大
+- 后面如果要加 mock account，也会继续把实盘接线层堆大
 
 建议拆成：
 
@@ -232,10 +240,12 @@ HTTP push 的分钟 bar
 - `live_trading/mock_market_data.py`
   - `MockBarPayloadNormalizer`
   - `MockMarketDataEmitter`
+- `live_trading/quote_brokers/mock.py`
+  - 只保留 client orchestration
 - `live_trading/broker.py`
-  - 只保留 `create_quote_broker_client(...)` 和 client 组装
+  - 继续保留 `create_quote_broker_client(...)` 这类 factory
 
-这一步基本不改外部行为，风险最低，最适合先做。
+这一步不需要再做一次“从 `broker.py` 搬到 `quote_brokers/mock.py`”的大迁移，因为这一步已经完成了；现在要做的是把 `quote_brokers/mock.py` 内部职责继续拆细。
 
 ### 6.2 `engine.py` 的 `apply_config()` 职责过密
 
@@ -341,14 +351,14 @@ HTTP push 的分钟 bar
 
 建议按这个顺序做：
 
-1. 先把 `broker.py` 里的 mock realtime 拆出去
+1. 先把 `quote_brokers/mock.py` 内部拆成 server / normalizer / emitter
 2. 再把 `engine.py` 的 dry-run 执行器抽成 `execution.py`
 3. 再抽账户状态存储
 4. 最后再拆 `apply_config()` 的 runtime coordinator
 
 原因：
 
-- 第 1 步风险最低，而且和我们前面讨论的 mock 拆分目标一致
+- 第 1 步风险最低，而且和当前代码状态一致
 - 第 2 步能明显降低 `engine.py` 复杂度
 - 第 3 步是给 mock trade account 铺路
 - 第 4 步虽然也重要，但属于“整体整理”，不适合先动
@@ -358,7 +368,7 @@ HTTP push 的分钟 bar
 如果你准备开始重构，这条链路最合适的起点不是策略文件，而是：
 
 ```text
-先拆 broker.py 的 mock
+先细拆 quote_brokers/mock.py
 -> 再拆 engine.py 的 dry-run executor
 -> 再补 mock trade account
 ```
