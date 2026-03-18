@@ -40,14 +40,20 @@ from strategy.rebalance import (
 )
 
 
+DEFAULT_INITIAL_CASH = 800_000.0
+DEFAULT_LOOKBACK_DAYS = 20
+DEFAULT_TOP_N = 1
+DEFAULT_REBALANCE_BAND_PCT = 0.02
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Monthly momentum rotation backtest with baseline comparison")
     p.add_argument("--codes", nargs="+", required=True)
     p.add_argument("--data-root", type=Path, default=Path("kline_day"))
-    p.add_argument("--initial-cash", type=float, default=800000)
-    p.add_argument("--lookback-days", type=int, default=20)
-    p.add_argument("--top-n", type=int, default=1)
-    p.add_argument("--rebalance-band-pct", type=float, default=0.02)
+    p.add_argument("--initial-cash", type=float, default=DEFAULT_INITIAL_CASH)
+    p.add_argument("--lookback-days", type=int, default=DEFAULT_LOOKBACK_DAYS)
+    p.add_argument("--top-n", type=int, default=DEFAULT_TOP_N)
+    p.add_argument("--rebalance-band-pct", type=float, default=DEFAULT_REBALANCE_BAND_PCT)
     p.add_argument("--compare-baseline", type=int, choices=[0, 1], default=1)
     add_eval_start_arg(p)
     add_eval_end_arg(p)

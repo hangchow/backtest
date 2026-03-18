@@ -28,7 +28,7 @@
 - [EMA cross 策略说明](../docs/README_backtest_ema_cross.md)
 - [EMA + RSI 策略说明](../docs/README_backtest_ema_rsi_combo.md)
 - [EMA + RSI bull range 策略说明](../docs/README_backtest_ema_rsi_bull_range.md)
-- [分钟策略横向对比工具说明](../docs/README_backtest_compare.md)
+- [多策略横向对比工具说明](../docs/README_backtest_compare.md)
 - [dual momentum 策略说明](../docs/README_backtest_dual_momentum.md)
 - [dual momentum + EMA + RSI hybrid 策略说明](../docs/README_backtest_dual_momentum_ema_rsi_hybrid.md)
 - [实时交易信号框架说明](../README.md)
