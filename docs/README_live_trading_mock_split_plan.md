@@ -75,28 +75,7 @@
 
 ## 5. 目标目录草图
 
-推荐采用分阶段、最小侵入式的目录结构：
-
-```text
-live_trading/
-  broker.py
-  quote_brokers/
-    __init__.py
-    base.py
-    mock.py
-```
-
-### 5.1 文件职责
-
-| 文件 | 职责 |
-| --- | --- |
-| `live_trading/broker.py` | 保留兼容导出、quote 工厂、history/trade 相关实现 |
-| `live_trading/quote_brokers/base.py` | quote 侧抽象：`QuoteBrokerClient`、`QuoteBrokerEventSink` |
-| `live_trading/quote_brokers/mock.py` | `MockRealtimeQuoteClient` 及其 HTTP push 逻辑 |
-
-### 5.2 第二阶段可选目录
-
-如果第一阶段完成后希望继续清理 quote 侧，可以在后续阶段再引入：
+当前建议目录结构已经落到这一级：
 
 ```text
 live_trading/
@@ -108,7 +87,18 @@ live_trading/
     futu.py
 ```
 
-第二阶段的目标是把 `FutuRealtimeQuoteClient` 也迁出 `broker.py`，使 `broker.py` 最终只承担工厂与兼容导出的角色。但这不是本次必要范围。
+### 5.1 文件职责
+
+| 文件 | 职责 |
+| --- | --- |
+| `live_trading/broker.py` | 保留兼容导出、quote 工厂、history/trade 相关实现 |
+| `live_trading/quote_brokers/base.py` | quote 侧抽象：`QuoteBrokerClient`、`QuoteBrokerEventSink` |
+| `live_trading/quote_brokers/mock.py` | `MockRealtimeQuoteClient` 及其 HTTP push 逻辑 |
+| `live_trading/quote_brokers/futu.py` | `FutuRealtimeQuoteClient` 与 Futu quote API 装载逻辑 |
+
+### 5.2 下一步可选目录
+
+如果后续还想继续清理 broker 侧，下一阶段应该考虑的是 history / trade 子域拆分，而不是再把 quote 侧留在 `broker.py`。
 
 ## 6. 目标运行时序
 
