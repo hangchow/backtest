@@ -52,10 +52,18 @@ class MarkdownTableTests(unittest.TestCase):
 
 
 class BuildReportTests(unittest.TestCase):
-    def test_build_report_keeps_single_best_and_sorts_pool_by_return_pct(self) -> None:
+    def test_build_report_sorts_single_by_code_and_return_pct_and_pool_by_return_pct(self) -> None:
         dataset_summary = pd.DataFrame(
             [
-                {"code": "A", "rows": 10, "days": 1, "start": "2025-01-01 09:30:00", "end": "2025-01-01 16:00:00"}
+                {
+                    "dataset": "kline_minute",
+                    "strategies": "EMA cross, RSI reversion",
+                    "code": "A",
+                    "rows": 10,
+                    "days": 1,
+                    "start": "2025-01-01 09:30:00",
+                    "end": "2025-01-01 16:00:00",
+                }
             ]
         )
         minute_results = pd.DataFrame(
@@ -71,18 +79,16 @@ class BuildReportTests(unittest.TestCase):
                     "return_pct": 1.0,
                     "max_drawdown_pct": -2.0,
                     "trade_count": 10,
+                    "duration": "0:02",
                 },
                 {
                     "code": "A",
-                    "rows": 10,
-                    "days": 1,
-                    "start": "2025-01-01 09:30:00",
-                    "end": "2025-01-01 16:00:00",
                     "strategy": "RSI reversion",
                     "final_value": 120000.0,
                     "return_pct": 20.0,
                     "max_drawdown_pct": -5.0,
                     "trade_count": 20,
+                    "duration": "0:03",
                 },
             ]
         )
@@ -112,12 +118,17 @@ class BuildReportTests(unittest.TestCase):
         report = build_report(dataset_summary, minute_results, pd.DataFrame(), pool_results)
 
         self.assertIn("## 回测数据集", report)
-        self.assertIn("## 单标分钟策略对比", report)
-        self.assertIn("## 每个标的的最佳分钟策略", report)
+        self.assertIn("### kline_minute（EMA cross, RSI reversion）", report)
+        self.assertIn("## 单标策略对比", report)
         self.assertIn("## 股票池策略对比", report)
         self.assertNotIn("## 股票池最佳结果", report)
-        self.assertIn("| A    | RSI reversion |   120000.00 |      20.00 |            -5.00 |", report)
+        self.assertNotIn("## 每个标的的最佳分钟策略", report)
+        self.assertIn("| A    | RSI reversion |   120000.00 |      20.00 |            -5.00 |          20 | 0:03     |", report)
         self.assertIn("| US pool (2) | Momentum monthly |   125000.00 |      25.00 |            -8.00 |           6 | 0:01     |", report)
+        self.assertLess(
+            report.find("| A    | RSI reversion |   120000.00 |      20.00 |            -5.00 |          20 | 0:03     |"),
+            report.find("| A    | EMA cross     |   101000.00 |       1.00 |            -2.00 |          10 | 0:02     |"),
+        )
         self.assertLess(report.find("Momentum monthly"), report.find("Dual momentum"))
 
     def test_build_report_uses_pool_dataset_summary_when_single_summary_is_empty(self) -> None:
@@ -165,6 +176,30 @@ class BuildReportTests(unittest.TestCase):
         self.assertIn("| HK.00700 |  100 |    3 | 2025-01-01 09:30:00 | 2025-01-03 16:00:00 |", report)
         self.assertIn("| HK.00700 |    3 |    3 | 2025-01-01 | 2025-01-03 |", report)
         self.assertIn("## 股票池策略对比", report)
+
+    def test_build_report_defaults_bare_single_dataset_to_kline_minute(self) -> None:
+        dataset_summary = pd.DataFrame(
+            [
+                {"code": "US.MSFT", "rows": 10, "days": 1, "start": "2025-01-01 09:30:00", "end": "2025-01-01 16:00:00"}
+            ]
+        )
+        minute_results = pd.DataFrame(
+            [
+                {
+                    "code": "US.MSFT",
+                    "strategy": "EMA cross",
+                    "final_value": 101000.0,
+                    "return_pct": 1.0,
+                    "max_drawdown_pct": -2.0,
+                    "trade_count": 10,
+                }
+            ]
+        )
+
+        report = build_report(dataset_summary, minute_results, pd.DataFrame(), pd.DataFrame())
+
+        self.assertIn("### kline_minute", report)
+        self.assertIn("## 单标策略对比", report)
 
 
 class RequestedStrategiesTests(unittest.TestCase):
@@ -229,6 +264,49 @@ class RunAllTests(unittest.TestCase):
                 scope="single",
                 strategy_keys=["ema_cross", "dual_momentum"],
             )
+
+    @mock.patch("backtest.backtest_compare.rsi_reversion.load_history")
+    @mock.patch("backtest.backtest_compare.rsi_reversion.run_backtest")
+    @mock.patch("backtest.backtest_compare.ema_cross.run_backtest")
+    def test_run_all_scope_single_adds_dataset_metadata_and_duration(
+        self,
+        ema_cross_run_backtest: mock.Mock,
+        rsi_run_backtest: mock.Mock,
+        load_history: mock.Mock,
+    ) -> None:
+        load_history.return_value = pd.DataFrame(
+            {
+                "time_key": pd.to_datetime(["2025-01-01 09:30:00", "2025-01-01 16:00:00"]),
+                "trade_date": pd.to_datetime(["2025-01-01", "2025-01-01"]).date,
+            }
+        )
+        rsi_run_backtest.return_value = (
+            {"final_value": 101000.0, "total_return_pct": 1.0, "max_drawdown_pct": -2.0, "trade_count": 10},
+            pd.DataFrame(),
+        )
+        ema_cross_run_backtest.return_value = (
+            {"final_value": 99000.0, "total_return_pct": -1.0, "max_drawdown_pct": -3.0, "trade_count": 6},
+            pd.DataFrame(),
+        )
+
+        minute_data_summary, minute_results, pool_data_summary, pool_results = run_all(
+            codes=["US.AAPL", "US.MSFT"],
+            minute_data_root=Path("kline_minute"),
+            daily_data_root=Path("kline_day"),
+            market="US",
+            scope="single",
+            strategy_keys=["rsi_reversion", "ema_cross"],
+        )
+
+        self.assertTrue(pool_data_summary.empty)
+        self.assertTrue(pool_results.empty)
+        self.assertEqual(set(minute_data_summary["dataset"]), {"kline_minute"})
+        self.assertEqual(
+            minute_data_summary["strategies"].iloc[0],
+            "RSI reversion, EMA cross",
+        )
+        self.assertIn("duration", minute_results.columns)
+        self.assertEqual(list(minute_results["strategy"]), ["RSI reversion", "EMA cross", "RSI reversion", "EMA cross"])
 
     @mock.patch("backtest.backtest_compare.run_stock_pool_strategies")
     @mock.patch("backtest.backtest_compare.run_single_symbol_strategies")

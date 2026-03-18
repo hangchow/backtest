@@ -225,6 +225,19 @@ def summarize_daily_prices(prices: pd.DataFrame, codes: list[str]) -> pd.DataFra
     return pd.DataFrame(rows)
 
 
+def annotate_dataset_summary(
+    summary: pd.DataFrame,
+    dataset_name: str,
+    strategy_keys: list[str],
+) -> pd.DataFrame:
+    if summary.empty:
+        return summary
+    return summary.assign(
+        dataset=dataset_name,
+        strategies=format_strategy_list(strategy_keys),
+    )
+
+
 def format_duration_mmss(duration_seconds: float) -> str:
     total_seconds = max(0, int(round(duration_seconds)))
     minutes, seconds = divmod(total_seconds, 60)
@@ -467,7 +480,9 @@ def run_single_symbol_strategies(
         data_rows.append(data_row)
 
         for strategy_key in selected:
+            strategy_start = time.perf_counter()
             summary = _run_minute_strategy(strategy_key, history, market, initial_cash, eval_start, eval_end)
+            duration = format_duration_mmss(time.perf_counter() - strategy_start)
             result_rows.append(
                 {
                     **data_row,
@@ -476,10 +491,12 @@ def run_single_symbol_strategies(
                     "return_pct": summary["total_return_pct"],
                     "max_drawdown_pct": summary["max_drawdown_pct"],
                     "trade_count": summary["trade_count"],
+                    "duration": duration,
                 }
             )
 
-    return pd.DataFrame(data_rows), pd.DataFrame(result_rows)
+    data_summary = annotate_dataset_summary(pd.DataFrame(data_rows), "kline_minute", selected)
+    return data_summary, pd.DataFrame(result_rows)
 
 
 def run_stock_pool_strategies(
@@ -519,30 +536,31 @@ def run_stock_pool_strategies(
         prices, volumes = dual_momentum.load_daily_data(daily_data_root, codes)
         daily_summary = summarize_daily_prices(prices, codes)
         if not daily_summary.empty:
-            day_strategies = format_strategy_list(
-                [key for key in selected if key in ("dual_momentum", "momentum_monthly", "dual_momentum_ema_rsi_hybrid")]
+            dataset_frames.append(
+                annotate_dataset_summary(
+                    daily_summary,
+                    "kline_day",
+                    [key for key in selected if key in ("dual_momentum", "momentum_monthly", "dual_momentum_ema_rsi_hybrid")],
+                )
             )
-            dataset_frames.append(daily_summary.assign(dataset="kline_day", strategies=day_strategies))
         hybrid_closes = prices
     elif "dual_momentum_ema_rsi_hybrid" in selected:
         hybrid_closes = hybrid.load_daily_closes(daily_data_root, codes)
         daily_summary = summarize_daily_prices(hybrid_closes, codes)
         if not daily_summary.empty:
-            dataset_frames.append(
-                daily_summary.assign(
-                    dataset="kline_day",
-                    strategies=format_strategy_list(["dual_momentum_ema_rsi_hybrid"]),
-                )
-            )
+            dataset_frames.append(annotate_dataset_summary(daily_summary, "kline_day", ["dual_momentum_ema_rsi_hybrid"]))
 
     if any(key in MINUTE_STRATEGY_KEYS for key in selected) or "dual_momentum_ema_rsi_hybrid" in selected:
         dataset_histories = load_histories(minute_data_root, codes)
         minute_summary = summarize_histories(dataset_histories, codes)
         if not minute_summary.empty:
-            minute_strategies = format_strategy_list(
-                [key for key in selected if key in MINUTE_STRATEGY_KEYS or key == "dual_momentum_ema_rsi_hybrid"]
+            dataset_frames.append(
+                annotate_dataset_summary(
+                    minute_summary,
+                    "kline_minute",
+                    [key for key in selected if key in MINUTE_STRATEGY_KEYS or key == "dual_momentum_ema_rsi_hybrid"],
+                )
             )
-            dataset_frames.append(minute_summary.assign(dataset="kline_minute", strategies=minute_strategies))
         if any(key in MINUTE_STRATEGY_KEYS for key in selected):
             minute_histories = dataset_histories
 
@@ -788,66 +806,53 @@ def build_report(
     sections: list[str] = []
 
     dataset_tables: list[str] = []
-    if not minute_data_summary.empty:
-        if pool_data_summary.empty:
-            dataset_tables.append(markdown_table(minute_data_summary, ["code", "rows", "days", "start", "end"]))
+    dataset_frames: list[pd.DataFrame] = []
+    for summary in (minute_data_summary, pool_data_summary):
+        if summary.empty:
+            continue
+        if "dataset" in summary.columns:
+            dataset_frames.append(summary.copy())
         else:
-            minute_strategies = ""
-            if "dataset" in pool_data_summary.columns and "strategies" in pool_data_summary.columns:
-                minute_subset = pool_data_summary[pool_data_summary["dataset"] == "kline_minute"]
-                if not minute_subset.empty:
-                    minute_strategies = str(minute_subset.iloc[0]["strategies"])
+            dataset_frames.append(summary.assign(dataset="kline_minute", strategies=""))
+    if dataset_frames:
+        combined_datasets = pd.concat(dataset_frames, ignore_index=True)
+        for dataset_name in ("kline_minute", "kline_day"):
+            subset = combined_datasets[combined_datasets["dataset"] == dataset_name]
+            if subset.empty:
+                continue
+            strategies = ""
+            if "strategies" in subset.columns:
+                strategy_labels: list[str] = []
+                for value in subset["strategies"]:
+                    for label in str(value).split(", "):
+                        if label and label not in strategy_labels:
+                            strategy_labels.append(label)
+                strategies = ", ".join(strategy_labels)
             dataset_tables.append(
-                format_dataset_heading("kline_minute", minute_strategies) + "\n\n"
-                + markdown_table(minute_data_summary, ["code", "rows", "days", "start", "end"])
+                format_dataset_heading(dataset_name, strategies) + "\n\n"
+                + markdown_table(
+                    subset.loc[:, ["code", "rows", "days", "start", "end"]],
+                    ["code", "rows", "days", "start", "end"],
+                )
             )
-
-    if not pool_data_summary.empty:
-        if "dataset" not in pool_data_summary.columns:
-            if minute_data_summary.empty:
-                dataset_tables.append(
-                    format_dataset_heading("kline_minute") + "\n\n"
-                    + markdown_table(pool_data_summary, ["code", "rows", "days", "start", "end"])
-                )
-        else:
-            remaining_pool_summaries = pool_data_summary
-            if not minute_data_summary.empty:
-                remaining_pool_summaries = pool_data_summary[pool_data_summary["dataset"] != "kline_minute"]
-            for dataset_name in ("kline_minute", "kline_day"):
-                subset = remaining_pool_summaries[remaining_pool_summaries["dataset"] == dataset_name]
-                if subset.empty:
-                    continue
-                strategies = ""
-                if "strategies" in subset.columns:
-                    strategies = str(subset.iloc[0]["strategies"])
-                dataset_tables.append(
-                    format_dataset_heading(dataset_name, strategies) + "\n\n"
-                    + markdown_table(
-                        subset.loc[:, ["code", "rows", "days", "start", "end"]],
-                        ["code", "rows", "days", "start", "end"],
-                    )
-                )
 
     if dataset_tables:
         sections.append("## 回测数据集\n\n" + "\n\n".join(dataset_tables))
 
     if not minute_results.empty:
-        minute_best = (
-            minute_results.sort_values(["code", "final_value"], ascending=[True, False])
-            .groupby("code", as_index=False)
-            .first()
-            .loc[:, ["code", "strategy", "final_value", "return_pct", "max_drawdown_pct"]]
+        single_comparison = minute_results.copy()
+        if "duration" not in single_comparison.columns:
+            single_comparison["duration"] = ""
+        single_comparison = single_comparison.sort_values(
+            ["code", "return_pct", "strategy"],
+            ascending=[True, False, True],
         )
         sections.append(
-            "## 单标分钟策略对比\n\n"
+            "## 单标策略对比\n\n"
             + markdown_table(
-                minute_results,
-                ["code", "strategy", "final_value", "return_pct", "max_drawdown_pct", "trade_count"],
+                single_comparison,
+                ["code", "strategy", "final_value", "return_pct", "max_drawdown_pct", "trade_count", "duration"],
             )
-        )
-        sections.append(
-            "## 每个标的的最佳分钟策略\n\n"
-            + markdown_table(minute_best, ["code", "strategy", "final_value", "return_pct", "max_drawdown_pct"])
         )
 
     if not pool_results.empty:
