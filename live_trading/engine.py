@@ -9,64 +9,34 @@ from typing import Any, Callable
 
 import pandas as pd
 
-try:
-    from strategy.fees import compute_order_fees
-    from strategy.rebalance import (
-        RebalancePolicy,
-        build_desired_shares,
-        compute_affordable_qty_with_fee,
-        compute_portfolio_value,
-    )
-    from .broker import (
-        DailyHistoryProvider,
-        QuoteBrokerClient,
-        TradeAccountClient,
-        create_daily_history_provider,
-        create_quote_broker_client,
-        create_trade_account_client,
-    )
-    from .config import (
-        HistoryBrokerConfig,
-        LiveTradingConfig,
-        RealtimeQuoteBrokerConfig,
-        QuoteConfig,
-        TradeAccountConfig,
-        TradeAccountsConfig,
-        build_live_trading_config,
-        load_quote_config_from_text,
-        load_trade_accounts_config_from_text,
-    )
-    from .models import AccountSnapshot, PortfolioRebalanceDecision, PositionSnapshot, QuoteUpdate
-    from .pool_strategies import build_pool_strategy
-except ImportError:
-    from strategy.fees import compute_order_fees
-    from strategy.rebalance import (
-        RebalancePolicy,
-        build_desired_shares,
-        compute_affordable_qty_with_fee,
-        compute_portfolio_value,
-    )
-    from live_trading.broker import (
-        DailyHistoryProvider,
-        QuoteBrokerClient,
-        TradeAccountClient,
-        create_daily_history_provider,
-        create_quote_broker_client,
-        create_trade_account_client,
-    )
-    from live_trading.config import (
-        HistoryBrokerConfig,
-        LiveTradingConfig,
-        RealtimeQuoteBrokerConfig,
-        QuoteConfig,
-        TradeAccountConfig,
-        TradeAccountsConfig,
-        build_live_trading_config,
-        load_quote_config_from_text,
-        load_trade_accounts_config_from_text,
-    )
-    from live_trading.models import AccountSnapshot, PortfolioRebalanceDecision, PositionSnapshot, QuoteUpdate
-    from live_trading.pool_strategies import build_pool_strategy
+from strategy.fees import compute_order_fees
+from strategy.rebalance import (
+    RebalancePolicy,
+    build_desired_shares,
+    compute_affordable_qty_with_fee,
+    compute_portfolio_value,
+)
+from .broker import (
+    DailyHistoryProvider,
+    QuoteBrokerClient,
+    TradeAccountClient,
+    create_daily_history_provider,
+    create_quote_broker_client,
+    create_trade_account_client,
+)
+from .config import (
+    HistoryBrokerConfig,
+    LiveTradingConfig,
+    RealtimeQuoteBrokerConfig,
+    QuoteConfig,
+    TradeAccountConfig,
+    TradeAccountsConfig,
+    build_live_trading_config,
+    load_quote_config_from_text,
+    load_trade_accounts_config_from_text,
+)
+from .models import AccountSnapshot, PortfolioRebalanceDecision, PositionSnapshot, QuoteUpdate
+from .pool_strategies import build_pool_strategy
 
 
 class ConfigFileWatcher:

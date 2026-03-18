@@ -19,12 +19,8 @@ from zoneinfo import ZoneInfo
 import exchange_calendars as xcals
 import pandas as pd
 
-try:
-    from .config import HistoryBrokerConfig, RealtimeQuoteBrokerConfig, TradeAccountConfig
-    from .models import AccountSnapshot, PositionSnapshot, QuoteUpdate
-except ImportError:
-    from live_trading.config import HistoryBrokerConfig, RealtimeQuoteBrokerConfig, TradeAccountConfig
-    from live_trading.models import AccountSnapshot, PositionSnapshot, QuoteUpdate
+from .config import HistoryBrokerConfig, RealtimeQuoteBrokerConfig, TradeAccountConfig
+from .models import AccountSnapshot, PositionSnapshot, QuoteUpdate
 
 
 HISTORY_COLUMNS = ["code", "time_key", "open", "close", "high", "low", "volume"]

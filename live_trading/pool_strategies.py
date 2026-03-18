@@ -6,24 +6,14 @@ from typing import Any
 
 import pandas as pd
 
-try:
-    from strategy.dual_momentum import (
-        DualMomentumParams,
-        build_dual_momentum_signal,
-    )
-    from strategy.dual_momentum_state import DualMomentumDailyState
-    from strategy.rebalance import RebalancePolicy
-    from .config import StockPoolConfig
-    from .models import PortfolioRebalanceDecision
-except ImportError:
-    from strategy.dual_momentum import (
-        DualMomentumParams,
-        build_dual_momentum_signal,
-    )
-    from strategy.dual_momentum_state import DualMomentumDailyState
-    from strategy.rebalance import RebalancePolicy
-    from live_trading.config import StockPoolConfig
-    from live_trading.models import PortfolioRebalanceDecision
+from strategy.dual_momentum import (
+    DualMomentumParams,
+    build_dual_momentum_signal,
+)
+from strategy.dual_momentum_state import DualMomentumDailyState
+from strategy.rebalance import RebalancePolicy
+from .config import StockPoolConfig
+from .models import PortfolioRebalanceDecision
 
 
 class PoolLiveStrategy(ABC):
