@@ -10,6 +10,7 @@ import pandas as pd
 
 try:
     from .backtest_common import (
+        add_fee_args,
         add_market_arg,
         load_histories,
         normalize_market,
@@ -26,6 +27,7 @@ try:
     from . import backtest_rsi_reversion as rsi_reversion
 except ImportError:
     from backtest_common import (
+        add_fee_args,
         add_market_arg,
         load_histories,
         normalize_market,
@@ -111,6 +113,7 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_DAILY_DATA_ROOT,
         help="Daily-data root used by stock-pool strategies. Defaults to kline_day.",
     )
+    add_fee_args(parser)
     add_market_arg(parser)
     parser.add_argument(
         "--initial-cash",
@@ -294,6 +297,8 @@ def _run_minute_strategy(
     initial_cash: float,
     eval_start: pd.Timestamp | None,
     eval_end: pd.Timestamp | None,
+    fee_account: str | None,
+    security_type: str,
 ) -> dict:
     if strategy_key == "rsi_reversion":
         summary, _ = rsi_reversion.run_backtest(
@@ -308,7 +313,9 @@ def _run_minute_strategy(
             flat_at_close=False,
             eval_start=eval_start,
             eval_end=eval_end,
+            fee_account=fee_account,
             market=market,
+            security_type=security_type,
         )
         return summary
 
@@ -324,7 +331,9 @@ def _run_minute_strategy(
             flat_at_close=True,
             eval_start=eval_start,
             eval_end=eval_end,
+            fee_account=fee_account,
             market=market,
+            security_type=security_type,
         )
         return summary
 
@@ -343,7 +352,9 @@ def _run_minute_strategy(
             flat_at_close=False,
             eval_start=eval_start,
             eval_end=eval_end,
+            fee_account=fee_account,
             market=market,
+            security_type=security_type,
         )
         return summary
 
@@ -362,7 +373,9 @@ def _run_minute_strategy(
             flat_at_close=False,
             eval_start=eval_start,
             eval_end=eval_end,
+            fee_account=fee_account,
             market=market,
+            security_type=security_type,
         )
         return summary
 
@@ -376,6 +389,8 @@ def _run_pool_minute_strategy(
     initial_cash: float,
     eval_start: pd.Timestamp | None,
     eval_end: pd.Timestamp | None,
+    fee_account: str | None,
+    security_type: str,
 ) -> dict:
     if strategy_key == "rsi_reversion":
         summary, _ = rsi_reversion.run_portfolio_backtest(
@@ -391,7 +406,9 @@ def _run_pool_minute_strategy(
             max_open_positions=rsi_reversion.DEFAULT_MAX_OPEN_POSITIONS,
             eval_start=eval_start,
             eval_end=eval_end,
+            fee_account=fee_account,
             market=market,
+            security_type=security_type,
         )
         return summary
 
@@ -408,7 +425,9 @@ def _run_pool_minute_strategy(
             max_open_positions=ema_cross.DEFAULT_MAX_OPEN_POSITIONS,
             eval_start=eval_start,
             eval_end=eval_end,
+            fee_account=fee_account,
             market=market,
+            security_type=security_type,
         )
         return summary
 
@@ -428,7 +447,9 @@ def _run_pool_minute_strategy(
             max_open_positions=ema_rsi_combo.DEFAULT_MAX_OPEN_POSITIONS,
             eval_start=eval_start,
             eval_end=eval_end,
+            fee_account=fee_account,
             market=market,
+            security_type=security_type,
         )
         return summary
 
@@ -448,7 +469,9 @@ def _run_pool_minute_strategy(
             max_open_positions=ema_rsi_bull_range.DEFAULT_MAX_OPEN_POSITIONS,
             eval_start=eval_start,
             eval_end=eval_end,
+            fee_account=fee_account,
             market=market,
+            security_type=security_type,
         )
         return summary
 
@@ -463,6 +486,8 @@ def run_single_symbol_strategies(
     strategy_keys: list[str],
     eval_start: pd.Timestamp | None,
     eval_end: pd.Timestamp | None,
+    fee_account: str | None,
+    security_type: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     unsupported = [key for key in strategy_keys if key not in MINUTE_STRATEGY_KEYS]
     if unsupported:
@@ -481,7 +506,16 @@ def run_single_symbol_strategies(
 
         for strategy_key in selected:
             strategy_start = time.perf_counter()
-            summary = _run_minute_strategy(strategy_key, history, market, initial_cash, eval_start, eval_end)
+            summary = _run_minute_strategy(
+                strategy_key,
+                history,
+                market,
+                initial_cash,
+                eval_start,
+                eval_end,
+                fee_account,
+                security_type,
+            )
             duration = format_duration_mmss(time.perf_counter() - strategy_start)
             result_rows.append(
                 {
@@ -508,6 +542,8 @@ def run_stock_pool_strategies(
     strategy_keys: list[str],
     eval_start: pd.Timestamp | None,
     eval_end: pd.Timestamp | None,
+    fee_account: str | None,
+    security_type: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     if len(codes) <= 1:
         requested_minute_pool = [key for key in strategy_keys if key in MINUTE_STRATEGY_KEYS]
@@ -567,7 +603,16 @@ def run_stock_pool_strategies(
     if "rsi_reversion" in selected:
         assert minute_histories is not None
         strategy_start = time.perf_counter()
-        summary = _run_pool_minute_strategy("rsi_reversion", minute_histories, market, initial_cash, eval_start, eval_end)
+        summary = _run_pool_minute_strategy(
+            "rsi_reversion",
+            minute_histories,
+            market,
+            initial_cash,
+            eval_start,
+            eval_end,
+            fee_account,
+            security_type,
+        )
         duration = format_duration_mmss(time.perf_counter() - strategy_start)
         result_rows.append(
             {
@@ -584,7 +629,16 @@ def run_stock_pool_strategies(
     if "ema_cross" in selected:
         assert minute_histories is not None
         strategy_start = time.perf_counter()
-        summary = _run_pool_minute_strategy("ema_cross", minute_histories, market, initial_cash, eval_start, eval_end)
+        summary = _run_pool_minute_strategy(
+            "ema_cross",
+            minute_histories,
+            market,
+            initial_cash,
+            eval_start,
+            eval_end,
+            fee_account,
+            security_type,
+        )
         duration = format_duration_mmss(time.perf_counter() - strategy_start)
         result_rows.append(
             {
@@ -601,7 +655,16 @@ def run_stock_pool_strategies(
     if "ema_rsi_combo" in selected:
         assert minute_histories is not None
         strategy_start = time.perf_counter()
-        summary = _run_pool_minute_strategy("ema_rsi_combo", minute_histories, market, initial_cash, eval_start, eval_end)
+        summary = _run_pool_minute_strategy(
+            "ema_rsi_combo",
+            minute_histories,
+            market,
+            initial_cash,
+            eval_start,
+            eval_end,
+            fee_account,
+            security_type,
+        )
         duration = format_duration_mmss(time.perf_counter() - strategy_start)
         result_rows.append(
             {
@@ -618,7 +681,16 @@ def run_stock_pool_strategies(
     if "ema_rsi_bull_range" in selected:
         assert minute_histories is not None
         strategy_start = time.perf_counter()
-        summary = _run_pool_minute_strategy("ema_rsi_bull_range", minute_histories, market, initial_cash, eval_start, eval_end)
+        summary = _run_pool_minute_strategy(
+            "ema_rsi_bull_range",
+            minute_histories,
+            market,
+            initial_cash,
+            eval_start,
+            eval_end,
+            fee_account,
+            security_type,
+        )
         duration = format_duration_mmss(time.perf_counter() - strategy_start)
         result_rows.append(
             {
@@ -653,7 +725,9 @@ def run_stock_pool_strategies(
             max_gross_exposure=dual_momentum.DEFAULT_MAX_GROSS_EXPOSURE,
             eval_start=eval_start,
             eval_end=eval_end,
+            fee_account=fee_account,
             market=market,
+            security_type=security_type,
         )
         duration = format_duration_mmss(time.perf_counter() - strategy_start)
         result_rows.append(
@@ -679,9 +753,9 @@ def run_stock_pool_strategies(
             rebalance_band_pct=momentum_monthly.DEFAULT_REBALANCE_BAND_PCT,
             eval_start=eval_start,
             eval_end=eval_end,
-            fee_account=None,
+            fee_account=fee_account,
             market=market,
-            security_type="stock",
+            security_type=security_type,
         )
         duration = format_duration_mmss(time.perf_counter() - strategy_start)
         result_rows.append(
@@ -728,8 +802,9 @@ def run_stock_pool_strategies(
             position_ratio=hybrid.DEFAULT_POSITION_RATIO,
             eval_start=eval_start,
             eval_end=eval_end,
+            fee_account=fee_account,
             market=market,
-            security_type="stock",
+            security_type=security_type,
         )
         duration = format_duration_mmss(time.perf_counter() - strategy_start)
         result_rows.append(
@@ -758,6 +833,8 @@ def run_all(
     scope: str = "single",
     eval_start: pd.Timestamp | None = None,
     eval_end: pd.Timestamp | None = None,
+    fee_account: str | None = None,
+    security_type: str = "stock",
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     if scope not in SCOPE_CHOICES:
         raise ValueError(f"scope must be one of: {', '.join(SCOPE_CHOICES)}")
@@ -777,6 +854,8 @@ def run_all(
             selected,
             eval_start,
             eval_end,
+            fee_account,
+            security_type,
         )
     else:
         minute_data_summary, minute_results = pd.DataFrame(), pd.DataFrame()
@@ -791,6 +870,8 @@ def run_all(
             selected,
             eval_start,
             eval_end,
+            fee_account,
+            security_type,
         )
     else:
         pool_data_summary, pool_results = pd.DataFrame(), pd.DataFrame()
@@ -882,6 +963,8 @@ def main() -> int:
         scope=args.scope,
         eval_start=eval_start,
         eval_end=eval_end,
+        fee_account=args.fee_account,
+        security_type=args.security_type,
     )
     print(build_report(minute_data_summary, minute_results, pool_data_summary, pool_results))
     return 0

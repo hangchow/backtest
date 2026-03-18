@@ -14,7 +14,7 @@
   - `momentum_monthly`
   - `dual_momentum_ema_rsi_hybrid`
 
-脚本会按默认参数运行所选策略，并把结果整理成 Markdown 报告输出到标准输出。前 4 个分钟级策略既可以出现在单标 section，也可以在多标场景下以股票池模式出现在股票池 section。`--market` 仍然是必传参数，脚本不会从代码前缀自动推断市场。
+脚本会按默认参数运行所选策略，并把结果整理成 Markdown 报告输出到标准输出。前 4 个分钟级策略既可以出现在单标 section，也可以在多标场景下以股票池模式出现在股票池 section。`--market` 仍然是必传参数，脚本不会从代码前缀自动推断市场。本文档里的命令示例统一按仓库回测口径启用 `--fee-account futu_alt`。
 
 默认评估窗口是 `2025-03-07` 到 `2026-03-06`。如果本地数据里有更早的数据，脚本会自动把它用于指标预热，但不会把它计入默认回测统计窗口。
 
@@ -46,6 +46,7 @@
 ```bash
 ./.venv/bin/python backtest/backtest_compare.py \
   --market US \
+  --fee-account futu_alt \
   --code US.MSFT
 ```
 
@@ -55,6 +56,7 @@
 ./.venv/bin/python backtest/backtest_compare.py \
   --scope single \
   --market US \
+  --fee-account futu_alt \
   --code US.MSFT \
   --code US.TSLA
 ```
@@ -75,14 +77,14 @@
 
 | code    | strategy             | final_value | return_pct | max_drawdown_pct | trade_count | duration |
 | ------- | -------------------- | ----------: | ---------: | ---------------: | ----------: | -------- |
-| US.MSFT | RSI reversion        |   294887.69 |     194.89 |            -5.72 |        6875 | 0:02     |
-| US.MSFT | EMA + RSI            |   151271.44 |      51.27 |            -4.54 |        4918 | 0:02     |
-| US.MSFT | EMA + RSI bull range |   149518.19 |      49.52 |           -10.70 |        7940 | 0:02     |
-| US.MSFT | EMA cross            |    78623.92 |     -21.38 |           -26.97 |        1786 | 0:02     |
-| US.TSLA | EMA + RSI bull range |   171579.27 |      71.58 |           -12.23 |       11128 | 0:03     |
-| US.TSLA | RSI reversion        |   170724.53 |      70.72 |           -31.35 |       10257 | 0:03     |
-| US.TSLA | EMA + RSI            |   154629.52 |      54.63 |           -16.93 |        7472 | 0:03     |
-| US.TSLA | EMA cross            |   103626.50 |       3.63 |           -14.91 |        2288 | 0:03     |
+| US.MSFT | RSI reversion        |   242583.09 |     142.58 |            -5.85 |        6875 | 0:03     |
+| US.MSFT | EMA + RSI            |   131637.86 |      31.64 |            -5.70 |        4918 | 0:04     |
+| US.MSFT | EMA + RSI bull range |   119503.48 |      19.50 |           -13.51 |        7940 | 0:05     |
+| US.MSFT | EMA cross            |    75105.45 |     -24.89 |           -29.04 |        1786 | 0:03     |
+| US.TSLA | EMA + RSI            |   117482.46 |      17.48 |           -19.63 |        7472 | 0:03     |
+| US.TSLA | RSI reversion        |   116848.79 |      16.85 |           -34.98 |       10257 | 0:04     |
+| US.TSLA | EMA + RSI bull range |   113828.90 |      13.83 |           -14.91 |       11128 | 0:04     |
+| US.TSLA | EMA cross            |    97649.63 |      -2.35 |           -15.87 |        2288 | 0:03     |
 ```
 
 只跑股票池 section：
@@ -91,6 +93,7 @@
 ./.venv/bin/python backtest/backtest_compare.py \
   --scope pool \
   --market HK \
+  --fee-account futu_alt \
   --code HK.00700 \
   --code HK.09988 \
   --code HK.00005
@@ -102,6 +105,7 @@
 ./.venv/bin/python backtest/backtest_compare.py \
   --scope pool \
   --market HK \
+  --fee-account futu_alt \
   --code HK.00700 \
   --code HK.09988 \
   --code HK.00005 \
@@ -135,9 +139,9 @@
 
 | pool        | strategy                         | final_value | return_pct | max_drawdown_pct | trade_count | duration |
 | ----------- | -------------------------------- | ----------: | ---------: | ---------------: | ----------: | -------- |
-| HK pool (3) | Momentum monthly                 |  1270594.20 |      58.82 |           -22.03 |           9 | 0:00     |
-| HK pool (3) | Dual momentum + EMA + RSI hybrid |   928759.18 |      16.09 |           -19.70 |          20 | 0:03     |
-| HK pool (3) | Dual momentum                    |   828150.49 |       3.52 |           -25.88 |          36 | 0:03     |
+| HK pool (3) | Momentum monthly                 |  1254166.46 |      56.77 |           -22.25 |           9 | 0:00     |
+| HK pool (3) | Dual momentum + EMA + RSI hybrid |   903608.36 |      12.95 |           -19.92 |          20 | 0:07     |
+| HK pool (3) | Dual momentum                    |   791085.48 |      -1.11 |           -26.10 |          36 | 0:07     |
 ```
 
 指定分钟/日线数据根目录：
@@ -147,6 +151,7 @@
   --minute-data-root /path/to/kline_minute \
   --daily-data-root /path/to/kline_day \
   --market US \
+  --fee-account futu_alt \
   --code US.MSFT \
   --code US.NVDA
 ```
@@ -156,6 +161,7 @@
 ```bash
 ./.venv/bin/python backtest/backtest_compare.py \
   --market US \
+  --fee-account futu_alt \
   --code US.MSFT \
   --code US.NVDA \
   --eval-start 2025-01-01 \
@@ -168,6 +174,7 @@
 ./.venv/bin/python backtest/backtest_compare.py \
   --market HK \
   --initial-cash 800000 \
+  --fee-account futu_alt \
   --code HK.00700 \
   --code HK.09988
 ```
@@ -177,6 +184,7 @@
 ```bash
 ./.venv/bin/python backtest/backtest_compare.py \
   --market US \
+  --fee-account futu_alt \
   --code US.MSFT \
   --code US.NVDA \
   > /tmp/backtest_compare_report.md
@@ -196,6 +204,8 @@
 - `--initial-cash`：所有比较策略共用的初始资金；不传时按市场默认
   - `HK`：`800000`
   - `US`：`100000`
+- `--fee-account`：可选手续费账户；仓库当前统一口径使用 `futu_alt`
+- `--security-type`：费用规则里的证券类型，默认 `stock`
 - `--strategy`：可重复传入，用来限制比较的策略集合；可选值：
   - `rsi_reversion`
   - `ema_cross`
@@ -240,15 +250,16 @@
 - 分钟级策略在单标 section 里使用各自脚本的默认单标参数
 - 原生股票池策略使用各自脚本的默认参数
 - 其中 4 个分钟级策略在股票池 section 里走的是各自脚本的 `run_portfolio_backtest(...)` 口径，而不是把单标结果简单拼起来
-- compare 脚本只统一两件事
+- compare 脚本只统一三件事
   - `market`
   - `initial_cash`
+  - `fee_account`
 
 这意味着它适合做“同一份数据下的默认策略横向观察”，不适合替代单个脚本的调参实验。
 
 ## 限制
 
-- 不支持直接透传费用账户、评估窗口或策略超参数
+- 不支持直接透传策略超参数
 - 输出只打印到终端，不会自动写文件
 - `--scope pool` 且只传 1 个 `--code` 时，默认只会跑 3 个原生股票池策略；4 个分钟级策略的股票池模式需要至少 2 个 code
 - 原生股票池策略在只有 1 个 `code` 时也能运行，但结果的参考意义通常不如多标股票池

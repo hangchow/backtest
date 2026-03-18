@@ -244,6 +244,8 @@ class ParseArgsTests(unittest.TestCase):
         self.assertEqual(args.eval_start, DEFAULT_EVAL_START)
         self.assertEqual(args.eval_end, DEFAULT_EVAL_END)
         self.assertEqual(args.scope, "single")
+        self.assertIsNone(args.fee_account)
+        self.assertEqual(args.security_type, "stock")
 
 
 class ScopeResolutionTests(unittest.TestCase):
@@ -296,6 +298,7 @@ class RunAllTests(unittest.TestCase):
             market="US",
             scope="single",
             strategy_keys=["rsi_reversion", "ema_cross"],
+            fee_account="futu_alt",
         )
 
         self.assertTrue(pool_data_summary.empty)
@@ -307,6 +310,9 @@ class RunAllTests(unittest.TestCase):
         )
         self.assertIn("duration", minute_results.columns)
         self.assertEqual(list(minute_results["strategy"]), ["RSI reversion", "EMA cross", "RSI reversion", "EMA cross"])
+        self.assertEqual(rsi_run_backtest.call_args.kwargs["fee_account"], "futu_alt")
+        self.assertEqual(ema_cross_run_backtest.call_args.kwargs["fee_account"], "futu_alt")
+        self.assertEqual(rsi_run_backtest.call_args.kwargs["security_type"], "stock")
 
     @mock.patch("backtest.backtest_compare.run_stock_pool_strategies")
     @mock.patch("backtest.backtest_compare.run_single_symbol_strategies")
@@ -334,7 +340,7 @@ class RunAllTests(unittest.TestCase):
         self.assertTrue(pool_data_summary.empty)
         self.assertTrue(pool_results.empty)
         run_stock_pool_strategies.assert_not_called()
-        self.assertEqual(run_single_symbol_strategies.call_args.args[-2:], (eval_start, eval_end))
+        self.assertEqual(run_single_symbol_strategies.call_args.args[-4:], (eval_start, eval_end, None, "stock"))
 
     @mock.patch("backtest.backtest_compare.run_stock_pool_strategies")
     @mock.patch("backtest.backtest_compare.run_single_symbol_strategies")
@@ -365,7 +371,7 @@ class RunAllTests(unittest.TestCase):
         self.assertFalse(pool_data_summary.empty)
         self.assertFalse(pool_results.empty)
         run_single_symbol_strategies.assert_not_called()
-        self.assertEqual(run_stock_pool_strategies.call_args.args[-2:], (eval_start, eval_end))
+        self.assertEqual(run_stock_pool_strategies.call_args.args[-4:], (eval_start, eval_end, None, "stock"))
 
     @mock.patch("backtest.backtest_compare.hybrid.run_backtest")
     @mock.patch("backtest.backtest_compare.hybrid.load_day_end_minute_indicators")
@@ -458,6 +464,7 @@ class RunAllTests(unittest.TestCase):
             market="US",
             strategy_keys=list(ALL_STRATEGY_KEYS),
             scope="pool",
+            fee_account="futu_alt",
         )
 
         self.assertEqual(
@@ -489,6 +496,12 @@ class RunAllTests(unittest.TestCase):
         self.assertEqual(list(pool_data_summary[pool_data_summary["dataset"] == "kline_minute"]["code"]), ["US.AAPL", "US.MSFT"])
         self.assertEqual(load_histories.call_args.kwargs, {})
         self.assertEqual(load_histories.call_args.args, (Path("kline_minute"), ["US.AAPL", "US.MSFT"]))
+        self.assertEqual(rsi_portfolio_run.call_args.kwargs["fee_account"], "futu_alt")
+        self.assertEqual(ema_cross_portfolio_run.call_args.kwargs["fee_account"], "futu_alt")
+        self.assertEqual(ema_rsi_combo_portfolio_run.call_args_list[0].kwargs["fee_account"], "futu_alt")
+        self.assertEqual(dual_run.call_args.kwargs["fee_account"], "futu_alt")
+        self.assertEqual(monthly_run.call_args.kwargs["fee_account"], "futu_alt")
+        self.assertEqual(hybrid_run.call_args.kwargs["fee_account"], "futu_alt")
 
     @mock.patch("backtest.backtest_compare.hybrid.run_backtest")
     @mock.patch("backtest.backtest_compare.hybrid.load_day_end_minute_indicators")
@@ -555,6 +568,7 @@ class RunAllTests(unittest.TestCase):
             market="US",
             scope="pool",
             strategy_keys=["dual_momentum", "momentum_monthly", "dual_momentum_ema_rsi_hybrid"],
+            fee_account="futu_alt",
         )
 
         self.assertTrue(minute_data_summary.empty)
@@ -576,6 +590,9 @@ class RunAllTests(unittest.TestCase):
         self.assertEqual(dual_run.call_args.kwargs["initial_cash"], 100000.0)
         self.assertEqual(monthly_run.call_args.kwargs["initial_cash"], 100000.0)
         self.assertEqual(hybrid_run.call_args.kwargs["initial_cash"], 100000.0)
+        self.assertEqual(dual_run.call_args.kwargs["fee_account"], "futu_alt")
+        self.assertEqual(monthly_run.call_args.kwargs["fee_account"], "futu_alt")
+        self.assertEqual(hybrid_run.call_args.kwargs["fee_account"], "futu_alt")
         self.assertEqual(load_histories.call_args.args, (Path("kline_minute"), ["US.AAPL", "US.MSFT"]))
 
     @mock.patch("backtest.backtest_compare.hybrid.run_backtest")
