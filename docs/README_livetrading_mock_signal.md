@@ -2,6 +2,13 @@
 
 这份文档说明如何在 `FutuOpenD` 没有美股实时行情订阅的情况下，用仓库里已经支持的 `mock` 实时行情入口，手工推送分钟 K 线，并让 `livetrading` 打出 `DRY_RUN_ORDER` 的买卖日志。
 
+文档边界：
+
+- 本文只负责“怎么运行 mock、怎么推 bar、怎么复现 BUY / SELL”
+- 如果你要看运行链路，见 [README_livetrading_sequence.md](/Users/sean/workspace/backtest-feature-livetrading-startup/docs/README_livetrading_sequence.md)
+- 如果你要看代码拆分和后续重构，见 [README_livetrading_mock_refactor.md](/Users/sean/workspace/backtest-feature-livetrading-startup/docs/README_livetrading_mock_refactor.md)
+- 如果你要看补齐真实下单的设计方案，见 [README_livetrading_real_order_plan.md](/Users/sean/workspace/backtest-feature-livetrading-startup/docs/README_livetrading_real_order_plan.md)
+
 适用场景：
 
 - `realtime_broker` 不能再走 `127.0.0.1:11111` 的 Futu 美股实时订阅。
