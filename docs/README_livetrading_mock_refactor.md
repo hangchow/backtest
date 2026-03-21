@@ -8,7 +8,7 @@
 
 ## 1. 当前状态
 
-第一阶段的 quote 拆分已经完成，当前代码状态不是“计划拆”，而是“已经拆到一半”：
+当前代码状态已经不是最初只拆 quote 的阶段，而是基础模块边界已经基本拆开了：
 
 - [livetrading/quote_brokers/base.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/quote_brokers/base.py)
   - 放 quote 侧抽象：
@@ -17,17 +17,22 @@
 - [livetrading/quote_brokers/mock.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/quote_brokers/mock.py)
   - 放 `MockRealtimeQuoteClient`
   - 已经不再和 history provider / trade client 写在同一文件里
+- [livetrading/history_providers/base.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/history_providers/base.py)
+  - 放 `DailyHistoryProvider` 抽象
+- [livetrading/trade_accounts/base.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/trade_accounts/base.py)
+  - 放 `TradeAccountClient` / `TradeAccountEventSink` 抽象
 - [livetrading/broker.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/broker.py)
-  - 仍然保留 quote factory
-  - 仍然承载 history provider 和 trade client
-  - 仍然兼容导出 `MockRealtimeQuoteClient`
+  - 现在只保留各子域 factory
 - [livetrading/engine.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/engine.py)
   - 仍然通过 `create_quote_broker_client(...)` 注入 quote client
   - 不直接感知 mock 实现文件怎么拆
+- [livetrading/execution.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/execution.py)
+  - 已经承接 dry-run 执行逻辑
+  - 放 `TradeAccountState` 和 `DryRunRebalanceExecutor`
 
 也就是说：
 
-- `broker.py -> quote_brokers/base.py + quote_brokers/mock.py` 这一步已经落地
+- `broker.py -> quote_brokers/ + history_providers/ + trade_accounts/` 这一步已经落地
 - 当前应该讨论的是“下一步怎么继续细拆”，不是再重复写第一阶段的迁移设想
 
 ## 2. 目前保留不变的兼容边界
@@ -43,14 +48,15 @@
 - push 顺序继续是：
   - 先 `on_quote()`
   - 再 `on_bar()`
-- 旧导入路径继续可用：
+- 运行时仍然通过 `livetrading.broker` 上的 factory 选择具体实现：
 
 ```python
-from livetrading.broker import MockRealtimeQuoteClient
-from livetrading.broker import QuoteBrokerClient
+from livetrading.broker import create_quote_broker_client
+from livetrading.quote_brokers.base import QuoteBrokerClient
+from livetrading.quote_brokers.mock import MockRealtimeQuoteClient
 ```
 
-这几条兼容边界不动，才能把后续重构控制在“模块整理”而不是“运行行为重写”。
+也就是说，这一轮保留的是运行行为兼容，不再额外承诺 `broker.py` 对具体实现类做兼容导出。
 
 ## 3. 当前还值得继续拆的地方
 
@@ -88,9 +94,9 @@ from livetrading.broker import QuoteBrokerClient
 
 更稳妥的后续拆法是先把内部责任拆成更小的私有步骤，再决定要不要升级成独立服务对象。
 
-### 3.3 dry-run 执行器仍然埋在 `engine.py`
+### 3.3 dry-run 执行器已经独立出来，但还没有继续细分
 
-`_execute_portfolio_rebalance_dry_run()` 和 `_execute_account_rebalance_dry_run()` 已经形成了完整的执行层：
+[livetrading/execution.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/execution.py) 现在已经承接了 dry-run 执行层：
 
 - 输入：
   - `PortfolioRebalanceDecision`
@@ -106,12 +112,7 @@ from livetrading.broker import QuoteBrokerClient
   - 更新 shadow state
   - 打 `DRY_RUN_REBALANCE` / `DRY_RUN_ORDER`
 
-这部分后续很适合抽成单独执行器，比如：
-
-- `livetrading/execution.py`
-  - `DryRunRebalanceExecutor`
-
-这样 `engine` 就能退回到“协调者”角色。
+`engine.py` 现在只负责收集参考价并委托 `DryRunRebalanceExecutor` 执行，所以这一步已经落地。后续如果继续演进到真实下单，下一步更像是把 `execution.py` 再拆成 planner / executor / state store，而不是再把 dry-run 从 `engine.py` 挪一次。
 
 ### 3.4 账户实际状态和影子状态还混在一起
 
@@ -153,11 +154,10 @@ from livetrading.broker import QuoteBrokerClient
 1. 先细拆 [livetrading/quote_brokers/mock.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/quote_brokers/mock.py)
    - 目标是把 server / payload / emitter 分开
    - 但不改 factory 和 HTTP 协议
-2. 再从 [livetrading/engine.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/engine.py) 抽 dry-run 执行器
-   - 先把执行逻辑独立
-   - 不要一上来就重写整套 engine
-3. 再抽账户状态存储
+2. 再抽账户状态存储
    - 给 mock trade account 或更复杂执行路径铺路
+3. 继续把 [livetrading/execution.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/execution.py) 细拆成 planner / executor
+   - 为真实下单链路复用同一套规划结果做准备
 4. 最后再继续拆 `apply_config()`
    - 这一步更像 runtime coordinator 整理
    - 适合放在前面几步稳定以后
@@ -169,7 +169,6 @@ from livetrading.broker import QuoteBrokerClient
 - 不改策略语义
 - 不改 quote 配置 schema
 - 不改 mock HTTP API
-- 不把 history / trade 一次性全拆完
 - 不在重构阶段引入新的第三方依赖
 
 ## 6. 测试重点
@@ -185,20 +184,25 @@ from livetrading.broker import QuoteBrokerClient
 - `engine` 集成测试
   - `realtime_broker.type == "mock"` 仍走原 factory
   - push bar 后仍能触发 `on_quote()` / `on_bar()`
-- 兼容性测试
-  - `from livetrading.broker import MockRealtimeQuoteClient`
+- `execution.py` 单元测试
+  - `DryRunRebalanceExecutor`
+  - `TradeAccountState` 的状态推进
+- `trade_accounts/futu.py` 生命周期测试
+  - `close()`
+  - reconnect 时不会在持锁状态下 join poll thread
 
 ## 7. 一句话结论
 
 当前最准确的结论不是“mock 还没拆”，而是：
 
 ```text
-第一阶段已经完成：
-broker.py -> quote_brokers/base.py + quote_brokers/mock.py
+基础拆分已经完成：
+broker.py -> quote_brokers/ + history_providers/ + trade_accounts/
+engine.py -> execution.py
 
 下一阶段更应该做：
 细拆 mock.py 内部职责
--> 抽 dry-run executor
 -> 抽 account state store
+-> 细拆 execution.py
 -> 再瘦身 engine.apply_config()
 ```

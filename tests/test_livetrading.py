@@ -15,21 +15,19 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from livetrading.broker import (
-    DailyHistoryProvider,
-    FutuDailyHistoryProvider,
-    LocalDataDailyHistoryProvider,
-    MockRealtimeQuoteClient,
-    PolygonCacheDailyHistoryProvider,
-    QuoteBrokerClient,
-    TradeAccountClient,
-    _expected_latest_trade_date_for_market,
-    create_daily_history_provider,
-)
+from livetrading.broker import create_daily_history_provider
 from livetrading.config import RealtimeQuoteBrokerConfig, load_livetrading_config, load_quote_config, load_trade_accounts_config
 from livetrading.engine import LiveTradingEngine
+from livetrading.history_providers.base import DailyHistoryProvider
+from livetrading.history_providers.common import LocalDataDailyHistoryProvider, _expected_latest_trade_date_for_market
+from livetrading.history_providers.futu import FutuDailyHistoryProvider
+from livetrading.history_providers.polygon import PolygonCacheDailyHistoryProvider
 from livetrading.models import AccountSnapshot, PositionSnapshot, QuoteUpdate
 from livetrading.pool_strategies import build_pool_strategy
+from livetrading.quote_brokers.base import QuoteBrokerClient
+from livetrading.quote_brokers.mock import MockRealtimeQuoteClient
+from livetrading.trade_accounts.base import TradeAccountClient
+from livetrading.trade_accounts.futu import FutuTradeAccountClient
 
 
 def build_daily_history(code: str, closes: list[float], volumes: list[float] | None = None) -> pd.DataFrame:
@@ -539,13 +537,13 @@ class PolygonCacheDailyHistoryProviderTests(unittest.TestCase):
                 return json.dumps(payload).encode("utf-8")
 
         with patch(
-            "livetrading.broker.urlopen",
+            "livetrading.history_providers.polygon.urlopen",
             side_effect=[
                 HTTPError("https://api.polygon.io/example", 429, "Too Many Requests", {"Retry-After": "0"}, io.BytesIO(b"")),
                 HTTPError("https://api.polygon.io/example", 429, "Too Many Requests", {"Retry-After": "0"}, io.BytesIO(b"")),
                 FakeResponse(),
             ],
-        ) as urlopen_mock, patch("livetrading.broker.time.sleep") as sleep_mock:
+        ) as urlopen_mock, patch("livetrading.history_providers.polygon.time.sleep") as sleep_mock:
             results = provider._request_polygon_daily_results(
                 ticker="AAPL",
                 start_date=pd.Timestamp("2026-03-01").date(),
@@ -619,7 +617,7 @@ class PolygonCacheDailyHistoryProviderTests(unittest.TestCase):
             "RET_OK": 0,
         }
 
-        with tempfile.TemporaryDirectory() as tmp, patch("livetrading.broker._load_futu_api", return_value=fake_futu):
+        with tempfile.TemporaryDirectory() as tmp, patch("livetrading.history_providers.futu._load_futu_api", return_value=fake_futu):
             cfg = load_livetrading_config_from_payloads(
                 build_quote_payload(history_type="futu"),
                 build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
@@ -649,6 +647,194 @@ class PolygonCacheDailyHistoryProviderTests(unittest.TestCase):
             "2026-03-17 00:00:00",
             "2026-03-18 00:00:00",
         ])
+
+
+class FutuTradeAccountClientTests(unittest.TestCase):
+    def test_close_joins_poll_thread_outside_client_lock(self) -> None:
+        config = load_livetrading_config_from_payloads(
+            build_quote_payload(),
+            build_trade_payload([build_trade_account_payload("acct", "127.0.0.1")]),
+        ).trade_accounts[0]
+
+        class RecordingSink:
+            def __init__(self) -> None:
+                self.messages: list[tuple[int, str]] = []
+
+            def on_account(self, account_id: str, snapshot: AccountSnapshot) -> None:
+                return None
+
+            def on_positions(self, account_id: str, positions: dict[str, PositionSnapshot]) -> None:
+                return None
+
+            def on_broker_message(self, level: int, message: str) -> None:
+                self.messages.append((level, message))
+
+        class FakeThread:
+            def __init__(self, client: FutuTradeAccountClient) -> None:
+                self._client = client
+                self.join_lock_available: bool | None = None
+
+            def is_alive(self) -> bool:
+                return True
+
+            def join(self, timeout: float | None = None) -> None:
+                acquired = self._client._lock.acquire(blocking=False)
+                self.join_lock_available = acquired
+                if acquired:
+                    self._client._lock.release()
+
+        class FakeTradeContext:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def close(self) -> None:
+                self.closed = True
+
+        sink = RecordingSink()
+        client = FutuTradeAccountClient(config, sink, logging.getLogger("test.futu_trade_account"))
+        fake_thread = FakeThread(client)
+        fake_trade_ctx = FakeTradeContext()
+        client._poll_thread = fake_thread
+        client._trade_ctx = fake_trade_ctx
+        client._futu = {"TrdEnv": object()}
+
+        client.close()
+
+        self.assertTrue(fake_thread.join_lock_available)
+        self.assertTrue(fake_trade_ctx.closed)
+        self.assertIsNone(client._poll_thread)
+        self.assertIsNone(client._trade_ctx)
+        self.assertIsNone(client._futu)
+
+    def test_connect_closes_existing_session_before_reacquiring_client_lock(self) -> None:
+        config = load_livetrading_config_from_payloads(
+            build_quote_payload(),
+            build_trade_payload([build_trade_account_payload("acct", "127.0.0.1")]),
+        ).trade_accounts[0]
+
+        class RecordingSink:
+            def on_account(self, account_id: str, snapshot: AccountSnapshot) -> None:
+                return None
+
+            def on_positions(self, account_id: str, positions: dict[str, PositionSnapshot]) -> None:
+                return None
+
+            def on_broker_message(self, level: int, message: str) -> None:
+                return None
+
+        class JoinCheckingThread:
+            def __init__(self, client: FutuTradeAccountClient) -> None:
+                self._client = client
+                self.join_lock_available: bool | None = None
+
+            def is_alive(self) -> bool:
+                return True
+
+            def join(self, timeout: float | None = None) -> None:
+                acquired = self._client._lock.acquire(blocking=False)
+                self.join_lock_available = acquired
+                if acquired:
+                    self._client._lock.release()
+
+        class ExistingTradeContext:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def close(self) -> None:
+                self.closed = True
+
+        class ReplacementTradeContext:
+            def __init__(self, filter_trdmarket=None, host=None, port=None) -> None:
+                self.filter_trdmarket = filter_trdmarket
+                self.host = host
+                self.port = port
+                self.started = False
+                self.handlers: list[object] = []
+
+            def set_handler(self, handler: object) -> None:
+                self.handlers.append(handler)
+
+            def start(self) -> None:
+                self.started = True
+
+            def close(self) -> None:
+                return None
+
+            def accinfo_query(self, **kwargs):
+                return 0, pd.DataFrame([
+                    {
+                        "total_assets": 1000.0,
+                        "cash": 1000.0,
+                        "available_funds": 900.0,
+                        "power": 900.0,
+                        "currency": "USD",
+                    }
+                ])
+
+            def position_list_query(self, **kwargs):
+                return 0, pd.DataFrame(columns=[
+                    "code",
+                    "qty",
+                    "can_sell_qty",
+                    "average_cost",
+                    "market_val",
+                    "unrealized_pl",
+                    "realized_pl",
+                    "currency",
+                ])
+
+        class PollThreadStub:
+            def __init__(self, target=None, name=None, daemon=None) -> None:
+                self.target = target
+                self.name = name
+                self.daemon = daemon
+                self.started = False
+
+            def start(self) -> None:
+                self.started = True
+
+            def is_alive(self) -> bool:
+                return False
+
+        class HandlerBase:
+            def on_recv_rsp(self, rsp_pb):
+                return 0, pd.DataFrame()
+
+        class EnumValue:
+            def __init__(self, **values) -> None:
+                for key, value in values.items():
+                    setattr(self, key, value)
+
+        fake_futu = {
+            "OpenSecTradeContext": ReplacementTradeContext,
+            "TrdMarket": EnumValue(US="US"),
+            "Currency": EnumValue(USD="USD"),
+            "TrdEnv": EnumValue(SIMULATE="SIMULATE", REAL="REAL"),
+            "TradeOrderHandlerBase": HandlerBase,
+            "TradeDealHandlerBase": HandlerBase,
+            "RET_OK": 0,
+        }
+
+        client = FutuTradeAccountClient(config, RecordingSink(), logging.getLogger("test.futu_trade_account.connect"))
+        existing_thread = JoinCheckingThread(client)
+        existing_trade_ctx = ExistingTradeContext()
+        client._poll_thread = existing_thread
+        client._trade_ctx = existing_trade_ctx
+        client._futu = {"TrdEnv": object()}
+
+        with patch("livetrading.trade_accounts.futu._load_futu_api", return_value=fake_futu), patch(
+            "livetrading.trade_accounts.futu.threading.Thread",
+            PollThreadStub,
+        ):
+            client.connect()
+
+        self.assertTrue(existing_thread.join_lock_available)
+        self.assertTrue(existing_trade_ctx.closed)
+        self.assertIsInstance(client._trade_ctx, ReplacementTradeContext)
+        self.assertTrue(client._trade_ctx.started)
+        self.assertEqual(len(client._trade_ctx.handlers), 2)
+        self.assertIsInstance(client._poll_thread, PollThreadStub)
+        self.assertTrue(client._poll_thread.started)
 
     def test_polygon_cache_provider_reads_dot_kline_day_and_trims_to_requested_bars_when_fresh(self) -> None:
         remote_calls: list[tuple[str, int]] = []

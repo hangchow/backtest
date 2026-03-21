@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import logging
-import os
-from pathlib import Path
 import threading
-from typing import Any, Iterable
+from typing import Iterable
 
 import pandas as pd
 
 from ..config import RealtimeQuoteBrokerConfig
-from ..models import QuoteUpdate
+from ..futu.adapters import iter_kline_bars, iter_quote_updates
+from ..futu.runtime import _load_futu_api
 from .base import QuoteBrokerClient, QuoteBrokerEventSink
 
 
@@ -99,75 +98,9 @@ class FutuRealtimeQuoteClient(QuoteBrokerClient):
         return KlineHandler()
 
     def _handle_quote_frame(self, frame: pd.DataFrame) -> None:
-        if frame.empty:
-            return
-        for row in frame.itertuples(index=False):
-            timestamp = pd.Timestamp(f"{row.data_date} {row.data_time}")
-            self._event_sink.on_quote(
-                QuoteUpdate(
-                    code=str(row.code),
-                    timestamp=timestamp,
-                    last_price=float(row.last_price),
-                    volume=float(row.volume) if not pd.isna(row.volume) else None,
-                    turnover=float(row.turnover) if not pd.isna(row.turnover) else None,
-                    open_price=float(row.open_price) if not pd.isna(row.open_price) else None,
-                    high_price=float(row.high_price) if not pd.isna(row.high_price) else None,
-                    low_price=float(row.low_price) if not pd.isna(row.low_price) else None,
-                    prev_close_price=float(row.prev_close_price) if not pd.isna(row.prev_close_price) else None,
-                    source="quote",
-                )
-            )
+        for update in iter_quote_updates(frame):
+            self._event_sink.on_quote(update)
 
     def _handle_kline_frame(self, frame: pd.DataFrame) -> None:
-        if frame.empty:
-            return
-        normalized = frame.copy()
-        normalized["time_key"] = pd.to_datetime(normalized["time_key"])
-        for row in normalized.sort_values("time_key").itertuples(index=False):
-            self._event_sink.on_bar(
-                str(row.code),
-                {
-                    "code": str(row.code),
-                    "time_key": pd.Timestamp(row.time_key),
-                    "open": float(row.open),
-                    "close": float(row.close),
-                    "high": float(row.high),
-                    "low": float(row.low),
-                    "volume": float(row.volume) if not pd.isna(row.volume) else 0.0,
-                },
-            )
-
-
-def _load_futu_api() -> dict[str, Any]:
-    runtime_home = Path.cwd() / ".futu_runtime"
-    runtime_home.mkdir(parents=True, exist_ok=True)
-    os.environ["HOME"] = str(runtime_home)
-    from futu import (
-        Currency,
-        CurKlineHandlerBase,
-        KLType,
-        OpenQuoteContext,
-        OpenSecTradeContext,
-        RET_OK,
-        StockQuoteHandlerBase,
-        SubType,
-        TradeDealHandlerBase,
-        TradeOrderHandlerBase,
-        TrdEnv,
-        TrdMarket,
-    )
-
-    return {
-        "Currency": Currency,
-        "CurKlineHandlerBase": CurKlineHandlerBase,
-        "KLType": KLType,
-        "OpenQuoteContext": OpenQuoteContext,
-        "OpenSecTradeContext": OpenSecTradeContext,
-        "RET_OK": RET_OK,
-        "StockQuoteHandlerBase": StockQuoteHandlerBase,
-        "SubType": SubType,
-        "TradeDealHandlerBase": TradeDealHandlerBase,
-        "TradeOrderHandlerBase": TradeOrderHandlerBase,
-        "TrdEnv": TrdEnv,
-        "TrdMarket": TrdMarket,
-    }
+        for code, bar in iter_kline_bars(frame):
+            self._event_sink.on_bar(code, bar)

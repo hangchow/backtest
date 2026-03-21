@@ -83,7 +83,7 @@
 
 ### 3.2 规划和执行必须拆开
 
-当前 [livetrading/engine.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/engine.py) 里的 `_execute_account_rebalance_dry_run()` 同时做了两件事：
+当前 [livetrading/execution.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/execution.py) 里的 `DryRunRebalanceExecutor.execute_account_rebalance()` 仍然同时做了两件事：
 
 - 规划
   - 计算组合价值
@@ -138,7 +138,7 @@
 
 ### 4.1 `TradeAccountClient` 没有下单接口
 
-[livetrading/broker.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/broker.py) 里的 `TradeAccountClient` 只有：
+[livetrading/trade_accounts/base.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/trade_accounts/base.py) 里的 `TradeAccountClient` 只有：
 
 - `connect()`
 - `close()`
@@ -149,7 +149,7 @@
 
 ### 4.2 引擎执行层把“提交订单”和“视为成交”写死在一起
 
-当前 dry-run 在 [livetrading/engine.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/engine.py) 里会直接：
+当前 dry-run 在 [livetrading/execution.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/execution.py) 里会直接：
 
 - 计算 `fee_total`
 - 更新 `shadow_cash`
@@ -166,7 +166,7 @@
 
 ### 4.3 已有 `ORDER_PUSH` / `DEAL_PUSH`，但没有引擎侧消费
 
-[FutuTradeAccountClient](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/broker.py) 已经注册了：
+[FutuTradeAccountClient](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/trade_accounts/futu.py) 已经注册了：
 
 - `_build_trade_order_handler()`
 - `_build_trade_deal_handler()`
@@ -175,7 +175,7 @@
 
 ### 4.4 当前账户状态模型不够表达“执行中”
 
-当前 [TradeAccountState](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/engine.py) 只有：
+当前 [TradeAccountState](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/execution.py) 只有：
 
 - `actual_account`
 - `actual_positions`
@@ -233,7 +233,7 @@
 
 ## 6. 目标模块划分
 
-建议新增这些模块：
+建议在现有 [livetrading/execution.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/execution.py) 的基础上，继续补这些模块：
 
 ```text
 livetrading/
@@ -255,9 +255,8 @@ livetrading/
   - `AccountRebalancePlan`
   - `RebalancePlanner`
 - `execution.py`
-  - `OrderExecutor`
-  - `DryRunOrderExecutor`
-  - `BrokerSubmitExecutor`
+  - 现有 `DryRunRebalanceExecutor`
+  - 后续可继续拆成 `OrderExecutor` / `DryRunOrderExecutor` / `BrokerSubmitExecutor`
 - `account_state.py`
   - `AccountRuntimeState`
   - `AccountStateStore`
@@ -267,12 +266,13 @@ livetrading/
 
 - [livetrading/config.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/config.py)
   - 新增 `ExecutionConfig`
-- [livetrading/broker.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/broker.py)
+- [livetrading/trade_accounts/base.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/trade_accounts/base.py)
   - 扩展 `TradeAccountClient`
   - 扩展 `TradeAccountEventSink`
+- [livetrading/trade_accounts/futu.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/trade_accounts/futu.py)
   - 在 `FutuTradeAccountClient` 里实现 `submit_order(...)`
 - [livetrading/engine.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/engine.py)
-  - 不再自己硬编码 dry-run 执行
+  - 现在已经不再自己硬编码 dry-run 执行
   - 改成协调 planner / executor / state store
 
 ## 7. 关键数据模型

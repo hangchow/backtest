@@ -20,9 +20,18 @@
 - [livetrading/engine.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/engine.py)
 - [livetrading/config.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/config.py)
 - [livetrading/broker.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/broker.py)
+- [livetrading/execution.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/execution.py)
+- [livetrading/futu/adapters.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/futu/adapters.py)
+- [livetrading/futu/runtime.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/futu/runtime.py)
+- [livetrading/history_providers/base.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/history_providers/base.py)
+- [livetrading/history_providers/common.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/history_providers/common.py)
+- [livetrading/history_providers/polygon.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/history_providers/polygon.py)
+- [livetrading/history_providers/futu.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/history_providers/futu.py)
 - [livetrading/quote_brokers/base.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/quote_brokers/base.py)
 - [livetrading/quote_brokers/mock.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/quote_brokers/mock.py)
 - [livetrading/quote_brokers/futu.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/quote_brokers/futu.py)
+- [livetrading/trade_accounts/base.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/trade_accounts/base.py)
+- [livetrading/trade_accounts/futu.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/trade_accounts/futu.py)
 - [livetrading/pool_strategies.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/pool_strategies.py)
 - [strategy/dual_momentum_state.py](/Users/sean/workspace/backtest-feature-livetrading-startup/strategy/dual_momentum_state.py)
 - [strategy/dual_momentum.py](/Users/sean/workspace/backtest-feature-livetrading-startup/strategy/dual_momentum.py)
@@ -40,10 +49,12 @@ sequenceDiagram
     participant ENG as livetrading/engine.py
     participant CFG as livetrading/config.py
     participant FAC as broker.py\ncreate_quote_broker_client
+    participant FRT as futu/runtime.py\n_load_futu_api
     participant QBASE as quote_brokers/base.py\nQuoteBrokerClient / QuoteBrokerEventSink
     participant MQ as quote_brokers/mock.py\nMockRealtimeQuoteClient
     participant FQ as quote_brokers/futu.py\nFutuRealtimeQuoteClient
-    participant TB as broker.py\nFutuTradeAccountClient
+    participant TAF as broker.py\ncreate_trade_account_client
+    participant TB as trade_accounts/futu.py\nFutuTradeAccountClient
 
     U->>CLI: python livetrading.py --quote-config ...mock... --trade-config ...
     CLI->>ENG: main()<br/>初始化日志并启动实盘 dry-run 主流程
@@ -62,11 +73,13 @@ sequenceDiagram
     else realtime_broker.type == "futu"
         FAC->>FQ: instantiate FutuRealtimeQuoteClient
         ENG->>FQ: connect()<br/>创建 OpenQuoteContext 并订阅 QUOTE + K_1M
-        FQ->>FQ: _load_futu_api() / OpenQuoteContext.start()
+        FQ->>FRT: _load_futu_api()
+        FQ->>FQ: OpenQuoteContext.start()
     end
 
     ENG->>ENG: _apply_trade_accounts_config()<br/>按配置增删或重连 trade account client
-    ENG->>TB: create_trade_account_client()<br/>按配置选择交易账户 client 实现
+    ENG->>TAF: create_trade_account_client()<br/>按配置选择交易账户 client 实现
+    TAF->>TB: instantiate FutuTradeAccountClient
     ENG->>TB: connect()<br/>连接 Futu 交易上下文并立即同步账户/持仓
     ENG->>ENG: _sync_shadow_state()<br/>裁剪过期状态并补齐 shadow_cash / shadow_positions
     ENG-->>CLI: CONFIG_APPLIED log
@@ -92,13 +105,15 @@ sequenceDiagram
     participant ENG as livetrading/engine.py
     participant PLS as pool_strategies.py\nDualMomentumPoolStrategy
     participant STATE as dual_momentum_state.py\nDualMomentumDailyState
-    participant HB as broker.py\nHistoryProvider
+    participant HFAC as broker.py\ncreate_daily_history_provider
+    participant HB as history_providers/*.py\nDailyHistoryProvider impl
 
     ENG->>PLS: build_pool_strategy()<br/>按 stock_pool.strategy.name 构建 live 股票池策略
     ENG->>PLS: required_daily_warmup_bars()<br/>返回 dual momentum 至少需要的 warm-up 日线根数
     PLS-->>ENG: warmup_bars
 
-    ENG->>HB: create_daily_history_provider()<br/>按配置选择 warm-up 日线 provider 实现
+    ENG->>HFAC: create_daily_history_provider()<br/>按配置选择 warm-up 日线 provider 实现
+    HFAC->>HB: instantiate provider
     ENG->>HB: fetch_daily_histories()<br/>为股票池拉取 warm-up 所需的日线窗口
     HB-->>ENG: warmup daily histories
 
@@ -117,7 +132,7 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant TB as broker.py\nFutuTradeAccountClient
+    participant TB as trade_accounts/futu.py\nFutuTradeAccountClient
     participant ENG as livetrading/engine.py
 
     loop polling
@@ -137,7 +152,16 @@ sequenceDiagram
 
 这就是为什么现在即使行情改成 mock，仍然需要交易账户侧先同步到资金和持仓。
 
-## 4. mock 推送分钟 K -> 策略出信号 -> dry-run 调仓
+## 4. 实时行情入口
+
+这一节只讨论“分钟行情怎么进入 engine”。
+
+`4.1` 和 `4.2` 是两种可替换的实时行情入口，运行时按 `realtime_broker.type` 二选一：
+
+- `type=mock` 时走 `4.1`
+- `type=futu` 时走 `4.2`
+
+它们不是说同一次启动里两个都要启用。
 
 ### 4.1 mock 接收 `/push` 并把行情送进引擎
 
@@ -158,7 +182,35 @@ sequenceDiagram
     ENG->>ENG: _latest_bar_prices[code] = bar.close
 ```
 
-### 4.2 分钟 bar 进入策略层，并在换日时决定是否出信号
+### 4.2 futu 订阅实盘股价并把推送送进引擎
+
+```mermaid
+sequenceDiagram
+    participant ENG as livetrading/engine.py
+    participant QB as quote_brokers/futu.py\nFutuRealtimeQuoteClient
+    participant QCTX as futu SDK\nOpenQuoteContext
+    participant ADP as futu/adapters.py
+
+    ENG->>QB: connect(codes)<br/>按股票池代码建立实时行情连接
+    QB->>QCTX: OpenQuoteContext(host, port)
+    QB->>QCTX: set_handler(QuoteHandler / KlineHandler)
+    QB->>QCTX: start()
+    QB->>QCTX: subscribe(codes, [QUOTE, K_1M], subscribe_push=True)
+
+    loop Futu push
+        QCTX-->>QB: QuoteHandler.on_recv_rsp(frame)<br/>收到实时报价 DataFrame
+        QB->>ADP: iter_quote_updates(frame)<br/>把 Futu quote DataFrame 转成 QuoteUpdate
+        ADP-->>QB: QuoteUpdate
+        QB-->>ENG: on_quote()<br/>推送最新参考价
+
+        QCTX-->>QB: KlineHandler.on_recv_rsp(frame)<br/>收到 1 分钟 K DataFrame
+        QB->>ADP: iter_kline_bars(frame)<br/>把 Futu 1m K DataFrame 转成标准 bar
+        ADP-->>QB: code + bar
+        QB-->>ENG: on_bar()<br/>推送分钟 bar 给策略引擎
+    end
+```
+
+## 5. 分钟 bar 进入策略层，并在换日时决定是否出信号
 
 ```mermaid
 sequenceDiagram
@@ -182,54 +234,73 @@ sequenceDiagram
     end
 ```
 
-### 4.3 引擎按账户执行 dry-run 调仓
+## 6. 引擎按账户执行 dry-run 调仓
 
 ```mermaid
 sequenceDiagram
     participant ENG as livetrading/engine.py
+    participant EXE as execution.py\nDryRunRebalanceExecutor
     participant RB as rebalance.py
     participant FEE as fees.py
 
-    ENG->>ENG: _execute_portfolio_rebalance_dry_run()<br/>对每个交易账户执行一轮组合级 dry-run 调仓
-    ENG->>RB: compute_portfolio_value()<br/>按现金加持仓市值估算当前组合总资产
-    ENG->>RB: build_desired_shares()<br/>把目标权重转换成目标股数并应用调仓带
+    ENG->>ENG: _execute_portfolio_rebalance_dry_run()<br/>收集参考价并委托执行器
+    ENG->>EXE: execute_portfolio_rebalance()<br/>对每个交易账户执行一轮组合级 dry-run 调仓
+    EXE->>RB: compute_portfolio_value()<br/>按现金加持仓市值估算当前组合总资产
+    EXE->>RB: build_desired_shares()<br/>把目标权重转换成目标股数并应用调仓带
 
     loop 先卖
-        ENG->>FEE: compute_order_fees()<br/>按 fee_account 规则计算单笔订单总手续费和拆分明细
-        FEE-->>ENG: fee_total
-        ENG->>ENG: 更新 shadow_cash / shadow_positions
-        ENG-->>ENG: DRY_RUN_ORDER SELL log
+        EXE->>FEE: compute_order_fees()<br/>按 fee_account 规则计算单笔订单总手续费和拆分明细
+        FEE-->>EXE: fee_total
+        EXE->>EXE: 更新 shadow_cash / shadow_positions
+        EXE-->>ENG: DRY_RUN_ORDER SELL log
     end
 
     loop 再买
-        ENG->>RB: compute_affordable_qty_with_fee()<br/>在考虑手续费后反推出当前现金最多能买多少股
+        EXE->>RB: compute_affordable_qty_with_fee()<br/>在考虑手续费后反推出当前现金最多能买多少股
         RB->>FEE: compute_order_fees()<br/>按 fee_account 规则计算单笔订单总手续费和拆分明细
         FEE-->>RB: fee_total
-        RB-->>ENG: affordable_qty + fee_total
-        ENG->>ENG: 更新 shadow_cash / shadow_positions
-        ENG-->>ENG: DRY_RUN_ORDER BUY log
+        RB-->>EXE: affordable_qty + fee_total
+        EXE->>EXE: 更新 shadow_cash / shadow_positions
+        EXE-->>ENG: DRY_RUN_ORDER BUY log
     end
 ```
 
 这里最重要的时序关系是：
 
-1. `mock` 收到 `/push` 后，会先发 `on_quote`，再发 `on_bar`。
+1. 实时行情入口按 `realtime_broker.type` 二选一：要么是 `mock /push`，要么是 Futu `QUOTE + K_1M subscribe push`；两者最终都会通过 `on_quote` / `on_bar` 进入 engine。
 2. 策略层只有在“新交易日第一根分钟 bar”到来时，才会从 `DualMomentumDailyState` 吐出已完成日线窗口。
 3. `build_dual_momentum_signal(...)` 用这份已完成日线窗口生成目标权重。
 4. 引擎拿到 `PortfolioRebalanceDecision` 后，按账户逐个执行 dry-run。
 5. dry-run 执行顺序是先卖后买，并且买入数量会显式考虑手续费和剩余现金。
 
-## 5. 文件职责对照
+## 7. 文件职责对照
 
 - [livetrading.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading.py)
   - CLI 入口，只负责启动和停止 engine
 - [livetrading/config.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/config.py)
   - 解析 quote / trade 两份配置，拼成 `LiveTradingConfig`
 - [livetrading/broker.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/broker.py)
+  - facade / factory 层
   - 提供：
     - quote broker factory
-    - history provider
-    - trade account client
+    - history provider factory
+    - trade account client factory
+- [livetrading/execution.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/execution.py)
+  - dry-run 执行层
+  - 提供 `TradeAccountState` 和 `DryRunRebalanceExecutor`
+- [livetrading/futu/runtime.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/futu/runtime.py)
+  - 提供共享的 Futu SDK 装载逻辑
+  - 负责 `.futu_runtime` 的运行时环境准备
+- [livetrading/futu/adapters.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/futu/adapters.py)
+  - 负责把 Futu DataFrame 转成 `QuoteUpdate` 和标准化分钟 `bar`
+- [livetrading/history_providers/base.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/history_providers/base.py)
+  - 定义 `DailyHistoryProvider` 抽象
+- [livetrading/history_providers/common.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/history_providers/common.py)
+  - 提供本地缓存、远端回源、交易日判断等 history 共用逻辑
+- [livetrading/history_providers/polygon.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/history_providers/polygon.py)
+  - Polygon 日线 warm-up 实现
+- [livetrading/history_providers/futu.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/history_providers/futu.py)
+  - Futu 日线 warm-up 实现
 - [livetrading/quote_brokers/base.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/quote_brokers/base.py)
   - 定义 realtime quote 抽象边界：
     - `QuoteBrokerClient`
@@ -239,7 +310,12 @@ sequenceDiagram
   - 负责 `/health` / `/push`、bar 归一化、合成 quote、再推 bar
 - [livetrading/quote_brokers/futu.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/quote_brokers/futu.py)
   - Futu 实时行情实现
-  - 负责 `OpenQuoteContext`、实时 quote push、分钟 K push
+  - 负责 `OpenQuoteContext`、订阅管理、handler 挂接
+- [livetrading/trade_accounts/base.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/trade_accounts/base.py)
+  - 定义 `TradeAccountClient` / `TradeAccountEventSink` 抽象
+- [livetrading/trade_accounts/futu.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/trade_accounts/futu.py)
+  - Futu 交易账户实现
+  - 负责账户轮询、持仓轮询、`ORDER_PUSH` / `DEAL_PUSH`
 - [livetrading/engine.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/engine.py)
   - 把行情、账户、策略、dry-run 执行串起来
 - [livetrading/pool_strategies.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/pool_strategies.py)
@@ -253,23 +329,22 @@ sequenceDiagram
 - [strategy/fees.py](/Users/sean/workspace/backtest-feature-livetrading-startup/strategy/fees.py)
   - 手续费计算
 
-## 6. 一句话总结
+## 8. 一句话总结
 
-这条以 `mock` quote 为主线的实盘链路，本质上是：
+这条实盘链路本质上是：
 
 ```text
-HTTP push 的分钟 bar
--> quote_brokers/mock.py
--> quote_brokers/base.py 的 QuoteBrokerEventSink 回调边界
+quote client / trade account client / history provider
+-> broker.py factory
 -> engine.py
 -> pool_strategies.py
--> dual_momentum_state.py
--> dual_momentum.py
+-> dual_momentum_state.py + dual_momentum.py
+-> execution.py
 -> rebalance.py + fees.py
--> engine.py 输出 DRY_RUN_ORDER
+-> DRY_RUN_ORDER / ACCOUNT / POSITIONS logs
 ```
 
-## 7. 相关文档
+## 9. 相关文档
 
 这份文档现在只保留“运行时序”和“文件职责”。
 
