@@ -233,7 +233,7 @@ def run_backtest(
 ) -> tuple[dict, pd.DataFrame]:
     market = normalize_market(market)
     # 回测入口继续保留原有函数签名，但内部统一转换成 strategy 层的参数对象，
-    # 这样 backtest 和 live_trading 会严格共用同一套参数口径和校验逻辑。
+    # 这样 backtest 和 livetrading 会严格共用同一套参数口径和校验逻辑。
     strategy_params = DualMomentumParams(
         lookback_days=lookback_days,
         long_lookback_days=long_lookback_days,

@@ -1,6 +1,6 @@
 # 实时行情 Mock 触发买卖点说明
 
-这份文档说明如何在 `FutuOpenD` 没有美股实时行情订阅的情况下，用仓库里已经支持的 `mock` 实时行情入口，手工推送分钟 K 线，并让 `live_trading` 打出 `DRY_RUN_ORDER` 的买卖日志。
+这份文档说明如何在 `FutuOpenD` 没有美股实时行情订阅的情况下，用仓库里已经支持的 `mock` 实时行情入口，手工推送分钟 K 线，并让 `livetrading` 打出 `DRY_RUN_ORDER` 的买卖日志。
 
 适用场景：
 
@@ -28,7 +28,7 @@
 
 用仓库里的样例配置：
 
-- [config/live_trading.quote.mock.sample.json](/Users/sean/workspace/backtest/config/live_trading.quote.mock.sample.json)
+- [config/livetrading.quote.mock.sample.json](/Users/sean/workspace/backtest-feature-livetrading-startup/config/livetrading.quote.mock.sample.json)
 
 核心字段是：
 
@@ -73,9 +73,9 @@ REBALANCE_SKIPPED ... reason=no_portfolio_value
 ## 3. 启动方式
 
 ```bash
-./.venv/bin/python run_live_trading.py \
-  --quote-config config/live_trading.quote.mock.sample.json \
-  --trade-config config/live_trading.trade_accounts.sample.json
+./.venv/bin/python livetrading.py \
+  --quote-config config/livetrading.quote.mock.sample.json \
+  --trade-config config/livetrading.trade_accounts.sample.json
 ```
 
 启动后，`mock` 行情入口会监听：

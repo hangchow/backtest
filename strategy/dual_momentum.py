@@ -25,7 +25,7 @@ DEFAULT_MAX_GROSS_EXPOSURE = 1.0
 
 @dataclass(frozen=True)
 class DualMomentumParams:
-    # 这是 backtest/live_trading 共享的唯一参数定义，避免两边各自维护默认值和校验口径。
+    # 这是 backtest/livetrading 共享的唯一参数定义，避免两边各自维护默认值和校验口径。
     lookback_days: int = DEFAULT_LOOKBACK_DAYS
     long_lookback_days: int = DEFAULT_LONG_LOOKBACK_DAYS
     long_lookback_weight: float = DEFAULT_LONG_LOOKBACK_WEIGHT

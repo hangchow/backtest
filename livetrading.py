@@ -10,7 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from live_trading import LiveTradingEngine
+from livetrading import LiveTradingEngine
 
 
 def parse_args() -> argparse.Namespace:

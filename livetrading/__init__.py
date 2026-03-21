@@ -11,8 +11,8 @@ from .config import (
     TradeAccountConfig,
     TradeAccountsConfig,
     TradeBrokerConfig,
-    build_live_trading_config,
-    load_live_trading_config,
+    build_livetrading_config,
+    load_livetrading_config,
     load_quote_config,
     load_trade_accounts_config,
 )
@@ -30,8 +30,8 @@ __all__ = [
     "TradeAccountConfig",
     "TradeAccountsConfig",
     "TradeBrokerConfig",
-    "build_live_trading_config",
-    "load_live_trading_config",
+    "build_livetrading_config",
+    "load_livetrading_config",
     "load_quote_config",
     "load_trade_accounts_config",
 ]

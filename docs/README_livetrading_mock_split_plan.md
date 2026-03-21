@@ -1,8 +1,8 @@
-# live_trading mock 拆分技术方案
+# livetrading mock 拆分技术方案
 
 ## 1. 背景
 
-当前 `live_trading/broker.py` 同时承载了多类职责：
+当前 `livetrading/broker.py` 同时承载了多类职责：
 
 - quote 抽象：`QuoteBrokerClient`、`QuoteBrokerEventSink`
 - quote 实现：`FutuRealtimeQuoteClient`、`MockRealtimeQuoteClient`
@@ -24,7 +24,7 @@
 
 ### 2.1 本次目标
 
-- 将 `MockRealtimeQuoteClient` 从 `live_trading/broker.py` 中独立拆出
+- 将 `MockRealtimeQuoteClient` 从 `livetrading/broker.py` 中独立拆出
 - 消除 `mock` 实现与 `broker.py` 内其他非 quote 代码的物理耦合
 - 保持 `engine.py`、`config.py`、README 中的使用方式不变
 - 保持 mock HTTP API 兼容：
@@ -47,9 +47,9 @@
 
 运行 mock 行情时，当前调用链如下：
 
-1. `run_live_trading.py` 创建 `LiveTradingEngine`
+1. `livetrading.py` 创建 `LiveTradingEngine`
 2. `engine.run()` 加载 quote / trade 配置
-3. `build_live_trading_config()` 合并配置
+3. `build_livetrading_config()` 合并配置
 4. `engine.apply_config()` 根据 `realtime_broker.type` 创建 quote client
 5. `create_quote_broker_client()` 返回 `MockRealtimeQuoteClient`
 6. `MockRealtimeQuoteClient.connect()` 启动本地 HTTP server，并把 `stock_pool.codes` 保存为当前订阅 symbols
@@ -78,7 +78,7 @@
 当前建议目录结构已经落到这一级：
 
 ```text
-live_trading/
+livetrading/
   broker.py
   quote_brokers/
     __init__.py
@@ -91,10 +91,10 @@ live_trading/
 
 | 文件 | 职责 |
 | --- | --- |
-| `live_trading/broker.py` | 保留兼容导出、quote 工厂、history/trade 相关实现 |
-| `live_trading/quote_brokers/base.py` | quote 侧抽象：`QuoteBrokerClient`、`QuoteBrokerEventSink` |
-| `live_trading/quote_brokers/mock.py` | `MockRealtimeQuoteClient` 及其 HTTP push 逻辑 |
-| `live_trading/quote_brokers/futu.py` | `FutuRealtimeQuoteClient` 与 Futu quote API 装载逻辑 |
+| `livetrading/broker.py` | 保留兼容导出、quote 工厂、history/trade 相关实现 |
+| `livetrading/quote_brokers/base.py` | quote 侧抽象：`QuoteBrokerClient`、`QuoteBrokerEventSink` |
+| `livetrading/quote_brokers/mock.py` | `MockRealtimeQuoteClient` 及其 HTTP push 逻辑 |
+| `livetrading/quote_brokers/futu.py` | `FutuRealtimeQuoteClient` 与 Futu quote API 装载逻辑 |
 
 ### 5.2 下一步可选目录
 
@@ -106,9 +106,9 @@ live_trading/
 
 ```mermaid
 sequenceDiagram
-    participant CLI as run_live_trading.py
+    participant CLI as livetrading.py
     participant Engine as LiveTradingEngine
-    participant Facade as live_trading.broker
+    participant Facade as livetrading.broker
     participant Factory as create_quote_broker_client
     participant Mock as quote_brokers.mock.MockRealtimeQuoteClient
     participant HTTP as Mock HTTP Server
@@ -116,7 +116,7 @@ sequenceDiagram
 
     CLI->>Engine: engine.run()
     Engine->>Engine: load_quote_config_from_text()
-    Engine->>Engine: build_live_trading_config()
+    Engine->>Engine: build_livetrading_config()
     Engine->>Factory: create_quote_broker_client(config, engine, logger)
     Factory->>Mock: instantiate MockRealtimeQuoteClient
     Engine->>Mock: connect(stock_pool.codes)
@@ -189,7 +189,7 @@ classDiagram
 
 ### 8.1 第一步：抽出 quote 抽象
 
-新建 `live_trading/quote_brokers/base.py`，迁移以下定义：
+新建 `livetrading/quote_brokers/base.py`，迁移以下定义：
 
 - `QuoteBrokerClient`
 - `QuoteBrokerEventSink`
@@ -235,7 +235,7 @@ class QuoteBrokerClient(ABC):
 
 ### 8.2 第二步：抽出 mock quote 实现
 
-新建 `live_trading/quote_brokers/mock.py`，迁移以下内容：
+新建 `livetrading/quote_brokers/mock.py`，迁移以下内容：
 
 - `MockRealtimeQuoteClient`
 - 其私有 helper：
@@ -353,7 +353,7 @@ def create_quote_broker_client(
 
 ### 10.3 保持旧导入路径可用
 
-为了减少现有调用点和测试的修改量，第一阶段建议 `live_trading.broker` 继续 re-export：
+为了减少现有调用点和测试的修改量，第一阶段建议 `livetrading.broker` 继续 re-export：
 
 - `QuoteBrokerClient`
 - `QuoteBrokerEventSink`
@@ -362,15 +362,15 @@ def create_quote_broker_client(
 这样像下面这类代码在第一阶段仍然可用：
 
 ```python
-from live_trading.broker import MockRealtimeQuoteClient
+from livetrading.broker import MockRealtimeQuoteClient
 ```
 
 ## 11. 推荐的实施步骤
 
 ### Phase 1: 基础抽象迁移
 
-- 新建 `live_trading/quote_brokers/__init__.py`
-- 新建 `live_trading/quote_brokers/base.py`
+- 新建 `livetrading/quote_brokers/__init__.py`
+- 新建 `livetrading/quote_brokers/base.py`
 - 将 quote 抽象迁入 `base.py`
 - `broker.py` 改为从 `base.py` import quote 抽象
 
@@ -381,7 +381,7 @@ from live_trading.broker import MockRealtimeQuoteClient
 
 ### Phase 2: mock 实现迁移
 
-- 新建 `live_trading/quote_brokers/mock.py`
+- 新建 `livetrading/quote_brokers/mock.py`
 - 迁出 `MockRealtimeQuoteClient`
 - `broker.py` 工厂改为从新模块创建 mock client
 - `broker.py` 保留 `MockRealtimeQuoteClient` 兼容导出
@@ -435,8 +435,8 @@ from live_trading.broker import MockRealtimeQuoteClient
 新增导入兼容性验证：
 
 ```python
-from live_trading.broker import MockRealtimeQuoteClient
-from live_trading.broker import QuoteBrokerClient
+from livetrading.broker import MockRealtimeQuoteClient
+from livetrading.broker import QuoteBrokerClient
 ```
 
 确保拆分后旧路径仍可用。
@@ -458,7 +458,7 @@ from live_trading.broker import QuoteBrokerClient
 
 风险：
 
-- 测试和外部脚本可能直接从 `live_trading.broker` import `MockRealtimeQuoteClient`
+- 测试和外部脚本可能直接从 `livetrading.broker` import `MockRealtimeQuoteClient`
 
 规避：
 
@@ -483,16 +483,16 @@ from live_trading.broker import QuoteBrokerClient
 
 新增：
 
-- `live_trading/quote_brokers/__init__.py`
-- `live_trading/quote_brokers/base.py`
-- `live_trading/quote_brokers/mock.py`
+- `livetrading/quote_brokers/__init__.py`
+- `livetrading/quote_brokers/base.py`
+- `livetrading/quote_brokers/mock.py`
 
 修改：
 
-- `live_trading/broker.py`
-- `tests/test_live_trading.py`
+- `livetrading/broker.py`
+- `tests/test_livetrading.py`
 - `README.md`
-- `docs/README_live_trading_mock_signal.md`
+- `docs/README_livetrading_mock_signal.md`
 
 其中：
 

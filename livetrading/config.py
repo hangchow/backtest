@@ -448,7 +448,7 @@ def load_trade_accounts_config_from_text(text: str) -> TradeAccountsConfig:
     return TradeAccountsConfig(accounts=accounts)
 
 
-def build_live_trading_config(quote_config: QuoteConfig, trade_accounts_config: TradeAccountsConfig) -> LiveTradingConfig:
+def build_livetrading_config(quote_config: QuoteConfig, trade_accounts_config: TradeAccountsConfig) -> LiveTradingConfig:
     for account in trade_accounts_config.accounts:
         if account.broker.market != quote_config.realtime_broker.market:
             raise ValueError(
@@ -476,8 +476,8 @@ def load_trade_accounts_config(path: Path | str) -> TradeAccountsConfig:
     return load_trade_accounts_config_from_text(config_path.read_text(encoding="utf-8"))
 
 
-def load_live_trading_config(quote_config_path: Path | str, trade_accounts_path: Path | str) -> LiveTradingConfig:
-    return build_live_trading_config(
+def load_livetrading_config(quote_config_path: Path | str, trade_accounts_path: Path | str) -> LiveTradingConfig:
+    return build_livetrading_config(
         load_quote_config(quote_config_path),
         load_trade_accounts_config(trade_accounts_path),
     )

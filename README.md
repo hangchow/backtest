@@ -17,13 +17,13 @@ source .venv/bin/active
 
 ## 架构
 
-- `live_trading/config.py`
+- `livetrading/config.py`
   - 负责读取两类 JSON 配置：
   - 行情订阅配置：`realtime_broker + history_broker + runtime + stock_pool`
   - 实盘交易配置：`trade_accounts[]`
-- `live_trading/pool_strategies.py`
+- `livetrading/pool_strategies.py`
   - 实现组合级策略适配，当前支持 `dual_momentum`。
-- `live_trading/broker.py`
+- `livetrading/broker.py`
   - 定义 `QuoteBrokerClient`、`DailyHistoryProvider` 和 `TradeAccountClient` 抽象。
   - 当前实现：
   - `realtime_broker`
@@ -39,9 +39,9 @@ source .venv/bin/active
   - `kline_day/` 与 `kline_minute/` 仅保留给回测和离线研究使用，不参与实盘 warm-up。
   - `trade_accounts`
   - 分别查询资金和持仓，并保留未来接真实下单的接口位置。
-- `live_trading/engine.py`
+- `livetrading/engine.py`
   - 驱动双配置热更新、组合级调仓信号判定、每个账户各自的影子仓位/影子现金维护，以及 dry-run 下单日志输出。
-- `run_live_trading.py`
+- `livetrading.py`
   - CLI 入口。
 
 ## 设计要点
@@ -65,11 +65,11 @@ source .venv/bin/active
 
 使用两个 JSON 文件：
 
-- `config/live_trading.quote.sample.json`
+- `config/livetrading.quote.sample.json`
   - 行情订阅配置样例。
-- `config/live_trading.quote.mock.sample.json`
+- `config/livetrading.quote.mock.sample.json`
   - 使用 mock 实时行情推送的样例。
-- `config/live_trading.trade_accounts.sample.json`
+- `config/livetrading.trade_accounts.sample.json`
   - 交易账户配置样例。
 
 关键字段：
@@ -107,18 +107,18 @@ source .venv/bin/active
 
 ```bash
 export POLYGON_API_KEY=your_api_key
-./.venv/bin/python run_live_trading.py \
-  --quote-config config/live_trading.quote.sample.json \
-  --trade-config config/live_trading.trade_accounts.sample.json
+./.venv/bin/python livetrading.py \
+  --quote-config config/livetrading.quote.sample.json \
+  --trade-config config/livetrading.trade_accounts.sample.json
 ```
 
 如果实时行情改走 mock：
 
 ```bash
 export POLYGON_API_KEY=your_api_key
-./.venv/bin/python run_live_trading.py \
-  --quote-config config/live_trading.quote.mock.sample.json \
-  --trade-config config/live_trading.trade_accounts.sample.json
+./.venv/bin/python livetrading.py \
+  --quote-config config/livetrading.quote.mock.sample.json \
+  --trade-config config/livetrading.trade_accounts.sample.json
 ```
 
 启动后，可以向 mock 行情入口推送分钟 K：

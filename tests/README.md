@@ -9,7 +9,7 @@
 - [Futu 日线抓取说明](../docs/README_fetch_futu_day.md)
 - [Polygon 1 分钟抓取说明](../docs/README_fetch_polygon_1m.md)
 - [Polygon 日线抓取说明](../docs/README_fetch_polygon_day.md)
-- [实时行情 Mock 触发买卖点说明](../docs/README_live_trading_mock_signal.md)
+- [实时行情 Mock 触发买卖点说明](../docs/README_livetrading_mock_signal.md)
 
 ## 文件清单
 - `test_backtest_scripts.py`
@@ -33,8 +33,8 @@
   - `fetch_polygon_1m.py` 的使用说明
 - [README_fetch_polygon_day.md](../docs/README_fetch_polygon_day.md)
   - `fetch_polygon_day.py` 的使用说明
-- [README_live_trading_mock_signal.md](../docs/README_live_trading_mock_signal.md)
-  - live_trading 使用 mock 行情推送触发 dry-run 买卖点的说明
+- [README_livetrading_mock_signal.md](../docs/README_livetrading_mock_signal.md)
+  - livetrading 使用 mock 行情推送触发 dry-run 买卖点的说明
 - `search_better_strategy.py`
   - 用来批量搜索简单策略和参数组合的研究脚本
   - 支持单标的（`--data-dir`）和股票池（`--codes`）两种模式

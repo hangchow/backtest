@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from live_trading.broker import (
+from livetrading.broker import (
     DailyHistoryProvider,
     FutuDailyHistoryProvider,
     LocalDataDailyHistoryProvider,
@@ -26,10 +26,10 @@ from live_trading.broker import (
     _expected_latest_trade_date_for_market,
     create_daily_history_provider,
 )
-from live_trading.config import RealtimeQuoteBrokerConfig, load_live_trading_config, load_quote_config, load_trade_accounts_config
-from live_trading.engine import LiveTradingEngine
-from live_trading.models import AccountSnapshot, PositionSnapshot, QuoteUpdate
-from live_trading.pool_strategies import build_pool_strategy
+from livetrading.config import RealtimeQuoteBrokerConfig, load_livetrading_config, load_quote_config, load_trade_accounts_config
+from livetrading.engine import LiveTradingEngine
+from livetrading.models import AccountSnapshot, PositionSnapshot, QuoteUpdate
+from livetrading.pool_strategies import build_pool_strategy
 
 
 def build_daily_history(code: str, closes: list[float], volumes: list[float] | None = None) -> pd.DataFrame:
@@ -251,12 +251,12 @@ class FakeHttpServer:
 
 
 class LiveTradingConfigTests(unittest.TestCase):
-    def test_load_live_trading_config_supports_split_quote_and_trade_files(self) -> None:
+    def test_load_livetrading_config_supports_split_quote_and_trade_files(self) -> None:
         quote_payload = build_quote_payload(realtime_host="127.0.0.1", realtime_port=11111, history_host="127.0.0.2", history_port=22222)
         quote_payload["runtime"] = {"config_reload_interval_seconds": 3}
         trade_payload = build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.9")])
 
-        config = load_live_trading_config_from_payloads(quote_payload, trade_payload)
+        config = load_livetrading_config_from_payloads(quote_payload, trade_payload)
 
         self.assertEqual(config.realtime_broker.type, "futu")
         self.assertEqual(config.realtime_broker.host, "127.0.0.1")
@@ -430,7 +430,7 @@ class MockRealtimeQuoteClientTests(unittest.TestCase):
 
 class LocalDataDailyHistoryProviderTests(unittest.TestCase):
     def test_provider_loads_daily_history_from_kline_day(self) -> None:
-        cfg = load_live_trading_config_from_payloads(
+        cfg = load_livetrading_config_from_payloads(
             build_quote_payload(),
             build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
         ).history_broker
@@ -455,7 +455,7 @@ class LocalDataDailyHistoryProviderTests(unittest.TestCase):
         self.assertEqual(list(histories["US.AAPL"]["close"]), [12.0, 13.0])
 
     def test_provider_logs_error_when_daily_history_missing(self) -> None:
-        cfg = load_live_trading_config_from_payloads(
+        cfg = load_livetrading_config_from_payloads(
             build_quote_payload(),
             build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
         ).history_broker
@@ -473,7 +473,7 @@ class LocalDataDailyHistoryProviderTests(unittest.TestCase):
         self.assertTrue(histories["US.AAPL"].empty)
 
     def test_provider_logs_error_and_deduplicates_local_daily_time_key(self) -> None:
-        cfg = load_live_trading_config_from_payloads(build_quote_payload(), build_trade_payload([build_trade_account_payload("a", "127.0.0.1")])).history_broker
+        cfg = load_livetrading_config_from_payloads(build_quote_payload(), build_trade_payload([build_trade_account_payload("a", "127.0.0.1")])).history_broker
         with tempfile.TemporaryDirectory() as tmp:
             daily_dir = Path(tmp) / "kline_day" / "US.AAPL"
             daily_dir.mkdir(parents=True)
@@ -504,7 +504,7 @@ class LocalDataDailyHistoryProviderTests(unittest.TestCase):
 
 class PolygonCacheDailyHistoryProviderTests(unittest.TestCase):
     def test_polygon_request_retries_after_429_and_then_succeeds(self) -> None:
-        cfg = load_live_trading_config_from_payloads(
+        cfg = load_livetrading_config_from_payloads(
             build_quote_payload(history_type="polygon"),
             build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
         ).history_broker
@@ -539,13 +539,13 @@ class PolygonCacheDailyHistoryProviderTests(unittest.TestCase):
                 return json.dumps(payload).encode("utf-8")
 
         with patch(
-            "live_trading.broker.urlopen",
+            "livetrading.broker.urlopen",
             side_effect=[
                 HTTPError("https://api.polygon.io/example", 429, "Too Many Requests", {"Retry-After": "0"}, io.BytesIO(b"")),
                 HTTPError("https://api.polygon.io/example", 429, "Too Many Requests", {"Retry-After": "0"}, io.BytesIO(b"")),
                 FakeResponse(),
             ],
-        ) as urlopen_mock, patch("live_trading.broker.time.sleep") as sleep_mock:
+        ) as urlopen_mock, patch("livetrading.broker.time.sleep") as sleep_mock:
             results = provider._request_polygon_daily_results(
                 ticker="AAPL",
                 start_date=pd.Timestamp("2026-03-01").date(),
@@ -560,7 +560,7 @@ class PolygonCacheDailyHistoryProviderTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
 
     def test_create_daily_history_provider_uses_polygon_cache_provider(self) -> None:
-        cfg = load_live_trading_config_from_payloads(
+        cfg = load_livetrading_config_from_payloads(
             build_quote_payload(history_type="polygon"),
             build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
         ).history_broker
@@ -571,7 +571,7 @@ class PolygonCacheDailyHistoryProviderTests(unittest.TestCase):
         self.assertEqual(provider._kline_day_root, Path(".kline_day"))
 
     def test_create_daily_history_provider_uses_futu_provider(self) -> None:
-        cfg = load_live_trading_config_from_payloads(
+        cfg = load_livetrading_config_from_payloads(
             build_quote_payload(history_type="futu"),
             build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
         ).history_broker
@@ -619,8 +619,8 @@ class PolygonCacheDailyHistoryProviderTests(unittest.TestCase):
             "RET_OK": 0,
         }
 
-        with tempfile.TemporaryDirectory() as tmp, patch("live_trading.broker._load_futu_api", return_value=fake_futu):
-            cfg = load_live_trading_config_from_payloads(
+        with tempfile.TemporaryDirectory() as tmp, patch("livetrading.broker._load_futu_api", return_value=fake_futu):
+            cfg = load_livetrading_config_from_payloads(
                 build_quote_payload(history_type="futu"),
                 build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
             ).history_broker
@@ -682,7 +682,7 @@ class PolygonCacheDailyHistoryProviderTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            cfg = load_live_trading_config_from_payloads(
+            cfg = load_livetrading_config_from_payloads(
                 build_quote_payload(history_type="polygon"),
                 build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
             ).history_broker
@@ -740,7 +740,7 @@ class PolygonCacheDailyHistoryProviderTests(unittest.TestCase):
             )
 
         with tempfile.TemporaryDirectory() as tmp:
-            cfg = load_live_trading_config_from_payloads(
+            cfg = load_livetrading_config_from_payloads(
                 build_quote_payload(history_type="polygon"),
                 build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
             ).history_broker
@@ -793,7 +793,7 @@ class PolygonCacheDailyHistoryProviderTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            cfg = load_live_trading_config_from_payloads(
+            cfg = load_livetrading_config_from_payloads(
                 build_quote_payload(history_type="polygon"),
                 build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
             ).history_broker
@@ -833,7 +833,7 @@ class PolygonCacheDailyHistoryProviderTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            cfg = load_live_trading_config_from_payloads(
+            cfg = load_livetrading_config_from_payloads(
                 build_quote_payload(history_type="polygon"),
                 build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
             ).history_broker
@@ -877,7 +877,7 @@ class PolygonCacheDailyHistoryProviderTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            cfg = load_live_trading_config_from_payloads(
+            cfg = load_livetrading_config_from_payloads(
                 build_quote_payload(history_type="polygon"),
                 build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
             ).history_broker
@@ -925,7 +925,7 @@ class PolygonCacheDailyHistoryProviderTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            cfg = load_live_trading_config_from_payloads(
+            cfg = load_livetrading_config_from_payloads(
                 build_quote_payload(history_type="polygon"),
                 build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
             ).history_broker
@@ -978,7 +978,7 @@ class PolygonCacheDailyHistoryProviderTests(unittest.TestCase):
         self.assertEqual(str(latest), "2025-11-28")
 
     def test_daily_history_business_day_lag_uses_exchange_calendar_holidays(self) -> None:
-        cfg = load_live_trading_config_from_payloads(
+        cfg = load_livetrading_config_from_payloads(
             build_quote_payload(history_type="polygon"),
             build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
         ).history_broker
@@ -1003,7 +1003,7 @@ class PolygonCacheDailyHistoryProviderTests(unittest.TestCase):
         self.assertEqual(provider._daily_history_business_day_lag(daily_history), 1)
 
     def test_polygon_remote_fetch_stops_expanding_when_larger_window_adds_no_rows(self) -> None:
-        cfg = load_live_trading_config_from_payloads(
+        cfg = load_livetrading_config_from_payloads(
             build_quote_payload(history_type="polygon"),
             build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
         ).history_broker
@@ -1039,7 +1039,7 @@ class DualMomentumPoolStrategyTests(unittest.TestCase):
     def test_dual_momentum_builds_target_for_stronger_symbol(self) -> None:
         quote_payload = build_quote_payload()
         trade_payload = build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.9")])
-        config = load_live_trading_config_from_payloads(quote_payload, trade_payload)
+        config = load_livetrading_config_from_payloads(quote_payload, trade_payload)
         strategy = build_pool_strategy(config.stock_pool)
         strategy.bootstrap(
             {
@@ -1059,7 +1059,7 @@ class DualMomentumPoolStrategyTests(unittest.TestCase):
     def test_dual_momentum_emits_only_one_rebalance_per_new_trade_date(self) -> None:
         quote_payload = build_quote_payload()
         trade_payload = build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.9")])
-        config = load_live_trading_config_from_payloads(quote_payload, trade_payload)
+        config = load_livetrading_config_from_payloads(quote_payload, trade_payload)
         strategy = build_pool_strategy(config.stock_pool)
         strategy.bootstrap(
             {
@@ -1090,7 +1090,7 @@ class LiveTradingEngineTests(unittest.TestCase):
                 json.dumps(build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.9")])),
                 encoding="utf-8",
             )
-            config_a = load_live_trading_config(quote_path, trade_path)
+            config_a = load_livetrading_config(quote_path, trade_path)
 
             engine = LiveTradingEngine(
                 quote_path,
@@ -1103,7 +1103,7 @@ class LiveTradingEngineTests(unittest.TestCase):
 
             quote_payload_b = build_quote_payload(realtime_host="127.0.0.2")
             quote_path.write_text(json.dumps(quote_payload_b), encoding="utf-8")
-            config_b = load_live_trading_config(quote_path, trade_path)
+            config_b = load_livetrading_config(quote_path, trade_path)
             engine.apply_config(config_b)
             engine.stop()
 
@@ -1124,7 +1124,7 @@ class LiveTradingEngineTests(unittest.TestCase):
                 json.dumps(build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.9")])),
                 encoding="utf-8",
             )
-            config_a = load_live_trading_config(quote_path, trade_path)
+            config_a = load_livetrading_config(quote_path, trade_path)
 
             engine = LiveTradingEngine(
                 quote_path,
@@ -1137,7 +1137,7 @@ class LiveTradingEngineTests(unittest.TestCase):
 
             quote_payload_b = build_quote_payload(history_host="127.0.0.3", history_port=33333)
             quote_path.write_text(json.dumps(quote_payload_b), encoding="utf-8")
-            config_b = load_live_trading_config(quote_path, trade_path)
+            config_b = load_livetrading_config(quote_path, trade_path)
             engine.apply_config(config_b)
             engine.stop()
 
@@ -1158,7 +1158,7 @@ class LiveTradingEngineTests(unittest.TestCase):
                 json.dumps(build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.9")])),
                 encoding="utf-8",
             )
-            config_a = load_live_trading_config(quote_path, trade_path)
+            config_a = load_livetrading_config(quote_path, trade_path)
 
             engine = LiveTradingEngine(
                 quote_path,
@@ -1173,7 +1173,7 @@ class LiveTradingEngineTests(unittest.TestCase):
                 json.dumps(build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.10")])),
                 encoding="utf-8",
             )
-            config_b = load_live_trading_config(quote_path, trade_path)
+            config_b = load_livetrading_config(quote_path, trade_path)
             engine.apply_config(config_b)
             engine.stop()
 
@@ -1201,7 +1201,7 @@ class LiveTradingEngineTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            config = load_live_trading_config(quote_path, trade_path)
+            config = load_livetrading_config(quote_path, trade_path)
 
             engine = LiveTradingEngine(
                 quote_path,
@@ -1298,7 +1298,7 @@ class LiveTradingEngineTests(unittest.TestCase):
                 logger=logger,
             )
 
-            config_a = load_live_trading_config(quote_path, trade_path)
+            config_a = load_livetrading_config(quote_path, trade_path)
             engine.apply_config(config_a)
             handler.messages.clear()
 
@@ -1348,7 +1348,7 @@ class LiveTradingEngineTests(unittest.TestCase):
                 json.dumps(build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.10")])),
                 encoding="utf-8",
             )
-            config_b = load_live_trading_config(quote_path, trade_path)
+            config_b = load_livetrading_config(quote_path, trade_path)
             engine.apply_config(config_b)
             handler.messages.clear()
 
@@ -1431,13 +1431,13 @@ class LiveTradingEngineTests(unittest.TestCase):
         self.assertEqual(FakeQuoteBroker.instances[0].connect_calls, 1)
 
 
-def load_live_trading_config_from_payloads(quote_payload: dict, trade_payload: dict) -> object:
+def load_livetrading_config_from_payloads(quote_payload: dict, trade_payload: dict) -> object:
     with tempfile.TemporaryDirectory() as tmp:
         quote_path = Path(tmp) / "quote.json"
         trade_path = Path(tmp) / "trade.json"
         quote_path.write_text(json.dumps(quote_payload), encoding="utf-8")
         trade_path.write_text(json.dumps(trade_payload), encoding="utf-8")
-        return load_live_trading_config(quote_path, trade_path)
+        return load_livetrading_config(quote_path, trade_path)
 
 
 if __name__ == "__main__":

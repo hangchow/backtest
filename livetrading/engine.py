@@ -31,7 +31,7 @@ from .config import (
     QuoteConfig,
     TradeAccountConfig,
     TradeAccountsConfig,
-    build_live_trading_config,
+    build_livetrading_config,
     load_quote_config_from_text,
     load_trade_accounts_config_from_text,
 )
@@ -85,7 +85,7 @@ class LiveTradingEngine:
         self._quote_broker_factory = quote_broker_factory
         self._history_provider_factory = history_provider_factory
         self._trade_account_factory = trade_account_factory
-        self._logger = logger or logging.getLogger("live_trading")
+        self._logger = logger or logging.getLogger("livetrading")
         self._current_config: LiveTradingConfig | None = None
         self._quote_broker: QuoteBrokerClient | None = None
         self._history_provider: DailyHistoryProvider | None = None
@@ -190,7 +190,7 @@ class LiveTradingEngine:
         trade_watcher = ConfigFileWatcher(self._trade_config_path, load_trade_accounts_config_from_text)
         quote_config = quote_watcher.load()
         trade_config = trade_watcher.load()
-        self.apply_config(build_live_trading_config(quote_config, trade_config))
+        self.apply_config(build_livetrading_config(quote_config, trade_config))
 
         while not self._stop_event.is_set():
             timeout = self._current_reload_interval()
@@ -222,7 +222,7 @@ class LiveTradingEngine:
                         ",".join(self._warmup_unavailable_codes),
                     )
                 self.apply_config(
-                    build_live_trading_config(quote_config, trade_config),
+                    build_livetrading_config(quote_config, trade_config),
                     force_warmup_refresh=retry_warmup,
                 )
 
