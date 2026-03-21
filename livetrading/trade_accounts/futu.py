@@ -14,6 +14,11 @@ from .base import TradeAccountClient, TradeAccountEventSink
 
 
 class FutuTradeAccountClient(TradeAccountClient):
+    """Futu 交易账户客户端，负责把统一账户接口映射到 Futu SDK。
+
+    它的职责有三块：建立/关闭交易上下文、轮询账户与持仓快照、把订单与成交推送转换成统一模型。
+    """
+
     def __init__(self, config: TradeAccountConfig, event_sink: TradeAccountEventSink, logger: logging.Logger) -> None:
         self._config = config
         self._event_sink = event_sink
@@ -25,7 +30,11 @@ class FutuTradeAccountClient(TradeAccountClient):
         self._lock = threading.RLock()
 
     def connect(self) -> None:
-        """连接 Futu 交易上下文，启动后台轮询并立即同步账户/持仓。"""
+        """建立 Futu 交易连接，并启动后台轮询线程。
+
+        连接建立后会立刻主动拉一次账户和持仓快照，
+        这样引擎在启动后不需要等第一轮轮询周期结束才能拿到基线状态。
+        """
         self.close()
         with self._lock:
             self._poll_stop = threading.Event()
@@ -50,6 +59,11 @@ class FutuTradeAccountClient(TradeAccountClient):
         self._poll_positions()
 
     def close(self) -> None:
+        """关闭当前交易上下文和轮询线程。
+
+        这里会先把内部引用摘掉，再在锁外等待线程退出并关闭 trade context，
+        避免 join/close 过程和其他持锁逻辑互相阻塞。
+        """
         with self._lock:
             poll_stop = self._poll_stop
             poll_thread = self._poll_thread
@@ -70,7 +84,11 @@ class FutuTradeAccountClient(TradeAccountClient):
                 )
 
     def submit_order(self, intent: OrderIntent) -> OrderSubmission:
-        """把一笔标准化 intent 转成 Futu place_order 调用。"""
+        """把统一的 OrderIntent 翻译成一次 Futu `place_order` 调用。
+
+        返回值会尽量保留 broker ack 中的 order_id、数量、价格，
+        让上层能够把“本地下单意图”和“broker 订单编号”稳定串起来。
+        """
         with self._lock:
             trade_ctx = self._trade_ctx
             futu = self._futu
@@ -117,6 +135,11 @@ class FutuTradeAccountClient(TradeAccountClient):
         )
 
     def _build_trade_order_handler(self):
+        """构建 Futu 订单状态推送处理器，并转换成统一的 OrderUpdate 事件。
+
+        这里不直接改账户状态，而是把原始推送标准化后交给 engine/state store，
+        保持 broker 适配层和状态推进层职责分离。
+        """
         futu = self._futu
         broker = self
 
@@ -153,6 +176,11 @@ class FutuTradeAccountClient(TradeAccountClient):
         return TradeOrderHandler()
 
     def _build_trade_deal_handler(self):
+        """构建 Futu 成交推送处理器，并转换成统一的 FillEvent 事件。
+
+        成交推送和订单状态推送是两条独立链路，这里专门负责把成交明细补充给上层，
+        方便 expected 现金在订单最终结算时使用真实成交额纠偏。
+        """
         futu = self._futu
         broker = self
 
@@ -188,6 +216,7 @@ class FutuTradeAccountClient(TradeAccountClient):
         return TradeDealHandler()
 
     def _poll_loop(self) -> None:
+        """后台轮询循环，按各自节奏定期刷新账户资金和持仓快照。"""
         next_account_poll = 0.0
         next_position_poll = 0.0
         while not self._poll_stop.wait(0.5):
@@ -200,7 +229,11 @@ class FutuTradeAccountClient(TradeAccountClient):
                 next_position_poll = now + self._config.broker.position_poll_interval_seconds
 
     def _poll_account(self) -> None:
-        """拉取账户资金快照并回调给事件接收方。"""
+        """主动拉取一次账户资金快照，并回调给事件接收方。
+
+        轮询接口失败时不会抛异常中断线程，而是记录 broker 消息，
+        让实盘链路在短暂网络抖动下仍能继续运行。
+        """
         with self._lock:
             trade_ctx = self._trade_ctx
             futu = self._futu
@@ -232,7 +265,7 @@ class FutuTradeAccountClient(TradeAccountClient):
         self._event_sink.on_account(self._config.account_id, snapshot)
 
     def _poll_positions(self) -> None:
-        """拉取当前持仓快照并回调给事件接收方。"""
+        """主动拉取一次当前持仓快照，并标准化成统一的 PositionSnapshot。"""
         with self._lock:
             trade_ctx = self._trade_ctx
             futu = self._futu

@@ -57,7 +57,11 @@ class AccountRuntimeState:
 
 
 class AccountStateStore:
-    """集中处理账户状态写入、对账和 pending 订单推进。"""
+    """集中管理账户的真实状态、影子状态和预期状态。
+
+    实盘链路里最容易出错的不是“如何算一笔单”，而是“订单途中账户到底应该看哪份状态”。
+    这个 store 就是专门解决这个问题的单一入口。
+    """
 
     def __init__(self, logger: logging.Logger) -> None:
         self._logger = logger
@@ -92,7 +96,11 @@ class AccountStateStore:
             }
 
     def sync_active_codes(self, account_id: str, active_codes: tuple[str, ...]) -> AccountRuntimeState:
-        """确保当前股票池里的代码都已经在 shadow / expected 状态里有初值。"""
+        """让当前账户对所有活跃代码都具备可规划的初始状态。
+
+        这个方法会补齐 shadow/expected 缺失的代码，并清掉已经不再跟踪的旧代码，
+        保证 planner 在任何时刻读取到的持仓视图都是“代码齐全、不会缺 key”的。
+        """
         state = self.ensure(account_id)
         tracked_code_set = set(active_codes) | {pending.code for pending in state.pending_orders.values()}
         state.shadow_positions = {
@@ -112,7 +120,11 @@ class AccountStateStore:
         return state
 
     def upsert_actual_account(self, account_id: str, snapshot: AccountSnapshot) -> AccountRuntimeState:
-        """写入真实账户资金快照，并在首次同步时初始化 shadow / expected 现金。"""
+        """写入真实账户资金快照，并在首次同步时建立现金基线。
+
+        shadow_cash/expected_cash 只会在尚未初始化时从真实账户继承，
+        避免后续执行器已经推进过的本地状态被新的快照无条件覆盖。
+        """
         state = self.ensure(account_id)
         state.actual_account = snapshot
         state.last_account_sync_at = snapshot.timestamp
@@ -127,7 +139,12 @@ class AccountStateStore:
         account_id: str,
         positions: dict[str, PositionSnapshot],
     ) -> AccountRuntimeState:
-        """写入真实持仓快照。"""
+        """写入真实持仓快照，并在首个持仓同步时修正占位基线。
+
+        启动早期经常会先收到 account snapshot，再收到 positions snapshot。
+        这时 sync_active_codes 可能已经把股票池代码预填成 0，这个方法会在首个真实持仓到达时
+        把这些占位值改成真实基线，避免后续规划错误地从空仓起步。
+        """
         state = self.ensure(account_id)
         first_position_sync = state.last_position_sync_at is None
         state.actual_positions = positions
@@ -151,7 +168,11 @@ class AccountStateStore:
         intent: OrderIntent,
         submission: OrderSubmission,
     ) -> AccountRuntimeState:
-        """订单提交成功后，先把这笔单记成 pending，并乐观推进 expected 状态。"""
+        """在 broker 受理订单后登记 pending，并乐观推进 expected 状态。
+
+        这里的 expected 视图代表“假设这笔单最终会按提交数量成交”时账户应该变成什么样，
+        这样下一轮 planner 就能在 broker 快照尚未返回前，先基于更接近真实的状态继续工作。
+        """
         state = self.ensure(account.account_id)
         if not submission.accepted or not submission.broker_order_id:
             return state
@@ -190,7 +211,11 @@ class AccountStateStore:
         return state
 
     def apply_order_update(self, account: TradeAccountConfig, update: OrderUpdate) -> AccountRuntimeState:
-        """消费订单状态更新，并在订单结束时把 expected 状态纠偏到最终结果。"""
+        """消费订单状态更新，并在订单结束时把乐观 expected 修正为最终结果。
+
+        订单状态推送通常会告诉我们：这笔单是否已经结束、累计成交了多少、均价是多少。
+        一旦进入最终状态，就可以把提交时的整笔成交预估回拨到真实成交数量。
+        """
         state = self.ensure(account.account_id)
         pending = state.pending_orders.get(update.broker_order_id)
         if pending is None:
@@ -210,7 +235,11 @@ class AccountStateStore:
         return state
 
     def apply_fill(self, account: TradeAccountConfig, fill: FillEvent) -> AccountRuntimeState:
-        """成交回报主要用于累计真实成交数量和成交额，方便最终纠偏 expected 现金。"""
+        """消费成交回报，累计真实成交数量和成交额。
+
+        有些 broker 会先推订单最终状态，再补最后一笔成交明细；
+        因此这里不仅要记账，还要支持在“订单已 final”的情况下再次修正 expected 现金。
+        """
         state = self.ensure(account.account_id)
         pending = state.pending_orders.get(fill.broker_order_id)
         if pending is None:
@@ -227,7 +256,11 @@ class AccountStateStore:
         return state
 
     def reconcile_from_actual(self, account_id: str, active_codes: tuple[str, ...]) -> AccountRuntimeState:
-        """没有 pending 订单时，把 expected 对齐到真实账户；有 pending 时只记录漂移。"""
+        """根据真实账户快照做对账，并决定 expected 是否可以回归真实状态。
+
+        没有 pending 订单时，expected 可以完全向真实账户看齐；
+        有 pending 订单时，则优先保留 expected 视图，只在真实账户已经追上它时再清理已结束挂单。
+        """
         state = self.ensure(account_id)
         tracked_codes = self._tracked_codes(state, active_codes)
         if state.pending_orders:
@@ -257,7 +290,11 @@ class AccountStateStore:
         return state
 
     def planning_cash(self, *, executor_name: str, state: AccountRuntimeState) -> float:
-        """按执行器类型选择本轮规划该用哪一份现金视图。"""
+        """为 planner 选择本轮应该使用的现金视图。
+
+        mock 模式使用 shadow_cash，live submit 模式优先使用 expected_cash。
+        这样可以让两类执行器都基于“对自己最可信的一份状态”做规划。
+        """
         if executor_name == "mock":
             return float(state.shadow_cash or 0.0)
         if state.expected_cash is not None:
@@ -273,7 +310,11 @@ class AccountStateStore:
         state: AccountRuntimeState,
         active_codes: tuple[str, ...],
     ) -> dict[str, int]:
-        """按执行器类型选择本轮规划该用哪一份持仓视图。"""
+        """为 planner 选择本轮应该使用的持仓视图。
+
+        mock 模式直接看 shadow_positions；
+        live submit 模式优先看 expected_positions，避免上一轮挂单尚未反映到真实账户时重复买卖。
+        """
         if executor_name == "mock":
             return {code: int(state.shadow_positions.get(code, 0)) for code in active_codes}
         positions: dict[str, int] = {}
@@ -323,7 +364,11 @@ class AccountStateStore:
         state: AccountRuntimeState,
         pending: PendingOrder,
     ) -> None:
-        """把提交时的乐观预估修正成最终订单结果。"""
+        """把提交时的乐观 expected 预估结算成最终订单结果。
+
+        核心思路是先算“提交时假设整笔成交”的现金/持仓变化，再算“真实最终成交”的变化，
+        两者做差后回写到 expected_*，从而把预估状态平滑地修正成真实结果。
+        """
         self._ensure_expected_base(state, code=pending.code)
         final_qty = min(max(int(pending.dealt_qty), 0), int(pending.submitted_qty))
         final_price = self._resolve_final_price(pending, final_qty)
@@ -408,6 +453,11 @@ class AccountStateStore:
         state: AccountRuntimeState,
         active_codes: tuple[str, ...],
     ) -> None:
+        """在真实账户与 expected 视图发生偏离时打印一次漂移日志。
+
+        这里会对漂移签名做去重，避免 broker 长时间未追平时反复刷同一条日志，
+        影响线上排查时对真正新问题的观察。
+        """
         actual_cash = state.actual_account.available_funds if state.actual_account is not None else None
         actual_positions = tuple(
             (code, state.actual_positions.get(code).qty if code in state.actual_positions else 0)

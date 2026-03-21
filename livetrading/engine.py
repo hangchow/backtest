@@ -36,14 +36,20 @@ class ConfigFileWatcher:
         self._digest: str | None = None
 
     def load(self) -> Any:
-        """读取配置文件内容，解析并记录当前文件摘要。"""
+        """读取并解析整份配置文件，同时记录当前内容摘要。
+
+        首次启动时会走这个入口，后续热更新则依赖保存下来的摘要判断文件是否真的变化。
+        """
         payload = self.path.read_bytes()
         config = self._loader(payload.decode("utf-8"))
         self._digest = hashlib.sha256(payload).hexdigest()
         return config
 
     def maybe_reload(self) -> Any | None:
-        """若文件摘要变化则重新解析配置，否则返回 None。"""
+        """仅在文件内容摘要变化时重新解析配置。
+
+        返回 `None` 表示配置内容没有变化，调用方可以跳过后续 apply_config，避免无意义重建连接。
+        """
         payload = self.path.read_bytes()
         digest = hashlib.sha256(payload).hexdigest()
         if digest == self._digest:
@@ -52,7 +58,14 @@ class ConfigFileWatcher:
         self._digest = digest
         return config
 
+
 class LiveTradingEngine:
+    """实盘运行主控器，负责把配置、行情、账户、执行链路串成一个闭环。
+
+    这个类本身不直接生成交易信号，也不直接下单；它更像一个编排层：
+    接收外部事件，维护运行时状态，并在时机成熟时调用策略规划和执行器。
+    """
+
     def __init__(
         self,
         quote_config_path: Path | str,
@@ -92,7 +105,12 @@ class LiveTradingEngine:
         self._lock = threading.RLock()
 
     def apply_config(self, config: LiveTradingConfig, *, force_warmup_refresh: bool = False) -> None:
-        """按新配置重建依赖、执行 warm-up，并同步影子状态。"""
+        """应用一份新的运行配置，并只重建真正受影响的依赖。
+
+        这里会统一处理 4 类变化：实时行情连接、历史数据来源、股票池策略、交易账户连接。
+        在策略或历史源变化时，还会补跑 warm-up；如果 warm-up 数据不完整，则保留 pending 状态，
+        让主循环后续继续重试，而不是直接让策略在半残缺数据上开始运行。
+        """
         with self._lock:
             previous_pending_account_log_ids = self._pending_account_log_ids.copy()
             previous_pending_position_log_ids = self._pending_position_log_ids.copy()
@@ -194,7 +212,11 @@ class LiveTradingEngine:
                 self._config_inflight = None
 
     def run(self) -> None:
-        """启动配置加载与热更新主循环。"""
+        """启动实盘引擎主循环，负责首次加载配置和后续热更新。
+
+        主循环本身不做业务计算，只负责监听配置文件变化、必要时重新 apply_config，
+        并在 warm-up 失败时定期重试，直到策略恢复可运行状态。
+        """
         quote_watcher = ConfigFileWatcher(self._quote_config_path, load_quote_config_from_text)
         trade_watcher = ConfigFileWatcher(self._trade_config_path, load_trade_accounts_config_from_text)
         history_watcher = (
@@ -268,7 +290,10 @@ class LiveTradingEngine:
                     )
 
     def stop(self) -> None:
-        """停止 quote/history/trade 侧后台资源。"""
+        """停止引擎并关闭所有后台资源。
+
+        关闭顺序保持为 quote/history/trade client 的统一收口，确保测试和真实运行时都能稳定释放连接。
+        """
         self._stop_event.set()
         with self._lock:
             if self._quote_broker is not None:
@@ -282,7 +307,11 @@ class LiveTradingEngine:
             self._trade_account_clients = {}
 
     def on_quote(self, update: QuoteUpdate) -> None:
-        """接收实时 quote 事件，更新最新参考价缓存。"""
+        """接收实时 quote，并更新当前最新参考价缓存。
+
+        这里不会直接触发调仓；quote 主要用于给后续 rebalance 提供更接近实时的参考价格。
+        真正驱动策略评估的仍然是分钟 bar。
+        """
         with self._lock:
             self._latest_quotes[update.code] = update
             runtime = self._current_config.runtime if self._current_config is not None else None
@@ -297,7 +326,10 @@ class LiveTradingEngine:
             )
 
     def on_bar(self, code: str, bar: pd.Series | dict[str, object]) -> None:
-        """接收分钟 bar，更新价格缓存并驱动策略判断是否调仓。"""
+        """接收分钟 bar，并在策略返回决策时触发账户级调仓。
+
+        bar 是实盘链路里的“时钟脉冲”：它既刷新最新成交价，又决定当前这根 bar 是否需要重新评估组合权重。
+        """
         bar_row = pd.Series(bar)
         with self._lock:
             self._latest_bar_prices[code] = float(bar_row["close"])
@@ -310,7 +342,11 @@ class LiveTradingEngine:
             self._execute_portfolio_rebalance(decision)
 
     def on_account(self, account_id: str, snapshot: AccountSnapshot) -> None:
-        """同步账户资金快照，并在首次可用时初始化 shadow_cash。"""
+        """写入账户资金快照，并驱动一轮基于真实资金的状态对齐。
+
+        资金快照到达后，会立刻同步 active codes、尝试 reconcile expected/shadow 视图，
+        这样后续 planner 和 executor 都能基于最新账户现金工作。
+        """
         with self._lock:
             config = self._callback_config()
             if config is None or account_id not in config.trade_account_map():
@@ -334,7 +370,11 @@ class LiveTradingEngine:
             )
 
     def on_positions(self, account_id: str, positions: dict[str, PositionSnapshot]) -> None:
-        """同步实际持仓，并补齐股票池对应的 shadow_positions。"""
+        """写入真实持仓快照，并把账户状态补齐到当前股票池范围。
+
+        这是 planner 能否正确卖出旧仓位的关键入口：真实持仓一旦同步，就会回写 shadow/expected 基线，
+        防止系统在刚启动时误以为自己是空仓。
+        """
         with self._lock:
             config = self._callback_config()
             if config is None or account_id not in config.trade_account_map():
@@ -356,11 +396,15 @@ class LiveTradingEngine:
             self._logger.info("POSITIONS account_id=%s %s", account_id, " | ".join(summary))
 
     def on_broker_message(self, level: int, message: str) -> None:
-        """统一转发 broker 层日志到引擎 logger。"""
+        """统一转发 broker 层日志，保证外部连接层和引擎层共享同一套日志出口。"""
         self._logger.log(level, message)
 
     def on_order_update(self, account_id: str, update: OrderUpdate) -> None:
-        """接收订单状态更新，并推进 pending / expected 状态。"""
+        """消费订单状态推送，并推进 pending / expected 状态机。
+
+        订单状态更新主要负责确认“订单是否结束”以及“已成交多少”，一旦进入最终状态，
+        会把提交时的乐观 expected 预估修正成更接近真实结果的账户视图。
+        """
         with self._lock:
             config = self._callback_config()
             if config is None:
@@ -382,7 +426,11 @@ class LiveTradingEngine:
         )
 
     def on_fill(self, account_id: str, fill: FillEvent) -> None:
-        """接收成交回报，并保留后续扩展 expected / reconcile 的统一入口。"""
+        """消费成交回报，并补齐最终 expected 现金所需的真实成交额信息。
+
+        有些 broker 的成交推送会晚于订单最终状态，所以这里不能只做日志；
+        它还承担“迟到成交回报二次修正 expected 状态”的职责。
+        """
         with self._lock:
             config = self._callback_config()
             if config is None:
@@ -425,7 +473,11 @@ class LiveTradingEngine:
         return tuple(unavailable)
 
     def _apply_trade_accounts_config(self, config: LiveTradingConfig) -> None:
-        """按配置增删或重连 trade account client。"""
+        """根据最新配置增删或重连交易账户客户端。
+
+        这里会先关闭已经失效或连接参数变化的 client，再为目标账户创建新 client。
+        这样可以保证账户侧连接签名始终和当前配置一致，不会混用旧连接。
+        """
         current_accounts = self._current_config.trade_account_map() if self._current_config is not None else {}
         target_accounts = config.trade_account_map()
 
@@ -453,7 +505,11 @@ class LiveTradingEngine:
                 client.connect()
 
     def _sync_shadow_state(self, config: LiveTradingConfig) -> None:
-        """裁剪过期代码/账户，并补齐 shadow / expected 的初值。"""
+        """在配置切换后裁剪过期状态，并为当前配置补齐 shadow/expected 基线。
+
+        这个步骤是配置层和运行时状态层之间的“收口点”：
+        既要清掉已经不再跟踪的代码/账户，也要确保新配置下每个账户都具备可规划的初始状态。
+        """
         active_codes = set(config.all_codes())
         active_account_ids = set(config.trade_account_map())
         self._latest_quotes = {code: quote for code, quote in self._latest_quotes.items() if code in active_codes}
@@ -471,7 +527,11 @@ class LiveTradingEngine:
         return None
 
     def _execute_portfolio_rebalance(self, decision: PortfolioRebalanceDecision) -> None:
-        """收集参考价，按账户生成调仓计划并选择对应执行器。"""
+        """把一次组合级调仓决策拆成多个账户级计划并逐个执行。
+
+        方法内部会先汇总当前可用参考价，再让 planner 基于账户视图生成买卖单，
+        最后按账户自己的 execution.executor 选择 mock、模拟盘或实盘执行器。
+        """
         with self._lock:
             config = self._current_config
             if config is None:
@@ -515,9 +575,13 @@ class LiveTradingEngine:
                     )
 
     def _execute_portfolio_rebalance_dry_run(self, decision: PortfolioRebalanceDecision) -> None:
-        """兼容旧调用名，内部已改成按 execution.executor 选择执行器。"""
+        """兼容旧调用名，内部实际仍走统一的账户级 rebalance 执行入口。"""
         self._execute_portfolio_rebalance(decision)
 
     def _callback_config(self) -> LiveTradingConfig | None:
-        """配置应用过程中，回调优先使用 inflight 配置，避免 connect() 期间的首批事件被旧配置丢掉。"""
+        """返回当前回调应该使用的配置快照。
+
+        apply_config 过程中 broker/client 可能会立即推送第一批事件，
+        这里优先返回 inflight 配置，避免这些早到事件被旧配置错误过滤掉。
+        """
         return self._config_inflight or self._current_config

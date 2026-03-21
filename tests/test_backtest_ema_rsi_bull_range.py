@@ -27,6 +27,7 @@ from backtest.backtest_ema_rsi_bull_range import (
 
 class ParseArgsTests(unittest.TestCase):
     def test_defaults_match_optimized_profile(self) -> None:
+        # 验证默认参数与优化后的参数模板保持一致。
         args = parse_args(["--data-dir", "kline_minute/TEST.00001", "--market", "HK"])
 
         self.assertEqual(args.fast_span, DEFAULT_FAST_SPAN)
@@ -41,12 +42,14 @@ class ParseArgsTests(unittest.TestCase):
         self.assertEqual(args.market, "HK")
 
     def test_market_is_required(self) -> None:
+        # 验证 market 参数是必填项。
         with self.assertRaises(SystemExit):
             parse_args(["--data-dir", "kline_minute/TEST.00001"])
 
 
 class RunBacktestTests(unittest.TestCase):
     def test_run_backtest_rejects_invalid_thresholds(self) -> None:
+        # 验证回测会拒绝非法阈值配置。
         history = pd.DataFrame(
             {
                 "time_key": pd.to_datetime(["2025-03-07 09:30:00", "2025-03-07 09:31:00"]),

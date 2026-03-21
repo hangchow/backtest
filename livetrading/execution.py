@@ -28,7 +28,11 @@ class AccountRebalancePlan:
 
 
 class RebalancePlanner:
-    """把策略信号转换成账户级订单计划。"""
+    """把策略决策翻译成某个账户真正要执行的买卖计划。
+
+    它只负责“算什么单”，不负责“怎么下单”。
+    这样策略规划和 broker 提交可以完全解耦，测试时也更容易单独验证两边逻辑。
+    """
 
     def __init__(self, logger: logging.Logger, state_store: AccountStateStore) -> None:
         self._logger = logger
@@ -43,7 +47,11 @@ class RebalancePlanner:
         pool_codes: tuple[str, ...],
         prices: dict[str, float],
     ) -> AccountRebalancePlan | None:
-        """按账户的执行模式选择规划视图，并生成买卖 intent。"""
+        """按账户当前视图生成一轮完整的卖单/买单计划。
+
+        live executor 会优先基于 expected 视图规划，避免上一轮挂单还没回到真实账户时重复下单；
+        mock executor 则使用 shadow 视图，让本地 dry-run 的持仓推进保持自洽。
+        """
         # active_codes 不能只看股票池本身，还要把账户里已有的持仓代码也带上。
         # 否则目标权重里虽然不再持有，但旧仓位不会被规划成卖单。
         active_codes = tuple(
@@ -136,6 +144,11 @@ class MockExecutor(OrderExecutor):
     """本地 mock 执行器：不提单，只维护影子状态并打印日志。"""
 
     def execute_plan(self, *, plan: AccountRebalancePlan, state: AccountRuntimeState) -> None:
+        """执行一轮 mock 调仓，并直接改写 shadow 现金与持仓。
+
+        这里不会调用任何 broker，只会把 planner 算出的 intent 逐条落到本地影子状态，
+        用于 dry-run、联调和策略行为验证。
+        """
         account = plan.account
         decision = plan.decision
         self._logger.info(
@@ -181,7 +194,7 @@ class MockExecutor(OrderExecutor):
         plan: AccountRebalancePlan,
         state: AccountRuntimeState,
     ) -> None:
-        """mock 卖单直接改影子现金和影子持仓。"""
+        """执行一笔 mock 卖单，并把卖出现金和手续费立刻反映到 shadow 状态。"""
         account = plan.account
         current_qty = int(state.shadow_positions.get(intent.code, 0))
         fee_total, fee_breakdown = compute_order_fees(
@@ -218,7 +231,11 @@ class MockExecutor(OrderExecutor):
         plan: AccountRebalancePlan,
         state: AccountRuntimeState,
     ) -> None:
-        """mock 买单按可用现金和手续费反推出实际可买数量。"""
+        """执行一笔 mock 买单，并按现金约束反推实际可买数量。
+
+        这里和 live submit 路径保持同样的“先算手续费、再算可买股数”口径，
+        避免 mock 回测出来能买、真实下单时却因为手续费不足而失败。
+        """
         account = plan.account
         current_qty = int(state.shadow_positions.get(intent.code, 0))
         buy_qty, fee_total, fee_breakdown = compute_affordable_qty_with_fee(
@@ -272,7 +289,10 @@ class MockExecutor(OrderExecutor):
 
 
 class _BaseFutuSubmitExecutor(OrderExecutor):
-    """Futu 提单执行器公共逻辑：校验、提交、记 pending、打印日志。"""
+    """Futu 提单执行器公共逻辑：校验、提单、记 pending、打印日志。
+
+    模拟盘和实盘共用这一层逻辑，差别只在 trade_env 和是否允许真实交易。
+    """
 
     executor_name: str = ""
     required_trade_env: str = ""
@@ -287,6 +307,11 @@ class _BaseFutuSubmitExecutor(OrderExecutor):
         self._client = client
 
     def execute_plan(self, *, plan: AccountRebalancePlan, state: AccountRuntimeState) -> None:
+        """按“先卖后买”的顺序提交一轮账户级计划。
+
+        先卖后买不是为了日志好看，而是为了让 expected_cash 更接近真实现金释放顺序，
+        这样即使新账户快照还没回来，后续买单的缩量判断也更贴近 broker 真实表现。
+        """
         account = plan.account
         self._validate_account_config(account)
         skip_reason = self._runtime_skip_reason(state)
@@ -371,7 +396,11 @@ class _BaseFutuSubmitExecutor(OrderExecutor):
         state: AccountRuntimeState,
         intent: OrderIntent,
     ) -> OrderIntent | None:
-        """把规划层 intent 收口成最终提交给 broker 的订单。"""
+        """把规划层 intent 修正成最终可提交给 broker 的订单。
+
+        目前主要处理 BUY 单的现金约束：如果现金不足，就按手续费后的可承受数量缩量；
+        如果连 1 股都买不起，则直接返回 `None` 跳过该单。
+        """
         if intent.side != "BUY":
             return intent
 
@@ -422,6 +451,11 @@ class _BaseFutuSubmitExecutor(OrderExecutor):
         )
 
     def _submit_intent(self, *, account: TradeAccountConfig, intent: OrderIntent) -> None:
+        """真正向 broker 提交订单，并在受理成功后登记 pending 状态。
+
+        一旦 broker 接受订单，就会立刻推进 expected 视图；
+        后续再由订单状态回报和成交回报把这份乐观预估慢慢纠偏到最终结果。
+        """
         self._logger.info(
             "ORDER_SUBMITTING account_id=%s executor=%s action=%s code=%s qty=%s price=%.4f signal_time=%s session=%s fill_outside_rth=%s",
             account.account_id,
@@ -466,7 +500,11 @@ def create_order_executor(
     logger: logging.Logger,
     state_store: AccountStateStore,
 ) -> OrderExecutor:
-    """按账户 execution.executor 返回对应执行器实例。"""
+    """根据账户 execution 配置返回对应执行器实现。
+
+    这个工厂方法把“账户配置”和“执行器实例”绑定起来，
+    让 engine 不需要知道 mock / simulate / real 三种模式的具体差异。
+    """
     if account.execution.executor == "mock":
         return MockExecutor(logger, state_store)
     if account.execution.executor == "futu_simulate":
@@ -477,7 +515,7 @@ def create_order_executor(
 
 
 def _order_limit_violation(account: TradeAccountConfig, intent: OrderIntent) -> str | None:
-    """统一检查执行层的订单数量和名义金额上限。"""
+    """统一检查执行层的订单数量上限和名义金额上限。"""
     max_order_qty = account.execution.max_order_qty
     if max_order_qty is not None and intent.qty > max_order_qty:
         return "max_order_qty_exceeded"
@@ -503,7 +541,7 @@ def _log_submission(
     intent: OrderIntent,
     submission: OrderSubmission,
 ) -> None:
-    """统一输出提交成功和拒单日志。"""
+    """统一输出提单成功和拒单日志，保证不同执行器的日志格式一致。"""
     if submission.accepted:
         logger.info(
             "ORDER_SUBMITTED account_id=%s executor=%s action=%s code=%s qty=%s price=%.4f broker_order_id=%s message=%s",

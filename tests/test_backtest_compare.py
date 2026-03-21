@@ -29,6 +29,7 @@ from backtest.backtest_compare import (
 
 class MarkdownTableTests(unittest.TestCase):
     def test_markdown_table_formats_floats(self) -> None:
+        # 验证 Markdown 表格会按预期格式化浮点数。
         frame = pd.DataFrame([{"code": "US.TEST", "return_pct": 12.3456}])
 
         table = markdown_table(frame, ["code", "return_pct"])
@@ -37,6 +38,7 @@ class MarkdownTableTests(unittest.TestCase):
         self.assertIn("| US.TEST |      12.35 |", table)
 
     def test_markdown_table_aligns_numeric_columns_right(self) -> None:
+        # 验证 Markdown 表格中的数值列会右对齐。
         frame = pd.DataFrame(
             [
                 {"strategy": "EMA cross", "final_value": 101000.0, "trade_count": 10},
@@ -53,6 +55,7 @@ class MarkdownTableTests(unittest.TestCase):
 
 class BuildReportTests(unittest.TestCase):
     def test_build_report_sorts_single_by_code_and_return_pct_and_pool_by_return_pct(self) -> None:
+        # 验证报告会在 single 结果中按代码和收益率排序，并在 pool 结果中按收益率排序。
         dataset_summary = pd.DataFrame(
             [
                 {
@@ -132,6 +135,7 @@ class BuildReportTests(unittest.TestCase):
         self.assertLess(report.find("Momentum monthly"), report.find("Dual momentum"))
 
     def test_build_report_uses_pool_dataset_summary_when_single_summary_is_empty(self) -> None:
+        # 验证 single 汇总为空时会回退使用 pool 数据集汇总。
         pool_data_summary = pd.DataFrame(
             [
                 {
@@ -178,6 +182,7 @@ class BuildReportTests(unittest.TestCase):
         self.assertIn("## 股票池策略对比", report)
 
     def test_build_report_defaults_bare_single_dataset_to_kline_minute(self) -> None:
+        # 验证裸 single 数据集会默认识别为 kline_minute。
         dataset_summary = pd.DataFrame(
             [
                 {"code": "US.MSFT", "rows": 10, "days": 1, "start": "2025-01-01 09:30:00", "end": "2025-01-01 16:00:00"}
@@ -204,24 +209,29 @@ class BuildReportTests(unittest.TestCase):
 
 class RequestedStrategiesTests(unittest.TestCase):
     def test_defaults_to_minute_strategies_for_single_symbol(self) -> None:
+        # 验证单标的场景会默认选择分钟级策略。
         self.assertEqual(resolve_requested_strategies(None, 1), list(MINUTE_STRATEGY_KEYS))
 
     def test_defaults_to_minute_strategies_for_multiple_symbols(self) -> None:
+        # 验证多标的场景会默认选择分钟级策略。
         self.assertEqual(resolve_requested_strategies(None, 2), list(MINUTE_STRATEGY_KEYS))
 
     def test_deduplicates_explicit_strategy_selection(self) -> None:
+        # 验证显式传入的策略列表会被去重。
         self.assertEqual(
             resolve_requested_strategies(["ema_cross", "ema_cross", "dual_momentum"], 3),
             ["ema_cross", "dual_momentum"],
         )
 
     def test_pool_scope_defaults_to_native_pool_strategies_for_single_symbol(self) -> None:
+        # 验证单标的 pool 范围会默认选择原生股票池策略。
         self.assertEqual(
             resolve_requested_strategies(None, 1, scope="pool"),
             ["dual_momentum", "momentum_monthly", "dual_momentum_ema_rsi_hybrid"],
         )
 
     def test_pool_scope_defaults_to_all_pool_strategies_for_multiple_symbols(self) -> None:
+        # 验证多标的 pool 范围会默认选择全部股票池策略。
         self.assertEqual(
             resolve_requested_strategies(None, 2, scope="pool"),
             [
@@ -238,6 +248,7 @@ class RequestedStrategiesTests(unittest.TestCase):
 
 class ParseArgsTests(unittest.TestCase):
     def test_eval_window_and_scope_default_to_repo_baseline_range(self) -> None:
+        # 验证评估窗口和 scope 会默认使用仓库基线区间。
         with mock.patch.object(sys, "argv", ["backtest_compare.py", "--market", "US", "--code", "US.MSFT"]):
             args = parse_args()
 
@@ -250,6 +261,7 @@ class ParseArgsTests(unittest.TestCase):
 
 class ScopeResolutionTests(unittest.TestCase):
     def test_explicit_scope_modes(self) -> None:
+        # 验证显式传入的 scope 模式会被正确解析。
         self.assertEqual(resolve_report_scope("single", 3), (True, False))
         self.assertEqual(resolve_report_scope("pool", 1), (False, True))
         self.assertEqual(resolve_report_scope("single", 1), (True, False))
@@ -257,6 +269,7 @@ class ScopeResolutionTests(unittest.TestCase):
 
 class RunAllTests(unittest.TestCase):
     def test_run_all_rejects_pool_only_strategy_in_single_scope(self) -> None:
+        # 验证 single 范围下会拒绝仅支持 pool 的策略。
         with self.assertRaisesRegex(ValueError, "single scope does not support strategies"):
             run_all(
                 codes=["US.AAPL", "US.MSFT"],
@@ -276,6 +289,7 @@ class RunAllTests(unittest.TestCase):
         rsi_run_backtest: mock.Mock,
         load_history: mock.Mock,
     ) -> None:
+        # 验证 single 范围执行时会补充数据集元信息和持续时间。
         load_history.return_value = pd.DataFrame(
             {
                 "time_key": pd.to_datetime(["2025-01-01 09:30:00", "2025-01-01 16:00:00"]),
@@ -321,6 +335,7 @@ class RunAllTests(unittest.TestCase):
         run_single_symbol_strategies: mock.Mock,
         run_stock_pool_strategies: mock.Mock,
     ) -> None:
+        # 验证 single 范围执行时会跳过 pool 结果。
         run_single_symbol_strategies.return_value = (pd.DataFrame([{"code": "US.AAPL"}]), pd.DataFrame([{"code": "US.AAPL"}]))
         eval_start = pd.Timestamp("2025-03-07")
         eval_end = pd.Timestamp("2026-03-06")
@@ -349,6 +364,7 @@ class RunAllTests(unittest.TestCase):
         run_single_symbol_strategies: mock.Mock,
         run_stock_pool_strategies: mock.Mock,
     ) -> None:
+        # 验证 pool 范围执行时会跳过 single 结果。
         run_stock_pool_strategies.return_value = (
             pd.DataFrame([{"code": "US.AAPL"}]),
             pd.DataFrame([{"pool": "US pool (2)"}]),
@@ -394,6 +410,7 @@ class RunAllTests(unittest.TestCase):
         load_day_end_minute_indicators: mock.Mock,
         hybrid_run: mock.Mock,
     ) -> None:
+        # 验证 run_all 会把分钟级策略纳入股票池结果。
         minute_histories = {
             "US.AAPL": pd.DataFrame(
                 {
@@ -518,6 +535,7 @@ class RunAllTests(unittest.TestCase):
         load_day_end_minute_indicators: mock.Mock,
         hybrid_run: mock.Mock,
     ) -> None:
+        # 验证 run_all 支持执行股票池策略。
         prices = pd.DataFrame(
             {
                 "US.AAPL": [100.0, 101.0],
@@ -608,6 +626,7 @@ class RunAllTests(unittest.TestCase):
         load_day_end_minute_indicators: mock.Mock,
         hybrid_run: mock.Mock,
     ) -> None:
+        # 验证 hybrid 模式只会使用 close-only 的日线加载器。
         load_histories.return_value = {
             "US.AAPL": pd.DataFrame(
                 {
@@ -659,6 +678,7 @@ class RunAllTests(unittest.TestCase):
         self.assertEqual(list(pool_results["strategy"]), ["Dual momentum + EMA + RSI hybrid"])
 
     def test_run_all_rejects_single_code_pool_minute_strategy(self) -> None:
+        # 验证单代码场景会拒绝 pool 分钟级策略。
         with self.assertRaisesRegex(ValueError, "require at least 2 codes"):
             run_all(
                 codes=["US.AAPL"],
@@ -672,6 +692,7 @@ class RunAllTests(unittest.TestCase):
 
 class HybridBacktestTests(unittest.TestCase):
     def test_liquidation_uses_last_bar_within_eval_window(self) -> None:
+        # 验证清仓价格会使用评估窗口内最后一根 bar。
         closes = pd.DataFrame(
             {"US.AAPL": [100.0, 110.0, 120.0, 1000.0]},
             index=[

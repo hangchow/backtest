@@ -27,6 +27,7 @@ TEST_CODE = "TEST.00001"
 
 class ComputeRsiTests(unittest.TestCase):
     def test_monotonic_rise_converges_to_100(self) -> None:
+        # 验证单调上涨序列会收敛到 100。
         prices = pd.Series([100, 101, 102, 103, 104, 105], dtype=float)
 
         rsi = compute_rsi(prices, period=3)
@@ -35,6 +36,7 @@ class ComputeRsiTests(unittest.TestCase):
         self.assertTrue((rsi.iloc[1:] == 100.0).all())
 
     def test_monotonic_drop_converges_to_0(self) -> None:
+        # 验证单调下跌序列会收敛到 0。
         prices = pd.Series([105, 104, 103, 102, 101, 100], dtype=float)
 
         rsi = compute_rsi(prices, period=3)
@@ -43,6 +45,7 @@ class ComputeRsiTests(unittest.TestCase):
         self.assertTrue((rsi.iloc[1:] == 0.0).all())
 
     def test_flat_series_stays_neutral(self) -> None:
+        # 验证横盘序列会保持中性结果。
         prices = pd.Series([100, 100, 100, 100], dtype=float)
 
         rsi = compute_rsi(prices, period=3)
@@ -65,6 +68,7 @@ class SaveDailyFilesTests(unittest.TestCase):
         )
 
     def test_save_daily_files_removes_stale_csvs_by_default(self) -> None:
+        # 验证保存日线文件时默认会清理过期 CSV。
         history = self.build_history()
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -85,6 +89,7 @@ class SaveDailyFilesTests(unittest.TestCase):
             self.assertFalse(stale_path.exists())
 
     def test_remove_stale_daily_files_skips_expected_names(self) -> None:
+        # 验证清理过期日线文件时会跳过预期保留的文件名。
         with tempfile.TemporaryDirectory() as tmp:
             output_root = Path(tmp)
             keep_path = output_root / f"{TEST_CODE}_2026-03-02.csv"
@@ -99,6 +104,7 @@ class SaveDailyFilesTests(unittest.TestCase):
             self.assertFalse(stale_path.exists())
 
     def test_save_daily_files_prefers_explicit_code_over_history(self) -> None:
+        # 验证保存日线文件时会优先使用显式传入的代码。
         history = self.build_history(code="OLD.00001")
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -134,6 +140,7 @@ class SaveWeeklyFilesTests(unittest.TestCase):
         return pd.DataFrame(base)
 
     def test_polygon_weekly_save_merges_existing_boundary_rows(self) -> None:
+        # 验证 Polygon 按周保存时会合并边界周已有行。
         history = self.build_weekly_rows(["2026-03-04", "2026-03-05"])
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -159,6 +166,7 @@ class SaveWeeklyFilesTests(unittest.TestCase):
         self.assertFalse(stale_path.exists())
 
     def test_futu_weekly_save_merges_existing_boundary_rows(self) -> None:
+        # 验证 Futu 按周保存时会合并边界周已有行。
         history = self.build_weekly_rows(["2026-03-04", "2026-03-05"])
         history["trade_date"] = pd.to_datetime(history["time_key"]).dt.normalize()
         history["week_start"] = history["trade_date"] - pd.to_timedelta(history["trade_date"].dt.weekday, unit="D")
@@ -183,6 +191,7 @@ class SaveWeeklyFilesTests(unittest.TestCase):
 
 class PrepareFutuHomeTests(unittest.TestCase):
     def test_prepare_futu_home_uses_workspace_runtime_home(self) -> None:
+        # 验证准备 Futu HOME 时会使用工作区运行时目录。
         with tempfile.TemporaryDirectory() as tmp:
             runtime_home = Path(tmp) / "runtime"
             original_home = os.environ.get("HOME")

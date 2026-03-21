@@ -17,6 +17,7 @@ from tests.fetch_polygon_1m import convert_to_local_layout, iter_month_ranges, w
 
 class IterMonthRangesTests(unittest.TestCase):
     def test_iter_month_ranges_clips_partial_months(self) -> None:
+        # 验证月份区间迭代会正确截断首尾不完整月份。
         ranges = iter_month_ranges(date(2025, 3, 7), date(2025, 5, 2))
 
         self.assertEqual(
@@ -31,6 +32,7 @@ class IterMonthRangesTests(unittest.TestCase):
 
 class WithApiKeyTests(unittest.TestCase):
     def test_with_api_key_preserves_existing_query(self) -> None:
+        # 验证追加 API key 时会保留已有查询参数。
         url = with_api_key("https://api.polygon.io/v2/aggs?ticker=MSFT&sort=asc", "secret")
 
         self.assertIn("ticker=MSFT", url)
@@ -40,6 +42,7 @@ class WithApiKeyTests(unittest.TestCase):
 
 class ConvertToLocalLayoutTests(unittest.TestCase):
     def test_convert_to_local_layout_filters_extended_hours_and_formats_et(self) -> None:
+        # 验证转换到本地目录布局时会过滤扩展时段并按美东时间格式化。
         raw = pd.DataFrame(
             {
                 "t": [

@@ -33,6 +33,7 @@ from strategy.dual_momentum import DualMomentumParams, build_dual_momentum_signa
 
 class ResolveCodesTests(unittest.TestCase):
     def test_resolve_codes_raises_when_missing_directory(self) -> None:
+        # 验证缺少目录时解析代码会抛出异常。
         with tempfile.TemporaryDirectory() as tmp:
             data_root = Path(tmp)
             (data_root / "US.MSFT").mkdir()
@@ -43,37 +44,45 @@ class ResolveCodesTests(unittest.TestCase):
 
 class NormalizeMaxOpenPositionsTests(unittest.TestCase):
     def test_default_max_open_positions_is_unlimited_for_minute_stock_pool_scripts(self) -> None:
+        # 验证分钟级股票池脚本默认允许无限开仓数。
         self.assertEqual(RSI_REVERSION_DEFAULT_MAX_OPEN_POSITIONS, -1)
         self.assertEqual(EMA_CROSS_DEFAULT_MAX_OPEN_POSITIONS, -1)
         self.assertEqual(EMA_RSI_DEFAULT_MAX_OPEN_POSITIONS, -1)
 
     def test_normalize_max_open_positions_supports_unlimited(self) -> None:
+        # 验证最大开仓数标准化支持 unlimited。
         self.assertEqual(normalize_max_open_positions(-1, 4), 4)
 
     def test_normalize_max_open_positions_rejects_zero(self) -> None:
+        # 验证最大开仓数标准化会拒绝 0。
         with self.assertRaises(ValueError):
             normalize_max_open_positions(0, 4)
 
 
 class MarketValidationTests(unittest.TestCase):
     def test_extract_market_from_symbol_returns_none_for_unknown_prefix(self) -> None:
+        # 验证未知代码前缀会返回空市场信息。
         self.assertIsNone(extract_market_from_symbol("TEST.00001"))
 
     def test_validate_market_for_symbols_rejects_mixed_code_markets(self) -> None:
+        # 验证混合市场代码会被拒绝。
         with self.assertRaises(ValueError):
             validate_market_for_symbols(["HK.00700", "US.MSFT"], "US", label="--codes")
 
     def test_validate_market_for_symbols_rejects_mismatched_market_argument(self) -> None:
+        # 验证 market 参数与代码市场不匹配时会被拒绝。
         with self.assertRaises(ValueError):
             validate_market_for_symbols(["US.MSFT", "US.NVDA"], "HK", label="--codes")
 
     def test_validate_market_for_symbol_rejects_mismatched_data_dir_market(self) -> None:
+        # 验证数据目录市场与代码市场不匹配时会被拒绝。
         with self.assertRaises(ValueError):
             validate_market_for_symbol("US.MSFT", "HK", label="--data-dir")
 
 
 class RelativeVolumeTests(unittest.TestCase):
     def test_compute_relative_volume_uses_shifted_rolling_average(self) -> None:
+        # 验证相对成交量计算会使用错位滚动均值。
         volume = pd.Series([100.0, 200.0, 150.0])
 
         result = compute_relative_volume(volume, 2)
@@ -81,11 +90,13 @@ class RelativeVolumeTests(unittest.TestCase):
         self.assertEqual(list(result.round(2)), [1.0, 2.0, 1.0])
 
     def test_compute_volume_scale_clamps_relative_volume(self) -> None:
+        # 验证成交量缩放会对相对成交量进行截断。
         self.assertEqual(compute_volume_scale(0.2, 0.8), 0.5)
         self.assertEqual(compute_volume_scale(0.8, 0.8), 1.0)
         self.assertEqual(compute_volume_scale(2.0, 0.8), 1.25)
 
     def test_compute_relative_volume_preserves_missing_rows(self) -> None:
+        # 验证相对成交量计算会保留缺失行。
         volume = pd.Series([100.0, None, 150.0])
 
         result = compute_relative_volume(volume, 2)
@@ -97,11 +108,13 @@ class RelativeVolumeTests(unittest.TestCase):
 
 class EvalWindowTests(unittest.TestCase):
     def test_parse_eval_end_makes_date_only_inputs_inclusive(self) -> None:
+        # 验证纯日期的评估结束时间会按包含当天处理。
         result = parse_eval_end("2025-01-03")
 
         self.assertEqual(result, pd.Timestamp("2025-01-03 23:59:59.999999"))
 
     def test_resolve_eval_window_preserves_original_value_types(self) -> None:
+        # 验证评估窗口解析会保留原始值类型。
         values = pd.to_datetime(["2025-01-02 09:30:00", "2025-01-02 09:31:00", "2025-01-02 09:32:00"])
 
         mask, warmup_start, start_time, end_time = resolve_eval_window(
@@ -116,6 +129,7 @@ class EvalWindowTests(unittest.TestCase):
         self.assertEqual(end_time, pd.Timestamp("2025-01-02 09:32:00"))
 
     def test_resolve_eval_window_accepts_date_index(self) -> None:
+        # 验证评估窗口解析支持日期索引。
         values = pd.to_datetime(["2025-01-02", "2025-01-03", "2025-01-06"]).date
 
         mask, warmup_start, start_time, end_time = resolve_eval_window(
@@ -150,6 +164,7 @@ class PortfolioBacktestTests(unittest.TestCase):
         )
 
     def test_portfolio_backtest_generates_cross_code_trades(self) -> None:
+        # 验证组合回测会生成跨标的交易记录。
         histories = {
             "US.A": self.build_history([100, 90, 80, 90, 100, 110]),
             "US.B": self.build_history([200, 180, 160, 180, 200, 220]),
@@ -175,6 +190,7 @@ class PortfolioBacktestTests(unittest.TestCase):
         self.assertGreater(summary["trade_count"], 0)
 
     def test_portfolio_backtest_accepts_unlimited_positions(self) -> None:
+        # 验证组合回测支持无限持仓。
         histories = {
             "US.A": self.build_history([100, 90, 80, 90, 100, 110]),
             "US.B": self.build_history([200, 180, 160, 180, 200, 220]),
@@ -197,6 +213,7 @@ class PortfolioBacktestTests(unittest.TestCase):
         self.assertEqual(summary["max_open_positions"], 2)
 
     def test_portfolio_backtest_uses_pre_eval_bars_for_warmup_only(self) -> None:
+        # 验证组合回测只会把评估前 bar 用于预热。
         histories = {
             "US.A": self.build_history([100, 90, 80, 90, 100, 90, 80, 90, 100]),
         }
@@ -230,6 +247,7 @@ class PortfolioBacktestTests(unittest.TestCase):
 
 class DualMomentumBacktestTests(unittest.TestCase):
     def test_dual_momentum_params_from_mapping_coerces_numeric_values(self) -> None:
+        # 验证双动量参数从映射构建时会自动转换数值类型。
         params = DualMomentumParams.from_mapping(
             {
                 "lookback_days": "2",
@@ -246,6 +264,7 @@ class DualMomentumBacktestTests(unittest.TestCase):
         self.assertEqual(params.long_lookback_days, 180)
 
     def test_build_dual_momentum_signal_accepts_params_object(self) -> None:
+        # 验证双动量信号构建支持直接传入参数对象。
         prices = pd.DataFrame(
             {
                 "US.A": [100.0, 105.0, 110.0],
@@ -283,6 +302,7 @@ class DualMomentumBacktestTests(unittest.TestCase):
         self.assertEqual(signal.target_codes, ("US.A",))
 
     def test_build_dual_momentum_signal_waits_until_all_windows_are_ready(self) -> None:
+        # 验证双动量信号会等到所有窗口就绪后再触发。
         prices = pd.DataFrame(
             {
                 "US.A": [100.0, 101.0, 102.0],
@@ -318,6 +338,7 @@ class DualMomentumBacktestTests(unittest.TestCase):
         self.assertIsNone(signal)
 
     def test_load_daily_data_keeps_missing_sessions_unfilled(self) -> None:
+        # 验证加载日线数据时不会填补缺失交易日。
         with tempfile.TemporaryDirectory() as tmp:
             data_root = Path(tmp)
             (data_root / "US.A").mkdir()
@@ -344,6 +365,7 @@ class DualMomentumBacktestTests(unittest.TestCase):
         self.assertTrue(pd.isna(volumes.loc[pd.Timestamp("2025-01-03").date(), "US.B"]))
 
     def test_load_daily_data_reads_and_deduplicates_weekly_daily_files(self) -> None:
+        # 验证加载日线数据时会读取并去重按周拆分的文件。
         with tempfile.TemporaryDirectory() as tmp:
             data_root = Path(tmp)
             (data_root / "US.A").mkdir()
@@ -370,6 +392,7 @@ class DualMomentumBacktestTests(unittest.TestCase):
         self.assertEqual(float(volumes.loc[pd.Timestamp("2025-01-07").date(), "US.A"]), 1200.0)
 
     def test_dual_momentum_prefers_stronger_positive_trend(self) -> None:
+        # 验证双动量策略会优先选择更强的正向趋势。
         prices = pd.DataFrame(
             {
                 "US.A": [100, 101, 102, 103, 104],
@@ -408,6 +431,7 @@ class DualMomentumBacktestTests(unittest.TestCase):
         self.assertEqual(trades.iloc[0]["code"], "US.B")
 
     def test_dual_momentum_rebalances_existing_positions_for_top_n_baskets(self) -> None:
+        # 验证双动量策略会对 top N 篮子中的已有仓位执行再平衡。
         dates = pd.to_datetime(["2025-01-02", "2025-01-03", "2025-01-06", "2025-01-07"]).date
         prices = pd.DataFrame(
             {
@@ -451,11 +475,13 @@ class DualMomentumBacktestTests(unittest.TestCase):
         self.assertIn("US.B", set(rebalance_day[rebalance_day["action"] == "BUY"]["code"]))
 
     def test_dual_momentum_volume_boost_does_not_penalize_high_thresholds(self) -> None:
+        # 验证成交量增强不会错误惩罚高阈值场景。
         boost = compute_volume_boost(pd.Series({"US.A": 1.0, "US.B": 1.4}), 2.0)
 
         self.assertEqual(boost.to_dict(), {"US.A": 1.0, "US.B": 1.0})
 
     def test_dual_momentum_uses_pre_eval_days_for_warmup_only(self) -> None:
+        # 验证双动量策略只把评估前交易日用于预热。
         prices = pd.DataFrame(
             {
                 "US.A": [100, 101, 102, 103, 104],
@@ -498,6 +524,7 @@ class DualMomentumBacktestTests(unittest.TestCase):
         self.assertTrue((trades["time_key"] >= pd.Timestamp("2025-01-07").date()).all())
 
     def test_dual_momentum_respects_eval_end(self) -> None:
+        # 验证双动量策略会遵守评估结束时间。
         prices = pd.DataFrame(
             {
                 "US.A": [100, 101, 102, 103, 104],
