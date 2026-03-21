@@ -10,12 +10,24 @@ SUPPORTED_REALTIME_QUOTE_BROKER_TYPES = frozenset({"futu", "mock"})
 SUPPORTED_HISTORY_BROKER_TYPES = frozenset({"futu", "polygon", "local"})
 SUPPORTED_TRADE_BROKER_TYPES = frozenset({"futu", "mock"})
 SUPPORTED_EXECUTOR_TYPES = frozenset({"mock", "futu_simulate", "futu_real"})
+QUOTE_CONFIG_ALLOWED_TOP_LEVEL_KEYS = frozenset({"realtime_broker", "quote_broker", "broker", "history_broker", "stock_pool", "runtime"})
+HISTORY_CONFIG_ALLOWED_TOP_LEVEL_KEYS = frozenset(
+    {"history_broker", "broker", "type", "host", "port", "market", "data_root", "history_host", "history_port", "kline_day_root"}
+)
+POOL_CONFIG_ALLOWED_TOP_LEVEL_KEYS = frozenset({"stock_pool", "pool", "codes", "strategy"})
+TRADE_CONFIG_ALLOWED_TOP_LEVEL_KEYS = frozenset({"trade_accounts", "accounts"})
 
 
 def _require_mapping(value: Any, label: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError(f"{label} must be a JSON object")
     return value
+
+
+def _validate_allowed_top_level_keys(payload: Mapping[str, Any], *, label: str, allowed_keys: frozenset[str]) -> None:
+    unexpected = sorted(set(payload) - set(allowed_keys))
+    if unexpected:
+        raise ValueError(f"{label} contains unsupported top-level keys: {', '.join(unexpected)}")
 
 
 def _coerce_bool(value: Any, *, default: bool, label: str) -> bool:
@@ -531,6 +543,13 @@ def load_pool_config_from_text(text: str) -> StockPoolConfig:
     """把股票池配置 JSON 文本解析成 StockPoolConfig。"""
     raw = json.loads(text)
     payload = _require_mapping(raw, "pool config")
+    _validate_allowed_top_level_keys(payload, label="pool config", allowed_keys=POOL_CONFIG_ALLOWED_TOP_LEVEL_KEYS)
+    if "stock_pool" in payload and "pool" in payload:
+        raise ValueError("pool config must not define both stock_pool and pool")
+    has_wrapper = "stock_pool" in payload or "pool" in payload
+    has_inline_fields = "codes" in payload or "strategy" in payload
+    if has_wrapper and has_inline_fields:
+        raise ValueError("pool config must use either stock_pool wrapper or top-level codes/strategy, not both")
     pool_raw = payload.get("stock_pool", payload.get("pool", payload))
     return _parse_stock_pool_config(
         _require_mapping(pool_raw, "stock_pool"),
@@ -556,6 +575,7 @@ def load_quote_config_from_text(text: str) -> QuoteConfig:
     """把行情配置 JSON 文本解析成 QuoteConfig。"""
     raw = json.loads(text)
     payload = _require_mapping(raw, "quote config")
+    _validate_allowed_top_level_keys(payload, label="quote config", allowed_keys=QUOTE_CONFIG_ALLOWED_TOP_LEVEL_KEYS)
 
     shared_broker_raw = payload.get("quote_broker", payload.get("broker"))
     realtime_broker_raw = payload.get("realtime_broker", shared_broker_raw)
@@ -589,6 +609,9 @@ def load_trade_accounts_config_from_text(text: str) -> TradeAccountsConfig:
     """把交易账户配置 JSON 文本解析成 TradeAccountsConfig。"""
     raw = json.loads(text)
     payload = _require_mapping(raw, "trade accounts config")
+    _validate_allowed_top_level_keys(payload, label="trade accounts config", allowed_keys=TRADE_CONFIG_ALLOWED_TOP_LEVEL_KEYS)
+    if "trade_accounts" in payload and "accounts" in payload:
+        raise ValueError("trade accounts config must not define both trade_accounts and accounts")
     accounts_raw = payload.get("trade_accounts", payload.get("accounts"))
     if not isinstance(accounts_raw, list) or not accounts_raw:
         raise ValueError("trade_accounts must be a non-empty array")
@@ -606,6 +629,16 @@ def load_history_config_from_text(text: str) -> HistoryBrokerConfig:
     """把历史 warm-up 配置 JSON 文本解析成 HistoryBrokerConfig。"""
     raw = json.loads(text)
     payload = _require_mapping(raw, "history config")
+    _validate_allowed_top_level_keys(payload, label="history config", allowed_keys=HISTORY_CONFIG_ALLOWED_TOP_LEVEL_KEYS)
+    if "history_broker" in payload and "broker" in payload:
+        raise ValueError("history config must not define both history_broker and broker")
+    has_wrapper = "history_broker" in payload or "broker" in payload
+    has_inline_fields = any(
+        key in payload
+        for key in ("type", "host", "port", "market", "data_root", "history_host", "history_port", "kline_day_root")
+    )
+    if has_wrapper and has_inline_fields:
+        raise ValueError("history config must use either history_broker wrapper or top-level broker fields, not both")
     broker_raw = payload.get("history_broker", payload.get("broker", payload))
     return _parse_history_broker_config(
         _require_mapping(broker_raw, "history_broker"),
@@ -620,6 +653,10 @@ def build_livetrading_config(
     pool_config: StockPoolConfig | None = None,
 ) -> LiveTradingConfig:
     """合并 quote/history/pool/trade 配置，并校验关键字段是否一致。"""
+    if history_config is not None and quote_config.history_broker is not None:
+        raise ValueError("history broker config overlaps between quote config and --history-config")
+    if pool_config is not None and quote_config.stock_pool is not None:
+        raise ValueError("stock pool config overlaps between quote config and --pool-config")
     final_history_broker = history_config or quote_config.history_broker
     if final_history_broker is None:
         raise ValueError("history broker config must be provided either inline in quote config or via --history-config")

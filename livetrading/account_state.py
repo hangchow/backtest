@@ -129,8 +129,20 @@ class AccountStateStore:
     ) -> AccountRuntimeState:
         """写入真实持仓快照。"""
         state = self.ensure(account_id)
+        first_position_sync = state.last_position_sync_at is None
         state.actual_positions = positions
         state.last_position_sync_at = pd.Timestamp.now(tz="UTC")
+        if first_position_sync:
+            # 启动早期可能先到账户资金，再到账户持仓。
+            # 前一步 sync_active_codes() 会把股票池代码预填成 0，避免缺 key；
+            # 这里在首个真实持仓快照到达时，必须把这些“占位 0”改成真实基线，
+            # 否则 mock executor 会错误地从空仓开始规划。
+            tracked_codes = set(state.shadow_positions) | set(state.expected_positions) | set(positions)
+            for code in tracked_codes:
+                actual_qty = positions.get(code).qty if code in positions else 0
+                state.shadow_positions[code] = actual_qty
+                if not state.pending_orders:
+                    state.expected_positions[code] = actual_qty
         return state
 
     def mark_submitted(

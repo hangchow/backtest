@@ -410,6 +410,16 @@ class LiveTradingConfigTests(unittest.TestCase):
         self.assertEqual(config.type, "local")
         self.assertEqual(config.data_root, ".kline_day")
 
+    def test_load_history_config_rejects_unrelated_top_level_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "history.json"
+            payload = build_history_payload(history_type="local")
+            payload["stock_pool"] = build_pool_payload()["stock_pool"]
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            with self.assertRaises(ValueError):
+                load_history_config(path)
+
     def test_load_pool_config_supports_wrapped_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "pool.json"
@@ -423,6 +433,16 @@ class LiveTradingConfigTests(unittest.TestCase):
         self.assertEqual(config.codes, ("US.AAPL", "US.MSFT"))
         self.assertEqual(config.strategy.name, "dual_momentum")
 
+    def test_load_pool_config_rejects_unrelated_top_level_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "pool.json"
+            payload = build_pool_payload()
+            payload["runtime"] = {"config_reload_interval_seconds": 3}
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            with self.assertRaises(ValueError):
+                load_pool_config(path)
+
     def test_build_livetrading_config_rejects_missing_history_config(self) -> None:
         quote_payload = build_quote_payload()
         quote_payload.pop("history_broker")
@@ -431,6 +451,14 @@ class LiveTradingConfigTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             load_livetrading_config_from_payloads(quote_payload, trade_payload)
 
+    def test_build_livetrading_config_rejects_overlapping_history_sections(self) -> None:
+        quote_payload = build_quote_payload(history_type="futu")
+        history_payload = build_history_payload(history_type="local")
+        trade_payload = build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.9")])
+
+        with self.assertRaises(ValueError):
+            load_livetrading_config_from_payloads(quote_payload, trade_payload, history_payload=history_payload)
+
     def test_build_livetrading_config_rejects_missing_pool_config(self) -> None:
         quote_payload = build_quote_payload()
         quote_payload.pop("stock_pool")
@@ -438,6 +466,14 @@ class LiveTradingConfigTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             load_livetrading_config_from_payloads(quote_payload, trade_payload)
+
+    def test_build_livetrading_config_rejects_overlapping_pool_sections(self) -> None:
+        quote_payload = build_quote_payload()
+        pool_payload = build_pool_payload(codes=["US.AAPL", "US.NVDA"])
+        trade_payload = build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.9")])
+
+        with self.assertRaises(ValueError):
+            load_livetrading_config_from_payloads(quote_payload, trade_payload, pool_payload=pool_payload)
 
     def test_load_quote_config_supports_separate_realtime_and_history_sources(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -498,6 +534,16 @@ class LiveTradingConfigTests(unittest.TestCase):
         self.assertEqual(config.history_broker.type, "futu")
         self.assertEqual(config.history_broker.host, "127.0.0.1")
         self.assertEqual(config.history_broker.port, 11111)
+
+    def test_load_quote_config_rejects_trade_account_overlap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "quote.json"
+            payload = build_quote_payload()
+            payload["trade_accounts"] = build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.9")])["trade_accounts"]
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            with self.assertRaises(ValueError):
+                load_quote_config(path)
 
     def test_load_quote_config_supports_mock_realtime_broker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -618,6 +664,17 @@ class LiveTradingConfigTests(unittest.TestCase):
 
         self.assertEqual(config.accounts[0].execution.executor, "mock")
         self.assertFalse(config.accounts[0].execution.enable_real_trading)
+
+    def test_load_trade_accounts_config_rejects_unrelated_top_level_keys(self) -> None:
+        payload = build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.9")])
+        payload["history_broker"] = build_history_payload(history_type="local")["history_broker"]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "trade.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            with self.assertRaises(ValueError):
+                load_trade_accounts_config(path)
 
     def test_build_livetrading_config_rejects_futu_simulate_executor_with_real_trade_env(self) -> None:
         quote_payload = build_quote_payload()
@@ -2255,6 +2312,198 @@ class LiveTradingEngineTests(unittest.TestCase):
         FakeQuoteBroker.instances.clear()
         FakeHistoryProvider.instances.clear()
         FakeTradeAccountClient.instances.clear()
+
+    def test_engine_accepts_mock_account_baseline_during_apply_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            quote_path = Path(tmp) / "quote.json"
+            trade_path = Path(tmp) / "trade.json"
+            quote_path.write_text(json.dumps(build_quote_payload(history_type="local")), encoding="utf-8")
+            trade_path.write_text(
+                json.dumps(
+                    build_trade_payload(
+                        [
+                            build_mock_trade_account_payload(
+                                initial_cash=12345.0,
+                                initial_positions={"US.MSFT": 3},
+                            )
+                        ]
+                    )
+                ),
+                encoding="utf-8",
+            )
+            config = load_livetrading_config(quote_path, trade_path)
+
+            engine = LiveTradingEngine(
+                quote_path,
+                trade_path,
+                quote_broker_factory=FakeQuoteBroker,
+                history_provider_factory=FakeHistoryProvider,
+                trade_account_factory=create_trade_account_client,
+            )
+            engine.apply_config(config)
+            engine.stop()
+
+        state = engine._account_states["mock_primary"]
+        self.assertIsNotNone(state.actual_account)
+        self.assertEqual(state.actual_account.available_funds, 12345.0)
+        self.assertEqual(state.shadow_cash, 12345.0)
+        self.assertEqual(state.actual_positions["US.MSFT"].qty, 3)
+        self.assertEqual(state.shadow_positions["US.MSFT"], 3)
+
+    def test_engine_survives_invalid_hot_reload_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            quote_path = Path(tmp) / "quote.json"
+            trade_path = Path(tmp) / "trade.json"
+            quote_payload = build_quote_payload()
+            quote_payload["runtime"]["config_reload_interval_seconds"] = 0.05
+            quote_path.write_text(json.dumps(quote_payload), encoding="utf-8")
+            trade_path.write_text(
+                json.dumps(build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.9")])),
+                encoding="utf-8",
+            )
+
+            engine = LiveTradingEngine(
+                quote_path,
+                trade_path,
+                quote_broker_factory=FakeQuoteBroker,
+                history_provider_factory=FakeHistoryProvider,
+                trade_account_factory=FakeTradeAccountClient,
+            )
+            thread = threading.Thread(target=engine.run, daemon=True)
+            thread.start()
+
+            deadline = time.time() + 1.0
+            while time.time() < deadline and not FakeQuoteBroker.instances:
+                time.sleep(0.02)
+
+            invalid_trade_payload = build_trade_payload(
+                [
+                    build_trade_account_payload(
+                        "sim_primary",
+                        "127.0.0.9",
+                        execution={"executor": "futu_real", "enable_real_trading": False},
+                    )
+                ]
+            )
+            invalid_trade_payload["trade_accounts"][0]["broker"]["trade_env"] = "REAL"
+            trade_path.write_text(json.dumps(invalid_trade_payload), encoding="utf-8")
+
+            time.sleep(0.2)
+            self.assertTrue(thread.is_alive())
+
+            engine.stop()
+            thread.join(timeout=1.0)
+
+    def test_engine_serializes_async_order_push_until_pending_order_is_registered(self) -> None:
+        class AsyncEarlyUpdateTradeAccountClient(TradeAccountClient):
+            instances: list["AsyncEarlyUpdateTradeAccountClient"] = []
+
+            def __init__(self, config, event_sink, logger) -> None:
+                self.config = config
+                self.event_sink = event_sink
+                self.logger = logger
+                self.push_threads: list[threading.Thread] = []
+                AsyncEarlyUpdateTradeAccountClient.instances.append(self)
+
+            def connect(self) -> None:
+                return None
+
+            def submit_order(self, intent: OrderIntent) -> OrderSubmission:
+                broker_order_id = f"EARLY-ORDER-{len(self.push_threads) + 1}"
+
+                def push_final_update() -> None:
+                    self.event_sink.on_order_update(
+                        self.config.account_id,
+                        OrderUpdate(
+                            account_id=self.config.account_id,
+                            broker_order_id=broker_order_id,
+                            code=intent.code,
+                            side=intent.side,
+                            status="FILLED_ALL",
+                            dealt_qty=intent.qty,
+                            avg_price=intent.limit_price,
+                        ),
+                    )
+
+                thread = threading.Thread(target=push_final_update, daemon=True)
+                self.push_threads.append(thread)
+                thread.start()
+                time.sleep(0.05)
+                return OrderSubmission(
+                    account_id=self.config.account_id,
+                    broker_order_id=broker_order_id,
+                    accepted=True,
+                    submitted_qty=intent.qty,
+                    submitted_price=intent.limit_price,
+                )
+
+            def close(self) -> None:
+                for thread in self.push_threads:
+                    thread.join(timeout=1.0)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            quote_path = Path(tmp) / "quote.json"
+            trade_path = Path(tmp) / "trade.json"
+            quote_path.write_text(json.dumps(build_quote_payload()), encoding="utf-8")
+            trade_path.write_text(
+                json.dumps(
+                    build_trade_payload(
+                        [
+                            build_trade_account_payload(
+                                "sim_primary",
+                                "127.0.0.9",
+                                execution={"executor": "futu_simulate"},
+                            )
+                        ]
+                    )
+                ),
+                encoding="utf-8",
+            )
+            config = load_livetrading_config(quote_path, trade_path)
+
+            engine = LiveTradingEngine(
+                quote_path,
+                trade_path,
+                quote_broker_factory=FakeQuoteBroker,
+                history_provider_factory=FakeHistoryProvider,
+                trade_account_factory=AsyncEarlyUpdateTradeAccountClient,
+            )
+            engine.apply_config(config)
+            engine.on_account(
+                "sim_primary",
+                AccountSnapshot(
+                    timestamp=pd.Timestamp("2026-03-13 09:30:00"),
+                    total_assets=10000.0,
+                    cash=10000.0,
+                    available_funds=10000.0,
+                    buying_power=10000.0,
+                    currency="USD",
+                ),
+            )
+            engine.on_positions("sim_primary", {})
+            engine.on_quote(
+                QuoteUpdate(
+                    code="US.AAPL",
+                    timestamp=pd.Timestamp("2026-03-13 09:29:00"),
+                    last_price=104.0,
+                )
+            )
+            engine.on_quote(
+                QuoteUpdate(
+                    code="US.MSFT",
+                    timestamp=pd.Timestamp("2026-03-13 09:29:00"),
+                    last_price=121.0,
+                )
+            )
+            engine.on_bar("US.AAPL", build_minute_bar("US.AAPL", "2026-03-13 09:30:00", 104.0))
+            for thread in AsyncEarlyUpdateTradeAccountClient.instances[0].push_threads:
+                thread.join(timeout=1.0)
+            engine.stop()
+
+        pending = engine._account_states["sim_primary"].pending_orders["EARLY-ORDER-1"]
+        self.assertEqual(pending.status, "FILLED_ALL")
+        self.assertEqual(pending.dealt_qty, pending.submitted_qty)
+        self.assertTrue(pending.settled_expected)
 
     def test_engine_reconnects_when_realtime_quote_endpoint_changes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
