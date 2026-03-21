@@ -14,6 +14,7 @@ from livetrading import LiveTradingEngine
 
 
 def parse_args() -> argparse.Namespace:
+    """解析 CLI 参数，定位行情配置和交易账户配置文件。"""
     parser = argparse.ArgumentParser(
         description="Run dry-run live trading with split quote/trade configs, strategy signals, and config hot reload."
     )
@@ -23,6 +24,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    """初始化日志并启动实盘 dry-run 主流程。"""
     args = parse_args()
     logging.basicConfig(
         level=logging.INFO,

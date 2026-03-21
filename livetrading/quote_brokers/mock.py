@@ -24,6 +24,7 @@ class MockRealtimeQuoteClient(QuoteBrokerClient):
         self._server_thread: threading.Thread | None = None
 
     def connect(self, codes: Iterable[str]) -> None:
+        """启动本地 HTTP 服务，并切换当前订阅股票池。"""
         with self._lock:
             self.close()
             self._codes = self._normalize_codes(codes)
@@ -42,6 +43,7 @@ class MockRealtimeQuoteClient(QuoteBrokerClient):
             )
 
     def update_symbols(self, codes: Iterable[str]) -> None:
+        """更新当前允许接收 push 的股票列表。"""
         with self._lock:
             self._codes = self._normalize_codes(codes)
             self._event_sink.on_broker_message(
@@ -50,6 +52,7 @@ class MockRealtimeQuoteClient(QuoteBrokerClient):
             )
 
     def close(self) -> None:
+        """关闭 mock HTTP 服务并清空订阅状态。"""
         with self._lock:
             server = self._server
             thread = self._server_thread
@@ -63,6 +66,7 @@ class MockRealtimeQuoteClient(QuoteBrokerClient):
             thread.join(timeout=3.0)
 
     def push_bar(self, payload: Mapping[str, Any]) -> bool:
+        """处理单条分钟 bar：先合成 quote，再把 bar 推给引擎。"""
         bar = self._normalize_bar_payload(payload)
         code = str(bar["code"])
         with self._lock:
@@ -98,6 +102,7 @@ class MockRealtimeQuoteClient(QuoteBrokerClient):
         return True
 
     def push_bars(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """处理单条或批量 bar payload，并统计 accepted/ignored。"""
         items_raw = payload.get("bars", payload)
         if isinstance(items_raw, Mapping):
             items = [items_raw]
@@ -124,6 +129,7 @@ class MockRealtimeQuoteClient(QuoteBrokerClient):
         }
 
     def _build_server(self) -> ThreadingHTTPServer:
+        """构建提供 /health 和 /push 的本地 mock HTTP 服务。"""
         broker = self
 
         class MockQuotePushServer(ThreadingHTTPServer):
@@ -181,6 +187,7 @@ class MockRealtimeQuoteClient(QuoteBrokerClient):
         return sorted({str(code).strip().upper() for code in codes if str(code).strip()})
 
     def _normalize_bar_payload(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """把外部 push 的 bar 归一化成内部统一字段。"""
         code = str(payload.get("code", "")).strip().upper()
         if not code:
             raise ValueError("bar.code must not be empty")

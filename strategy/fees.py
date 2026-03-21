@@ -63,6 +63,7 @@ def compute_order_fees(
     shares: int,
     security_type: str = "stock",
 ) -> tuple[float, dict[str, float]]:
+    """按 fee_account 规则计算单笔订单总手续费和拆分明细。"""
     if not fee_account:
         return 0.0, {}
     if shares <= 0:

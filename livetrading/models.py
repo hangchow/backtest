@@ -47,6 +47,7 @@ class PositionSnapshot:
 
 @dataclass(frozen=True)
 class PortfolioRebalanceDecision:
+    """引擎执行层消费的组合调仓决策。"""
     signal_time: pd.Timestamp
     target_weights: dict[str, float]
     reason: str

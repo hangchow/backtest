@@ -46,12 +46,14 @@ class ConfigFileWatcher:
         self._digest: str | None = None
 
     def load(self) -> Any:
+        """读取配置文件内容，解析并记录当前文件摘要。"""
         payload = self.path.read_bytes()
         config = self._loader(payload.decode("utf-8"))
         self._digest = hashlib.sha256(payload).hexdigest()
         return config
 
     def maybe_reload(self) -> Any | None:
+        """若文件摘要变化则重新解析配置，否则返回 None。"""
         payload = self.path.read_bytes()
         digest = hashlib.sha256(payload).hexdigest()
         if digest == self._digest:
@@ -102,6 +104,7 @@ class LiveTradingEngine:
         self._lock = threading.RLock()
 
     def apply_config(self, config: LiveTradingConfig, *, force_warmup_refresh: bool = False) -> None:
+        """按新配置重建依赖、执行 warm-up，并同步影子状态。"""
         with self._lock:
             config_changed = self._current_config is None or self._current_config != config
             self._logger.setLevel(getattr(logging, config.runtime.log_level, logging.INFO))
@@ -186,6 +189,7 @@ class LiveTradingEngine:
             )
 
     def run(self) -> None:
+        """启动配置加载与热更新主循环。"""
         quote_watcher = ConfigFileWatcher(self._quote_config_path, load_quote_config_from_text)
         trade_watcher = ConfigFileWatcher(self._trade_config_path, load_trade_accounts_config_from_text)
         quote_config = quote_watcher.load()
@@ -227,6 +231,7 @@ class LiveTradingEngine:
                 )
 
     def stop(self) -> None:
+        """停止 quote/history/trade 侧后台资源。"""
         self._stop_event.set()
         with self._lock:
             if self._quote_broker is not None:
@@ -240,6 +245,7 @@ class LiveTradingEngine:
             self._trade_account_clients = {}
 
     def on_quote(self, update: QuoteUpdate) -> None:
+        """接收实时 quote 事件，更新最新参考价缓存。"""
         with self._lock:
             self._latest_quotes[update.code] = update
             runtime = self._current_config.runtime if self._current_config is not None else None
@@ -254,6 +260,7 @@ class LiveTradingEngine:
             )
 
     def on_bar(self, code: str, bar: pd.Series | dict[str, object]) -> None:
+        """接收分钟 bar，更新价格缓存并驱动策略判断是否调仓。"""
         bar_row = pd.Series(bar)
         with self._lock:
             self._latest_bar_prices[code] = float(bar_row["close"])
@@ -266,6 +273,7 @@ class LiveTradingEngine:
             self._execute_portfolio_rebalance_dry_run(decision)
 
     def on_account(self, account_id: str, snapshot: AccountSnapshot) -> None:
+        """同步账户资金快照，并在首次可用时初始化 shadow_cash。"""
         with self._lock:
             if self._current_config is None or account_id not in self._current_config.trade_account_map():
                 return
@@ -289,6 +297,7 @@ class LiveTradingEngine:
             )
 
     def on_positions(self, account_id: str, positions: dict[str, PositionSnapshot]) -> None:
+        """同步实际持仓，并补齐股票池对应的 shadow_positions。"""
         with self._lock:
             if self._current_config is None or account_id not in self._current_config.trade_account_map():
                 return
@@ -310,6 +319,7 @@ class LiveTradingEngine:
             self._logger.info("POSITIONS account_id=%s %s", account_id, " | ".join(summary))
 
     def on_broker_message(self, level: int, message: str) -> None:
+        """统一转发 broker 层日志到引擎 logger。"""
         self._logger.log(level, message)
 
     def _current_reload_interval(self) -> float:
@@ -335,6 +345,7 @@ class LiveTradingEngine:
         return tuple(unavailable)
 
     def _apply_trade_accounts_config(self, config: LiveTradingConfig) -> None:
+        """按配置增删或重连 trade account client。"""
         current_accounts = self._current_config.trade_account_map() if self._current_config is not None else {}
         target_accounts = config.trade_account_map()
 
@@ -362,6 +373,7 @@ class LiveTradingEngine:
                 client.connect()
 
     def _sync_shadow_state(self, config: LiveTradingConfig) -> None:
+        """裁剪过期代码/账户，并补齐影子仓位与影子现金初值。"""
         active_codes = set(config.all_codes())
         active_account_ids = set(config.trade_account_map())
         self._latest_quotes = {code: quote for code, quote in self._latest_quotes.items() if code in active_codes}
@@ -390,6 +402,7 @@ class LiveTradingEngine:
         return None
 
     def _execute_portfolio_rebalance_dry_run(self, decision: PortfolioRebalanceDecision) -> None:
+        """对每个交易账户执行一轮组合级 dry-run 调仓。"""
         with self._lock:
             config = self._current_config
             if config is None:
@@ -419,6 +432,7 @@ class LiveTradingEngine:
         pool_codes: tuple[str, ...],
         prices: dict[str, float],
     ) -> None:
+        """按目标权重先卖后买，更新单账户 shadow 状态并输出日志。"""
         active_codes = sorted(set(pool_codes) | set(state.shadow_positions))
         portfolio_value = compute_portfolio_value(
             cash=float(state.shadow_cash or 0.0),

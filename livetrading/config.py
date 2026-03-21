@@ -405,6 +405,7 @@ def _parse_trade_account_config(raw: Mapping[str, Any], *, index: int) -> TradeA
 
 
 def load_quote_config_from_text(text: str) -> QuoteConfig:
+    """把行情配置 JSON 文本解析成 QuoteConfig。"""
     raw = json.loads(text)
     payload = _require_mapping(raw, "quote config")
 
@@ -433,6 +434,7 @@ def load_quote_config_from_text(text: str) -> QuoteConfig:
 
 
 def load_trade_accounts_config_from_text(text: str) -> TradeAccountsConfig:
+    """把交易账户配置 JSON 文本解析成 TradeAccountsConfig。"""
     raw = json.loads(text)
     payload = _require_mapping(raw, "trade accounts config")
     accounts_raw = payload.get("trade_accounts", payload.get("accounts"))
@@ -449,6 +451,7 @@ def load_trade_accounts_config_from_text(text: str) -> TradeAccountsConfig:
 
 
 def build_livetrading_config(quote_config: QuoteConfig, trade_accounts_config: TradeAccountsConfig) -> LiveTradingConfig:
+    """合并 quote/trade 配置，并校验两边 market 是否一致。"""
     for account in trade_accounts_config.accounts:
         if account.broker.market != quote_config.realtime_broker.market:
             raise ValueError(
@@ -477,6 +480,7 @@ def load_trade_accounts_config(path: Path | str) -> TradeAccountsConfig:
 
 
 def load_livetrading_config(quote_config_path: Path | str, trade_accounts_path: Path | str) -> LiveTradingConfig:
+    """从两个配置文件路径读取并构建完整的 LiveTradingConfig。"""
     return build_livetrading_config(
         load_quote_config(quote_config_path),
         load_trade_accounts_config(trade_accounts_path),

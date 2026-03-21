@@ -21,6 +21,8 @@
 - [strategy/rebalance.py](/Users/sean/workspace/backtest-feature-livetrading-startup/strategy/rebalance.py)
 - [strategy/fees.py](/Users/sean/workspace/backtest-feature-livetrading-startup/strategy/fees.py)
 
+下面 Mermaid 里的方法说明，和代码里对应方法的中文注释保持一致，方便你对着图直接跳代码。
+
 ## 1. 启动 + 配置加载
 
 ```mermaid
@@ -33,26 +35,26 @@ sequenceDiagram
     participant TB as broker.py\nFutuTradeAccountClient
 
     U->>CLI: python livetrading.py --quote-config ...mock... --trade-config ...
-    CLI->>ENG: LiveTradingEngine(...).run()
-    ENG->>CFG: load_quote_config_from_text()
-    ENG->>CFG: load_trade_accounts_config_from_text()
+    CLI->>ENG: main()<br/>初始化日志并启动实盘 dry-run 主流程
+    ENG->>CFG: load_quote_config_from_text()<br/>把行情配置 JSON 文本解析成 QuoteConfig
+    ENG->>CFG: load_trade_accounts_config_from_text()<br/>把交易账户配置 JSON 文本解析成 TradeAccountsConfig
     CFG-->>ENG: QuoteConfig + TradeAccountsConfig
-    ENG->>CFG: build_livetrading_config(...)
+    ENG->>CFG: build_livetrading_config()<br/>合并 quote/trade 配置并校验两边 market
     CFG-->>ENG: LiveTradingConfig
 
-    ENG->>QB: create_quote_broker_client(realtime_broker.type=mock)
-    ENG->>QB: connect(stock_pool.codes)
-    QB-->>ENG: on_broker_message(listening at /push)
+    ENG->>QB: create_quote_broker_client()<br/>按配置选择 realtime quote client 实现
+    ENG->>QB: connect()<br/>启动本地 HTTP 服务并切换当前订阅股票池
+    QB-->>ENG: on_broker_message()<br/>回报 /push 监听地址
 
-    ENG->>ENG: _apply_trade_accounts_config()
-    ENG->>TB: create_trade_account_client(trade_accounts[].broker.type=futu)
-    ENG->>TB: connect()
-    ENG->>ENG: _sync_shadow_state()
+    ENG->>ENG: _apply_trade_accounts_config()<br/>按配置增删或重连 trade account client
+    ENG->>TB: create_trade_account_client()<br/>按配置选择交易账户 client 实现
+    ENG->>TB: connect()<br/>连接 Futu 交易上下文并立即同步账户/持仓
+    ENG->>ENG: _sync_shadow_state()<br/>裁剪过期状态并补齐 shadow_cash / shadow_positions
     ENG-->>CLI: CONFIG_APPLIED log
 
     Note over TB,ENG: connect() 之后，账户/持仓是后台异步轮询进入 engine
-    TB-->>ENG: on_account(AccountSnapshot)
-    TB-->>ENG: on_positions(dict[code, PositionSnapshot])
+    TB-->>ENG: on_account()<br/>同步账户资金快照并初始化 shadow_cash
+    TB-->>ENG: on_positions()<br/>同步实际持仓并初始化 shadow_positions
     ENG-->>CLI: ACCOUNT / POSITIONS logs
 ```
 
@@ -71,21 +73,24 @@ sequenceDiagram
     participant STATE as dual_momentum_state.py\nDualMomentumDailyState
     participant HB as broker.py\nHistoryProvider
 
-    ENG->>PLS: build_pool_strategy(stock_pool)
-    PLS->>STATE: DualMomentumDailyState(...required_warmup_bars)
+    ENG->>PLS: build_pool_strategy()<br/>按 stock_pool.strategy.name 构建 live 股票池策略
+    ENG->>PLS: required_daily_warmup_bars()<br/>返回 dual momentum 至少需要的 warm-up 日线根数
+    PLS-->>ENG: warmup_bars
 
-    ENG->>HB: create_daily_history_provider(history_broker)
-    ENG->>HB: fetch_daily_histories(codes, warmup_bars)
+    ENG->>HB: create_daily_history_provider()<br/>按配置选择 warm-up 日线 provider 实现
+    ENG->>HB: fetch_daily_histories()<br/>为股票池拉取 warm-up 所需的日线窗口
     HB-->>ENG: warmup daily histories
 
-    ENG->>PLS: bootstrap(warmup_histories)
-    PLS->>STATE: bootstrap(histories)
+    ENG->>PLS: bootstrap()<br/>把 warm-up 日线喂给日频状态机
+    PLS->>STATE: bootstrap()<br/>用 warm-up 日线初始化每个股票的日频历史状态
+    STATE->>STATE: normalize_daily_history()<br/>把不同 provider 的日线格式规整成统一输入
 ```
 
 这一步的关键点：
 
 - 策略 warm-up 仍然走 `history_broker`
-- 账户资金和持仓仍然走 `trade_accounts[].broker`
+- warm-up 的输出是“已完成日线窗口”，不是直接下单指令
+- 真正的账户资金和持仓同步在下一张图里单独看
 
 ## 3. 账户同步对后续调仓的影响
 
@@ -95,13 +100,13 @@ sequenceDiagram
     participant ENG as livetrading/engine.py
 
     loop polling
-        TB->>TB: accinfo_query()
-        TB-->>ENG: on_account(AccountSnapshot)
+        TB->>TB: _poll_account()<br/>拉取账户资金快照并回调给事件接收方
+        TB-->>ENG: on_account()<br/>同步账户资金快照并初始化 shadow_cash
         ENG->>ENG: state.actual_account = snapshot
         ENG->>ENG: if shadow_cash is None -> shadow_cash = available_funds
 
-        TB->>TB: position_list_query()
-        TB-->>ENG: on_positions(dict[code, PositionSnapshot])
+        TB->>TB: _poll_positions()<br/>拉取当前持仓快照并回调给事件接收方
+        TB-->>ENG: on_positions()<br/>同步实际持仓并补齐 shadow_positions
         ENG->>ENG: state.actual_positions = positions
         ENG->>ENG: 初始化 shadow_positions
     end
@@ -113,68 +118,83 @@ sequenceDiagram
 
 ## 4. mock 推送分钟 K -> 策略出信号 -> dry-run 调仓
 
+### 4.1 mock 接收 `/push` 并把行情送进引擎
+
 ```mermaid
 sequenceDiagram
     actor C as curl / external pusher
     participant QB as quote_brokers/mock.py\nMockRealtimeQuoteClient
     participant ENG as livetrading/engine.py
+
+    C->>QB: POST /push {code,time_key,open,close,high,low,volume}
+    QB->>QB: _normalize_bar_payload()<br/>把外部 push 的 bar 归一化成内部统一字段
+    QB-->>ENG: on_quote()<br/>先推一条合成 QuoteUpdate 作为参考价
+    ENG->>ENG: _latest_quotes[code] = update
+
+    QB-->>ENG: on_bar()<br/>再推分钟 bar 给策略引擎
+    ENG->>ENG: _latest_bar_prices[code] = bar.close
+```
+
+### 4.2 分钟 bar 进入策略层，并在换日时决定是否出信号
+
+```mermaid
+sequenceDiagram
+    participant ENG as livetrading/engine.py
     participant PLS as pool_strategies.py\nDualMomentumPoolStrategy
     participant STATE as dual_momentum_state.py\nDualMomentumDailyState
     participant SIG as dual_momentum.py\nbuild_dual_momentum_signal
-    participant RB as rebalance.py
-    participant FEE as fees.py
 
-    C->>QB: POST /push {code,time_key,open,close,high,low,volume}
-    QB->>QB: _normalize_bar_payload()
-    QB-->>ENG: on_quote(合成 QuoteUpdate)
-    ENG->>ENG: _latest_quotes[code] = update
-
-    QB-->>ENG: on_bar(code, bar)
-    ENG->>ENG: _latest_bar_prices[code] = bar.close
-    ENG->>PLS: pool_strategy.on_bar(code, bar)
-    PLS->>STATE: on_bar(code, bar)
+    ENG->>PLS: on_bar()<br/>把分钟 bar 交给股票池策略
+    PLS->>STATE: on_bar()<br/>消费一根分钟 bar 并尝试吐出已完成日线窗口
 
     alt 还在同一个交易日
         STATE-->>PLS: None
         PLS-->>ENG: None
         ENG-->>ENG: 不触发调仓
     else 新交易日第一根 bar
-        STATE-->>PLS: CompletedDailyFrames(prices, volumes, signal_time)
-        PLS->>SIG: build_dual_momentum_signal(prices, volumes, params)
-        SIG-->>PLS: DualMomentumSignal(target_weights,...)
-        PLS-->>ENG: PortfolioRebalanceDecision
+        STATE-->>PLS: CompletedDailyFrames<br/>已完成日线窗口：prices / volumes / signal_time
+        PLS->>SIG: build_dual_momentum_signal()<br/>基于已完成日线窗口计算 dual momentum 目标权重
+        SIG-->>PLS: DualMomentumSignal<br/>策略信号结果：target_weights / target_codes / risk_on
+        PLS-->>ENG: PortfolioRebalanceDecision<br/>组合调仓决策：target_weights / reason
+    end
+```
 
-        ENG->>ENG: _execute_portfolio_rebalance_dry_run()
-        ENG->>RB: compute_portfolio_value(...)
-        ENG->>RB: build_desired_shares(...)
+### 4.3 引擎按账户执行 dry-run 调仓
 
-        loop 先卖
-            ENG->>FEE: compute_order_fees(side=sell,...)
-            FEE-->>ENG: fee_total
-            ENG->>ENG: 更新 shadow_cash / shadow_positions
-            ENG-->>ENG: DRY_RUN_ORDER SELL log
-        end
+```mermaid
+sequenceDiagram
+    participant ENG as livetrading/engine.py
+    participant RB as rebalance.py
+    participant FEE as fees.py
 
-        loop 再买
-            ENG->>RB: compute_affordable_qty_with_fee(...)
-            RB->>FEE: compute_order_fees(side=buy,...)
-            FEE-->>RB: fee_total
-            RB-->>ENG: affordable_qty + fee_total
-            ENG->>ENG: 更新 shadow_cash / shadow_positions
-            ENG-->>ENG: DRY_RUN_ORDER BUY log
-        end
+    ENG->>ENG: _execute_portfolio_rebalance_dry_run()<br/>对每个交易账户执行一轮组合级 dry-run 调仓
+    ENG->>RB: compute_portfolio_value()<br/>按现金加持仓市值估算当前组合总资产
+    ENG->>RB: build_desired_shares()<br/>把目标权重转换成目标股数并应用调仓带
+
+    loop 先卖
+        ENG->>FEE: compute_order_fees()<br/>按 fee_account 规则计算单笔订单总手续费和拆分明细
+        FEE-->>ENG: fee_total
+        ENG->>ENG: 更新 shadow_cash / shadow_positions
+        ENG-->>ENG: DRY_RUN_ORDER SELL log
+    end
+
+    loop 再买
+        ENG->>RB: compute_affordable_qty_with_fee()<br/>在考虑手续费后反推出当前现金最多能买多少股
+        RB->>FEE: compute_order_fees()<br/>按 fee_account 规则计算单笔订单总手续费和拆分明细
+        FEE-->>RB: fee_total
+        RB-->>ENG: affordable_qty + fee_total
+        ENG->>ENG: 更新 shadow_cash / shadow_positions
+        ENG-->>ENG: DRY_RUN_ORDER BUY log
     end
 ```
 
 这里最重要的时序关系是：
 
-1. `mock` 收到 `/push`
-2. 先发 `on_quote`
-3. 再发 `on_bar`
-4. `engine` 把 bar 交给 `DualMomentumPoolStrategy`
-5. `DualMomentumDailyState` 只有在“交易日切换”时才会吐出已完成日线窗口
-6. `build_dual_momentum_signal(...)` 生成目标权重
-7. `engine` 用 `rebalance.py + fees.py` 做 dry-run 调仓和手续费计算
+1. `mock` 收到 `/push` 后，会先发 `on_quote`，再发 `on_bar`。
+2. 策略层只有在“新交易日第一根分钟 bar”到来时，才会从 `DualMomentumDailyState` 吐出已完成日线窗口。
+3. `build_dual_momentum_signal(...)` 用这份已完成日线窗口生成目标权重。
+4. 引擎拿到 `PortfolioRebalanceDecision` 后，按账户逐个执行 dry-run。
+5. dry-run 执行顺序是先卖后买，并且买入数量会显式考虑手续费和剩余现金。
 
 ## 5. 文件职责对照
 

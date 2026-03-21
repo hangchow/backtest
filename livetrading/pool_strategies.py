@@ -45,13 +45,16 @@ class DualMomentumPoolStrategy(PoolLiveStrategy):
         self._state = DualMomentumDailyState(self.codes, self.signal_params.required_warmup_bars())
 
     def required_daily_warmup_bars(self) -> int:
+        """返回 dual momentum 至少需要的 warm-up 日线根数。"""
         return self.signal_params.required_warmup_bars()
 
     def bootstrap(self, histories: dict[str, pd.DataFrame]) -> None:
+        """把 warm-up 日线喂给日频状态机，初始化策略上下文。"""
         # 日频状态机已经下沉到 strategy 层，这里只负责把历史 warm-up 交给它。
         self._state.bootstrap(histories)
 
     def on_bar(self, code: str, bar: pd.Series | dict[str, Any]) -> PortfolioRebalanceDecision | None:
+        """把分钟 bar 交给日频状态机，必要时产出调仓决策。"""
         completed = self._state.on_bar(code, bar)
         if completed is None:
             return None
@@ -70,6 +73,7 @@ class DualMomentumPoolStrategy(PoolLiveStrategy):
         prices: pd.DataFrame,
         volumes: pd.DataFrame,
     ) -> PortfolioRebalanceDecision | None:
+        """用已完成日线窗口计算信号，并封装成组合调仓决策。"""
         signal = build_dual_momentum_signal(
             prices,
             volumes,
@@ -100,6 +104,7 @@ class DualMomentumPoolStrategy(PoolLiveStrategy):
 
 
 def build_pool_strategy(config: StockPoolConfig) -> PoolLiveStrategy:
+    """按 stock_pool.strategy.name 构建 live 股票池策略。"""
     strategy_name = config.strategy.name.strip().lower()
     if strategy_name == "dual_momentum":
         return DualMomentumPoolStrategy(config)

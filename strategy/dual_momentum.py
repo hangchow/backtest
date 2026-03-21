@@ -75,6 +75,7 @@ class DualMomentumParams:
 
 @dataclass(frozen=True)
 class DualMomentumSignal:
+    """dual momentum 根据信号窗口产出的目标权重结果。"""
     completed_trade_date: Any
     target_codes: tuple[str, ...]
     target_weights: dict[str, float]
@@ -217,6 +218,7 @@ def required_dual_momentum_warmup_bars(
     target_annual_vol: float = DEFAULT_TARGET_ANNUAL_VOL,
     max_gross_exposure: float = DEFAULT_MAX_GROSS_EXPOSURE,
 ) -> int:
+    """计算 dual momentum warm-up 至少要准备的日线根数。"""
     # warm-up 至少要覆盖所有滚动窗口，再额外留一点余量，避免边界日刚好缺数据。
     signal_bars = required_dual_momentum_signal_bars(
         params=params,
@@ -250,6 +252,7 @@ def build_dual_momentum_signal(
     target_annual_vol: float = DEFAULT_TARGET_ANNUAL_VOL,
     max_gross_exposure: float = DEFAULT_MAX_GROSS_EXPOSURE,
 ) -> DualMomentumSignal | None:
+    """基于已完成日线窗口计算 dual momentum 目标权重。"""
     # 所有上层调用最终都汇总到这里，先拿到一份已经完成默认值填充和校验的参数对象。
     resolved = _resolve_dual_momentum_params(
         params=params,

@@ -9,6 +9,7 @@ import pandas as pd
 
 @dataclass(frozen=True)
 class CompletedDailyFrames:
+    """换日时输出给策略层的已完成日线窗口。"""
     signal_time: pd.Timestamp
     current_trade_date: date
     prices: pd.DataFrame
@@ -16,6 +17,7 @@ class CompletedDailyFrames:
 
 
 def normalize_daily_history(frame: pd.DataFrame, code: str) -> pd.DataFrame:
+    """把不同 provider 的日线格式规整成状态机统一输入。"""
     # 历史日线 warm-up 可能来自不同 provider，这里统一成策略内部的最小字段集合。
     if frame.empty:
         return pd.DataFrame(columns=["trade_date", "close", "volume", "last_bar_time"])
@@ -44,6 +46,7 @@ class DualMomentumDailyState:
         self._last_emitted_trade_date: date | None = None
 
     def bootstrap(self, histories: dict[str, pd.DataFrame]) -> None:
+        """用 warm-up 日线初始化每个股票的日频历史状态。"""
         for code in self._codes:
             history = normalize_daily_history(histories.get(code, pd.DataFrame()), code)
             self._daily_histories[code] = history.tail(self._warmup_bars).reset_index(drop=True)
@@ -58,6 +61,7 @@ class DualMomentumDailyState:
         self._last_emitted_trade_date = None
 
     def on_bar(self, code: str, bar: pd.Series | dict[str, Any]) -> CompletedDailyFrames | None:
+        """消费一根分钟 bar，必要时在换日时吐出已完成日线窗口。"""
         if code not in self._daily_histories:
             return None
 
@@ -77,6 +81,7 @@ class DualMomentumDailyState:
         signal_time: pd.Timestamp,
         current_trade_date: date,
     ) -> CompletedDailyFrames | None:
+        """在进入新交易日时，输出上一交易日前的完整价格/成交量窗口。"""
         if self._last_emitted_trade_date == current_trade_date:
             return None
         prices, volumes = self._build_completed_frames(current_trade_date=current_trade_date)
@@ -89,6 +94,7 @@ class DualMomentumDailyState:
         )
 
     def _update_daily_bar(self, code: str, timestamp: pd.Timestamp, close: float, volume: float) -> None:
+        """把分钟 bar 合并到对应交易日的日频聚合状态。"""
         history = self._daily_histories[code]
         trade_date = timestamp.date()
         if history.empty or trade_date > history.iloc[-1]["trade_date"]:
@@ -127,6 +133,7 @@ class DualMomentumDailyState:
         self._daily_histories[code] = history.sort_values("trade_date").tail(self._warmup_bars).reset_index(drop=True)
 
     def _build_completed_frames(self, *, current_trade_date: date) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """组装当前可用于出信号的 completed prices/volumes 窗口。"""
         price_map: dict[str, pd.Series] = {}
         volume_map: dict[str, pd.Series] = {}
         for code, history in self._daily_histories.items():

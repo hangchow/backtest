@@ -105,6 +105,7 @@ class DailyHistoryProvider(ABC):
         codes: Iterable[str],
         daily_warmup_bars: Mapping[str, int],
     ) -> dict[str, pd.DataFrame]:
+        """为股票池拉取 warm-up 所需的日线窗口。"""
         raise NotImplementedError
 
     @abstractmethod
@@ -115,6 +116,7 @@ class DailyHistoryProvider(ABC):
 class TradeAccountClient(ABC):
     @abstractmethod
     def connect(self) -> None:
+        """建立账户连接，并开始同步账户资金和持仓状态。"""
         raise NotImplementedError
 
     @abstractmethod
@@ -144,6 +146,7 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
         codes: Iterable[str],
         daily_warmup_bars: Mapping[str, int],
     ) -> dict[str, pd.DataFrame]:
+        """从本地 kline_day 目录读取 warm-up 所需日线窗口。"""
         normalized_codes = sorted({str(code).strip().upper() for code in codes if str(code).strip()})
         histories: dict[str, pd.DataFrame] = {}
 
@@ -279,6 +282,7 @@ class CachedRemoteDailyHistoryProvider(LocalDataDailyHistoryProvider):
         codes: Iterable[str],
         daily_warmup_bars: Mapping[str, int],
     ) -> dict[str, pd.DataFrame]:
+        """优先复用本地缓存，不足时回源远端补齐 warm-up 日线。"""
         normalized_codes = sorted({str(code).strip().upper() for code in codes if str(code).strip()})
         histories: dict[str, pd.DataFrame] = {}
 
@@ -659,6 +663,7 @@ class FutuTradeAccountClient(TradeAccountClient):
         self._lock = threading.RLock()
 
     def connect(self) -> None:
+        """连接 Futu 交易上下文，启动后台轮询并立即同步账户/持仓。"""
         with self._lock:
             self.close()
             self._poll_stop = threading.Event()
@@ -761,6 +766,7 @@ class FutuTradeAccountClient(TradeAccountClient):
                 next_position_poll = now + self._config.broker.position_poll_interval_seconds
 
     def _poll_account(self) -> None:
+        """拉取账户资金快照并回调给事件接收方。"""
         with self._lock:
             if self._trade_ctx is None or self._futu is None:
                 return
@@ -790,6 +796,7 @@ class FutuTradeAccountClient(TradeAccountClient):
         self._event_sink.on_account(self._config.account_id, snapshot)
 
     def _poll_positions(self) -> None:
+        """拉取当前持仓快照并回调给事件接收方。"""
         with self._lock:
             if self._trade_ctx is None or self._futu is None:
                 return
@@ -852,6 +859,7 @@ def create_quote_broker_client(
     event_sink: QuoteBrokerEventSink,
     logger: logging.Logger,
 ) -> QuoteBrokerClient:
+    """按配置选择 realtime quote client 实现。"""
     if config.type == "futu":
         return FutuRealtimeQuoteClient(config, event_sink, logger)
     if config.type == "mock":
@@ -863,6 +871,7 @@ def create_daily_history_provider(
     config: HistoryBrokerConfig,
     logger: logging.Logger,
 ) -> DailyHistoryProvider:
+    """按配置选择 warm-up 日线 provider 实现。"""
     if config.type == "polygon":
         return PolygonCacheDailyHistoryProvider(config, logger)
     if config.type == "futu":
@@ -875,6 +884,7 @@ def create_trade_account_client(
     event_sink: TradeAccountEventSink,
     logger: logging.Logger,
 ) -> TradeAccountClient:
+    """按配置选择交易账户 client 实现。"""
     if config.broker.type == "futu":
         return FutuTradeAccountClient(config, event_sink, logger)
     raise ValueError(f"unsupported broker type: {config.broker.type}")

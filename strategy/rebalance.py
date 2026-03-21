@@ -30,6 +30,7 @@ def compute_portfolio_value(
     positions: Mapping[str, int],
     prices: Mapping[str, float],
 ) -> float:
+    """按现金加持仓市值估算当前组合总资产。"""
     return float(cash) + sum(int(qty) * float(prices[code]) for code, qty in positions.items() if qty > 0 and code in prices)
 
 
@@ -43,6 +44,7 @@ def build_desired_shares(
     policy: RebalancePolicy,
     tradable_codes: Collection[str] | None = None,
 ) -> dict[str, int]:
+    """把目标权重转换成目标股数，并应用调仓带。"""
     policy.validate()
     tradable = set(prices) if tradable_codes is None else set(tradable_codes)
     desired: dict[str, int] = {}
@@ -71,6 +73,7 @@ def compute_affordable_qty_with_fee(
     market: str,
     security_type: str,
 ) -> tuple[int, float, dict[str, float]]:
+    """在考虑手续费后，反推出当前现金最多能买多少股。"""
     qty = min(desired_qty, int(max(0.0, available_cash) // price))
     while qty > 0:
         fee_total, fee_breakdown = compute_order_fees(
