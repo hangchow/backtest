@@ -423,7 +423,7 @@ class _BaseFutuSubmitExecutor(OrderExecutor):
 
     def _submit_intent(self, *, account: TradeAccountConfig, intent: OrderIntent) -> None:
         self._logger.info(
-            "ORDER_SUBMITTING account_id=%s executor=%s action=%s code=%s qty=%s price=%.4f signal_time=%s",
+            "ORDER_SUBMITTING account_id=%s executor=%s action=%s code=%s qty=%s price=%.4f signal_time=%s session=%s fill_outside_rth=%s",
             account.account_id,
             self.executor_name,
             intent.side,
@@ -431,6 +431,8 @@ class _BaseFutuSubmitExecutor(OrderExecutor):
             intent.qty,
             intent.limit_price,
             intent.signal_time,
+            account.execution.order_session,
+            account.execution.allow_extended_hours_trading,
         )
         submission = self._client.submit_order(intent)
         if submission.accepted:
@@ -489,7 +491,8 @@ def _build_place_order_command(account: TradeAccountConfig, intent: OrderIntent)
     return (
         f"place_order(price={intent.limit_price:.4f}, qty={intent.qty}, code='{intent.code}', "
         f"trd_side='{intent.side}', order_type='NORMAL', trd_env='{account.broker.trade_env}', "
-        f"acc_index={account.broker.account_index})"
+        f"acc_index={account.broker.account_index}, fill_outside_rth={account.execution.allow_extended_hours_trading}, "
+        f"session='{account.execution.order_session}')"
     )
 
 

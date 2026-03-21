@@ -175,6 +175,11 @@ source .venv/bin/active
     - `futu_real`
   - `trade_accounts[].execution.enable_real_trading`
   - 只有 `futu_real` 时才允许设成 `true`
+  - `trade_accounts[].execution.allow_extended_hours_trading`
+  - 是否允许订单进入美股盘前盘后时段。
+  - `trade_accounts[].execution.order_session`
+  - 支持 `RTH`、`ETH`、`ALL`、`OVERNIGHT`。
+  - 只有 `allow_extended_hours_trading=true` 时才允许用非 `RTH`。
   - `trade_accounts[].execution.max_order_notional`
   - 单笔订单最大名义金额
   - `trade_accounts[].execution.max_order_qty`
@@ -193,6 +198,12 @@ Futu行情订阅、Futu历史数据、Futu真实环境下单：
 ```
 
 这条命令会走 Futu `REAL` 环境真实提单，样例里的 `execution.enable_real_trading = true` 也是为此准备的。
+
+如果要支持美股盘前盘后交易，需要同时满足两件事：
+
+- 行情侧把 `realtime_broker.extended_time` 设成 `true`
+- 下单侧把 `trade_accounts[].execution.allow_extended_hours_trading` 设成 `true`
+  - 常见配置是 `order_session = ETH`
 
 Futu行情订阅、polygon历史数据、Futu模拟环境下单：
 

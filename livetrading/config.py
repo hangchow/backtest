@@ -10,6 +10,7 @@ SUPPORTED_REALTIME_QUOTE_BROKER_TYPES = frozenset({"futu", "mock"})
 SUPPORTED_HISTORY_BROKER_TYPES = frozenset({"futu", "polygon", "local"})
 SUPPORTED_TRADE_BROKER_TYPES = frozenset({"futu", "mock"})
 SUPPORTED_EXECUTOR_TYPES = frozenset({"mock", "futu_simulate", "futu_real"})
+SUPPORTED_ORDER_SESSIONS = frozenset({"RTH", "ETH", "ALL", "OVERNIGHT"})
 QUOTE_CONFIG_ALLOWED_TOP_LEVEL_KEYS = frozenset({"realtime_broker", "quote_broker", "broker", "history_broker", "stock_pool", "runtime"})
 HISTORY_CONFIG_ALLOWED_TOP_LEVEL_KEYS = frozenset(
     {"history_broker", "broker", "type", "host", "port", "market", "data_root", "history_host", "history_port", "kline_day_root"}
@@ -124,6 +125,14 @@ def _parse_executor_type(value: Any, *, label: str) -> str:
     return executor
 
 
+def _parse_order_session(value: Any, *, label: str, default: str = "RTH") -> str:
+    session = str(value or default).strip().upper()
+    if session not in SUPPORTED_ORDER_SESSIONS:
+        supported = ", ".join(sorted(SUPPORTED_ORDER_SESSIONS))
+        raise ValueError(f"{label} must be one of: {supported}")
+    return session
+
+
 @dataclass(frozen=True)
 class RealtimeQuoteBrokerConfig:
     type: str
@@ -220,6 +229,8 @@ class ExecutionConfig:
 
     executor: str = "mock"
     enable_real_trading: bool = False
+    allow_extended_hours_trading: bool = False
+    order_session: str = "RTH"
     max_order_notional: float | None = None
     max_order_qty: int | None = None
 
@@ -471,6 +482,20 @@ def _parse_runtime_config(raw: Mapping[str, Any]) -> RuntimeConfig:
 
 def _parse_execution_config(raw: Mapping[str, Any], *, label: str) -> ExecutionConfig:
     """把 execution 段解析成统一的执行器配置。"""
+    allow_extended_hours_trading = _coerce_bool(
+        raw.get("allow_extended_hours_trading"),
+        default=False,
+        label=f"{label}.allow_extended_hours_trading",
+    )
+    order_session = _parse_order_session(
+        raw.get("order_session"),
+        label=f"{label}.order_session",
+        default="ETH" if allow_extended_hours_trading else "RTH",
+    )
+    if allow_extended_hours_trading and order_session == "RTH":
+        raise ValueError(f"{label}.order_session must be ETH/ALL/OVERNIGHT when allow_extended_hours_trading=true")
+    if not allow_extended_hours_trading and order_session != "RTH":
+        raise ValueError(f"{label}.order_session requires allow_extended_hours_trading=true")
     return ExecutionConfig(
         executor=_parse_executor_type(raw.get("executor"), label=f"{label}.executor"),
         enable_real_trading=_coerce_bool(
@@ -478,6 +503,8 @@ def _parse_execution_config(raw: Mapping[str, Any], *, label: str) -> ExecutionC
             default=False,
             label=f"{label}.enable_real_trading",
         ),
+        allow_extended_hours_trading=allow_extended_hours_trading,
+        order_session=order_session,
         max_order_notional=_coerce_optional_float(
             raw.get("max_order_notional"),
             label=f"{label}.max_order_notional",
@@ -669,6 +696,15 @@ def build_livetrading_config(
                 f"trade account {account.account_id} market {account.broker.market} "
                 f"does not match quote market {quote_config.realtime_broker.market}"
             )
+        if account.execution.allow_extended_hours_trading:
+            if account.broker.type != "futu":
+                raise ValueError(
+                    f"trade account {account.account_id} allow_extended_hours_trading only supports broker.type=futu"
+                )
+            if account.execution.executor == "mock":
+                raise ValueError(
+                    f"trade account {account.account_id} allow_extended_hours_trading requires a futu submit executor"
+                )
         if account.execution.executor == "futu_simulate" and account.broker.trade_env != "SIMULATE":
             raise ValueError(
                 f"trade account {account.account_id} executor futu_simulate requires broker.trade_env=SIMULATE"

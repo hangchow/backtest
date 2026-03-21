@@ -91,6 +91,8 @@ class FutuTradeAccountClient(TradeAccountClient):
                 order_type=futu["OrderType"].NORMAL,
                 trd_env=self._resolve_trade_env(futu),
                 acc_index=self._config.broker.account_index,
+                fill_outside_rth=self._resolve_fill_outside_rth(),
+                session=self._resolve_order_session(futu),
             )
         if ret != futu["RET_OK"]:
             return OrderSubmission(
@@ -267,6 +269,14 @@ class FutuTradeAccountClient(TradeAccountClient):
         if self._config.broker.trade_env == "SIMULATE":
             return futu["TrdEnv"].SIMULATE
         return futu["TrdEnv"].REAL
+
+    def _resolve_fill_outside_rth(self) -> bool:
+        """扩展时段订单需要显式打开 fill_outside_rth。"""
+        return bool(self._config.execution.allow_extended_hours_trading)
+
+    def _resolve_order_session(self, futu):
+        """把 execution.order_session 映射成 Futu SDK 的时段枚举。"""
+        return getattr(futu["Session"], self._config.execution.order_session)
 
     def _resolve_trd_side(self, side: str, futu):
         """把统一 side 字段映射成 Futu SDK 的买卖方向枚举。"""

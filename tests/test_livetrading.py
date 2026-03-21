@@ -664,6 +664,73 @@ class LiveTradingConfigTests(unittest.TestCase):
 
         self.assertEqual(config.accounts[0].execution.executor, "mock")
         self.assertFalse(config.accounts[0].execution.enable_real_trading)
+        self.assertFalse(config.accounts[0].execution.allow_extended_hours_trading)
+        self.assertEqual(config.accounts[0].execution.order_session, "RTH")
+
+    def test_load_trade_accounts_config_parses_extended_hours_execution_fields(self) -> None:
+        payload = build_trade_payload(
+            [
+                build_trade_account_payload(
+                    "sim_primary",
+                    "127.0.0.9",
+                    execution={
+                        "executor": "futu_simulate",
+                        "allow_extended_hours_trading": True,
+                        "order_session": "ETH",
+                    },
+                )
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "trade.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            config = load_trade_accounts_config(path)
+
+        self.assertTrue(config.accounts[0].execution.allow_extended_hours_trading)
+        self.assertEqual(config.accounts[0].execution.order_session, "ETH")
+
+    def test_load_trade_accounts_config_defaults_extended_hours_session_to_eth_when_enabled(self) -> None:
+        payload = build_trade_payload(
+            [
+                build_trade_account_payload(
+                    "sim_primary",
+                    "127.0.0.9",
+                    execution={
+                        "executor": "futu_simulate",
+                        "allow_extended_hours_trading": True,
+                    },
+                )
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "trade.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            config = load_trade_accounts_config(path)
+
+        self.assertEqual(config.accounts[0].execution.order_session, "ETH")
+
+    def test_load_trade_accounts_config_rejects_extended_hours_session_without_flag(self) -> None:
+        payload = build_trade_payload(
+            [
+                build_trade_account_payload(
+                    "sim_primary",
+                    "127.0.0.9",
+                    execution={
+                        "executor": "futu_simulate",
+                        "order_session": "ETH",
+                    },
+                )
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "trade.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            with self.assertRaises(ValueError):
+                load_trade_accounts_config(path)
 
     def test_load_trade_accounts_config_rejects_unrelated_top_level_keys(self) -> None:
         payload = build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.9")])
@@ -692,6 +759,21 @@ class LiveTradingConfigTests(unittest.TestCase):
         quote_payload = build_quote_payload(history_type="local")
         trade_account = build_mock_trade_account_payload(
             execution={"executor": "futu_simulate"},
+        )
+
+        with self.assertRaises(ValueError):
+            load_livetrading_config_from_payloads(quote_payload, build_trade_payload([trade_account]))
+
+    def test_build_livetrading_config_rejects_extended_hours_on_mock_executor(self) -> None:
+        quote_payload = build_quote_payload()
+        trade_account = build_trade_account_payload(
+            "sim_primary",
+            "127.0.0.9",
+            execution={
+                "executor": "mock",
+                "allow_extended_hours_trading": True,
+                "order_session": "ETH",
+            },
         )
 
         with self.assertRaises(ValueError):
@@ -1781,6 +1863,7 @@ class FutuTradeAccountClientTests(unittest.TestCase):
         client._futu = {
             "RET_OK": 0,
             "OrderType": EnumValue(NORMAL="NORMAL"),
+            "Session": EnumValue(RTH="RTH", ETH="ETH", ALL="ALL", OVERNIGHT="OVERNIGHT"),
             "TrdSide": EnumValue(BUY="BUY", SELL="SELL"),
             "TrdEnv": EnumValue(SIMULATE="SIMULATE", REAL="REAL"),
         }
@@ -1805,6 +1888,91 @@ class FutuTradeAccountClientTests(unittest.TestCase):
         self.assertEqual(fake_trade_ctx.calls[0]["order_type"], "NORMAL")
         self.assertEqual(fake_trade_ctx.calls[0]["trd_env"], "SIMULATE")
         self.assertEqual(fake_trade_ctx.calls[0]["acc_index"], 0)
+        self.assertFalse(fake_trade_ctx.calls[0]["fill_outside_rth"])
+        self.assertEqual(fake_trade_ctx.calls[0]["session"], "RTH")
+
+    def test_submit_order_passes_extended_hours_arguments_when_enabled(self) -> None:
+        config = load_livetrading_config_from_payloads(
+            build_quote_payload(),
+            build_trade_payload(
+                [
+                    build_trade_account_payload(
+                        "acct",
+                        "127.0.0.1",
+                        execution={
+                            "executor": "futu_simulate",
+                            "allow_extended_hours_trading": True,
+                            "order_session": "ETH",
+                        },
+                    )
+                ]
+            ),
+        ).trade_accounts[0]
+
+        class RecordingSink:
+            def on_account(self, account_id: str, snapshot: AccountSnapshot) -> None:
+                return None
+
+            def on_positions(self, account_id: str, positions: dict[str, PositionSnapshot]) -> None:
+                return None
+
+            def on_order_update(self, account_id: str, update) -> None:
+                return None
+
+            def on_fill(self, account_id: str, fill) -> None:
+                return None
+
+            def on_broker_message(self, level: int, message: str) -> None:
+                return None
+
+        class EnumValue:
+            def __init__(self, **values) -> None:
+                for key, value in values.items():
+                    setattr(self, key, value)
+
+        class FakeTradeContext:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            def place_order(self, **kwargs):
+                self.calls.append(kwargs)
+                return 0, pd.DataFrame(
+                    [
+                        {
+                            "order_id": "ORDER-EXT-1",
+                            "qty": kwargs["qty"],
+                            "price": kwargs["price"],
+                        }
+                    ]
+                )
+
+        client = FutuTradeAccountClient(config, RecordingSink(), logging.getLogger("test.futu_trade_account.submit.ext"))
+        fake_trade_ctx = FakeTradeContext()
+        client._trade_ctx = fake_trade_ctx
+        client._futu = {
+            "RET_OK": 0,
+            "OrderType": EnumValue(NORMAL="NORMAL"),
+            "Session": EnumValue(RTH="RTH", ETH="ETH", ALL="ALL", OVERNIGHT="OVERNIGHT"),
+            "TrdSide": EnumValue(BUY="BUY", SELL="SELL"),
+            "TrdEnv": EnumValue(SIMULATE="SIMULATE", REAL="REAL"),
+        }
+
+        submission = client.submit_order(
+            OrderIntent(
+                account_id="acct",
+                code="US.AAPL",
+                side="SELL",
+                qty=5,
+                reference_price=180.0,
+                limit_price=180.0,
+                reason="test",
+            )
+        )
+
+        self.assertTrue(submission.accepted)
+        self.assertEqual(submission.broker_order_id, "ORDER-EXT-1")
+        self.assertTrue(fake_trade_ctx.calls[0]["fill_outside_rth"])
+        self.assertEqual(fake_trade_ctx.calls[0]["session"], "ETH")
 
     def test_trade_push_handlers_emit_structured_order_and_fill_events(self) -> None:
         config = load_livetrading_config_from_payloads(

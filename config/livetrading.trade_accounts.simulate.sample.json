@@ -17,6 +17,8 @@
       "execution": {
         "executor": "futu_simulate",
         "enable_real_trading": false,
+        "allow_extended_hours_trading": false,
+        "order_session": "RTH",
         "max_order_notional": 50000.0,
         "max_order_qty": 500
       }
