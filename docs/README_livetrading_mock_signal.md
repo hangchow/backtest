@@ -1,18 +1,17 @@
 # 实时行情 Mock 触发买卖点说明
 
-这份文档说明如何在 `FutuOpenD` 没有美股实时行情订阅的情况下，用仓库里已经支持的 `mock` 实时行情入口，手工推送分钟 K 线，并让 `livetrading` 打出 `DRY_RUN_ORDER` 的买卖日志。
+这份文档说明如何在不依赖外部实时行情和交易账户的情况下，用仓库里已经支持的 `mock` 实时行情入口，手工推送分钟 K 线，并让 `livetrading` 打出 `DRY_RUN_ORDER` 的买卖日志。
 
 文档边界：
 
 - 本文只负责“怎么运行 mock、怎么推 bar、怎么复现 BUY / SELL”
 - 如果你要看运行链路，见 [README_livetrading_sequence.md](/Users/sean/workspace/backtest-feature-livetrading-startup/docs/README_livetrading_sequence.md)
-- 如果你要看代码拆分和后续重构，见 [README_livetrading_mock_refactor.md](/Users/sean/workspace/backtest-feature-livetrading-startup/docs/README_livetrading_mock_refactor.md)
-- 如果你要看补齐真实下单的设计方案，见 [README_livetrading_real_order_plan.md](/Users/sean/workspace/backtest-feature-livetrading-startup/docs/README_livetrading_real_order_plan.md)
+- 如果你要看当前执行层怎么分成 `mock / futu_simulate / futu_real`，见 [README_livetrading_real_order_plan.md](/Users/sean/workspace/backtest-feature-livetrading-startup/docs/README_livetrading_real_order_plan.md)
 
 适用场景：
 
 - `realtime_broker` 不能再走 `127.0.0.1:11111` 的 Futu 美股实时订阅。
-- 你仍然希望保留当前 `dual_momentum` 的实盘 dry-run 流程。
+- 你希望走“本地日线 warm-up + mock 行情 + mock 账户 + mock 执行”的联调流程。
 - 你希望通过手工构造分钟 K，验证信号、调仓和 dry-run 下单日志。
 
 ## 1. 先理解触发条件
@@ -33,9 +32,11 @@
 
 ### 2.1 行情配置改成 mock
 
-用仓库里的样例配置：
+用仓库里的三份样例配置：
 
 - [config/livetrading.quote.mock.sample.json](/Users/sean/workspace/backtest-feature-livetrading-startup/config/livetrading.quote.mock.sample.json)
+- [config/livetrading.history.local.sample.json](/Users/sean/workspace/backtest-feature-livetrading-startup/config/livetrading.history.local.sample.json)
+- [config/livetrading.pool.sample.json](/Users/sean/workspace/backtest-feature-livetrading-startup/config/livetrading.pool.sample.json)
 
 核心字段是：
 
@@ -51,7 +52,11 @@
 }
 ```
 
-`history_broker` 建议显式配成 `polygon`，因为策略 warm-up 用的是日线，不是实时推送；如果你想强制走 OpenD 日线，也可以改成 `futu`。
+仓库里的 history 样例把 `history_broker` 配成了 `local`，也就是只从本地 `.kline_day/` 读取 warm-up 日线，不访问 Polygon 或 Futu。
+
+如果你后面主动改成 `polygon` 或 `futu`，那就重新引入了外部依赖，不再是本文说的“全 mock 联调”。
+
+另外要注意：`local` 不等于“自动生成日线”。如果 `.kline_day/` 里没有对应股票的日线文件，warm-up 还是会缺数据。
 
 ### 2.2 账户侧必须已经有资金和持仓状态
 
@@ -66,7 +71,14 @@
 REBALANCE_SKIPPED ... reason=no_portfolio_value
 ```
 
-如果你用真实 Futu 交易账户配置，启动后先确认日志里已经出现账户/持仓同步。如果没有这些状态，策略即使出信号，也不会打出 dry-run 下单。
+如果你用仓库里的 [config/livetrading.trade_accounts.mock.sample.json](/Users/sean/workspace/backtest-feature-livetrading-startup/config/livetrading.trade_accounts.mock.sample.json)，这些基线不是从 Futu 拉的，而是启动时直接用：
+
+- `broker.initial_cash`
+- `broker.initial_positions`
+
+初始化到 engine 里。
+
+如果你后面把 trade account 配置改回 `futu`，那才需要等待 Futu 账户和持仓同步完成。
 
 ### 2.3 目标股票必须先有参考价
 
@@ -82,8 +94,20 @@ REBALANCE_SKIPPED ... reason=no_portfolio_value
 ```bash
 ./.venv/bin/python livetrading.py \
   --quote-config config/livetrading.quote.mock.sample.json \
-  --trade-config config/livetrading.trade_accounts.sample.json
+  --history-config config/livetrading.history.local.sample.json \
+  --pool-config config/livetrading.pool.sample.json \
+  --trade-config config/livetrading.trade_accounts.mock.sample.json
 ```
+
+这组样例默认是：
+
+- `mock` 实时行情入口
+- `local` warm-up 日线
+- 独立 `stock_pool` 配置
+- `mock` 账户基线
+- `mock` 执行器
+
+也就是说，启动这条链路时不需要 `POLYGON_API_KEY`，也不需要 Futu OpenD。
 
 启动后，`mock` 行情入口会监听：
 
@@ -204,7 +228,7 @@ curl -X POST http://127.0.0.1:19111/push \
 
 下面这组请求，是我已经实际验证过能打出 `BUY -> SELL -> BUY` dry-run 日志的一组顺序。
 
-注意：这组顺序默认你已经满足了上面的“受控日线前提”。如果你仍然直接使用真实 Futu 日线 warm-up，那么最终信号方向会受到真实历史数据影响，不保证和下面完全一样。
+注意：这组顺序默认你已经满足了上面的“受控日线前提”。如果你主动把 `history_broker` 改回 `polygon` 或 `futu`，那么最终信号方向会受到外部历史数据影响，不保证和下面完全一样。
 
 ### 6.1 先给股票池补参考价
 
@@ -311,6 +335,7 @@ INFO DRY_RUN_ORDER account_id=sim_primary action=BUY code=US.AAPL qty=69 price=1
 
 - 没有账户资金状态
   - 现象：`REBALANCE_SKIPPED ... reason=no_portfolio_value`
+  - `mock` 账户样例下通常说明 `initial_cash` 配得不对，或者启动时账户基线没有成功初始化
 - 目标股票没有参考价
   - 现象：有 `DRY_RUN_REBALANCE`，但没有对应股票的 `DRY_RUN_ORDER`
 - 推送时间没有跨交易日
@@ -325,11 +350,13 @@ INFO DRY_RUN_ORDER account_id=sim_primary action=BUY code=US.AAPL qty=69 price=1
 如果你只是想“证明整条链路能打出买卖单日志”，那就要把问题拆成两层：
 
 - `realtime_broker` 用 `mock` 解决实时订阅问题
-- `history_broker` / warm-up 日线要尽量可控，否则买卖方向仍会受真实历史数据影响
+- `history_broker` 用 `local` 解决 warm-up 日线的外部依赖问题
+- `trade_accounts[].broker.type` 用 `mock` 解决账户基线的外部依赖问题
 
 也就是说：
 
 - `mock` 负责“把实时事件送进来”
 - `受控日线` 负责“保证策略一定想买/卖你指定的股票”
+- `mock` 账户负责“给执行器一个本地的现金和持仓起点”
 
 只靠随便推几根分钟 K，通常不够稳定复现买卖点。

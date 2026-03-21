@@ -1,22 +1,4 @@
 {
-  "realtime_broker": {
-    "type": "futu",
-    "host": "127.0.0.1",
-    "port": 11111,
-    "market": "US",
-    "extended_time": false
-  },
-  "history_broker": {
-    "type": "polygon",
-    "market": "US"
-  },
-  "runtime": {
-    "config_reload_interval_seconds": 10,
-    "log_level": "INFO",
-    "log_price_updates": true,
-    "log_account_updates": true,
-    "log_position_updates": true
-  },
   "stock_pool": {
     "codes": [
       "US.AAPL",

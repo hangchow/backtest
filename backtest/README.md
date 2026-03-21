@@ -4,7 +4,7 @@
 
 ## 项目概览
 
-这个项目基于港美股样本股票的 `1分钟 K 线` 与 `日 K 线` 数据，做单标与股票池的量化策略回测，并提供一个基于 `Futu OpenD` 的实时信号 dry-run 框架。
+这个项目基于港美股样本股票的 `1分钟 K 线` 与 `日 K 线` 数据，做单标与股票池的量化策略回测；仓库里另外还包含一个独立的 `livetrading` 实时交易框架，支持 `mock / futu_simulate / futu_real` 三种执行模式。
 
 ## 回测数据
 
@@ -20,6 +20,8 @@
 
 ## 文档入口
 
+- 先看总入口：[根目录 README](../README.md)
+- 如果你只关心回测口径和脚本，从下面继续
 - [港股股票池回测结果与分析](../docs/README_backtest_pool_hk.md)
 - [美股股票池回测结果与分析](../docs/README_backtest_pool_us.md)
 - [港股单标回测说明](../docs/README_backtest_single_hk.md)

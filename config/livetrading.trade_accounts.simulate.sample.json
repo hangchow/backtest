@@ -13,21 +13,12 @@
         "security_type": "stock",
         "account_poll_interval_seconds": 15,
         "position_poll_interval_seconds": 15
-      }
-    },
-    {
-      "account_id": "real_user_a",
-      "broker": {
-        "type": "futu",
-        "host": "127.0.0.1",
-        "port": 22222,
-        "market": "US",
-        "trade_env": "REAL",
-        "account_index": 0,
-        "fee_account": "futu_alt",
-        "security_type": "stock",
-        "account_poll_interval_seconds": 15,
-        "position_poll_interval_seconds": 15
+      },
+      "execution": {
+        "executor": "futu_simulate",
+        "enable_real_trading": false,
+        "max_order_notional": 50000.0,
+        "max_order_qty": 500
       }
     }
   ]

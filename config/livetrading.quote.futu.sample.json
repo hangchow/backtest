@@ -1,8 +1,8 @@
 {
   "realtime_broker": {
-    "type": "mock",
+    "type": "futu",
     "host": "127.0.0.1",
-    "port": 19111,
+    "port": 11111,
     "market": "US",
     "extended_time": false
   },

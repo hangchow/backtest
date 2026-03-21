@@ -9,7 +9,7 @@ import pandas as pd
 
 from ..config import TradeAccountConfig
 from ..futu.runtime import _load_futu_api
-from ..models import AccountSnapshot, PositionSnapshot
+from ..models import AccountSnapshot, FillEvent, OrderIntent, OrderSubmission, OrderUpdate, PositionSnapshot
 from .base import TradeAccountClient, TradeAccountEventSink
 
 
@@ -69,6 +69,51 @@ class FutuTradeAccountClient(TradeAccountClient):
                     f"account={self._config.account_id} trade context close failed: {exc}",
                 )
 
+    def submit_order(self, intent: OrderIntent) -> OrderSubmission:
+        """把一笔标准化 intent 转成 Futu place_order 调用。"""
+        with self._lock:
+            trade_ctx = self._trade_ctx
+            futu = self._futu
+            if trade_ctx is None or futu is None:
+                return OrderSubmission(
+                    account_id=self._config.account_id,
+                    broker_order_id=None,
+                    accepted=False,
+                    message="trade context is not connected",
+                    submitted_qty=intent.qty,
+                    submitted_price=intent.limit_price,
+                )
+            ret, data = trade_ctx.place_order(
+                price=float(intent.limit_price),
+                qty=int(intent.qty),
+                code=intent.code,
+                trd_side=self._resolve_trd_side(intent.side, futu),
+                order_type=futu["OrderType"].NORMAL,
+                trd_env=self._resolve_trade_env(futu),
+                acc_index=self._config.broker.account_index,
+            )
+        if ret != futu["RET_OK"]:
+            return OrderSubmission(
+                account_id=self._config.account_id,
+                broker_order_id=None,
+                accepted=False,
+                message=str(data),
+                submitted_qty=intent.qty,
+                submitted_price=intent.limit_price,
+            )
+
+        # submit ack 里会带回 Futu 的 order_id，后续 ORDER_PUSH / DEAL_PUSH 也靠它串起来。
+        row = _first_row_dict(data)
+        return OrderSubmission(
+            account_id=self._config.account_id,
+            broker_order_id=_coerce_optional_str(row.get("order_id")) if row is not None else None,
+            accepted=True,
+            message=_coerce_optional_str(row.get("remark")) if row is not None else None,
+            submitted_qty=int(_coerce_optional_float(row.get("qty")) or intent.qty) if row is not None else intent.qty,
+            submitted_price=float(_coerce_optional_float(row.get("price")) or intent.limit_price) if row is not None else intent.limit_price,
+            raw=row or {},
+        )
+
     def _build_trade_order_handler(self):
         futu = self._futu
         broker = self
@@ -83,13 +128,24 @@ class FutuTradeAccountClient(TradeAccountClient):
                     )
                     return ret_code, content
                 if not content.empty:
-                    row = content.iloc[0]
-                    broker._event_sink.on_broker_message(
-                        logging.INFO,
-                        "ORDER_PUSH "
-                        f"account={broker._config.account_id} code={row.get('code')} status={row.get('order_status')} "
-                        f"dealt_qty={row.get('dealt_qty')} avg_price={row.get('dealt_avg_price')} side={row.get('trd_side')}",
-                    )
+                    for _, row in content.iterrows():
+                        update = OrderUpdate(
+                            account_id=broker._config.account_id,
+                            broker_order_id=_coerce_optional_str(row.get("order_id")) or "UNKNOWN",
+                            code=_coerce_optional_str(row.get("code")),
+                            side=_coerce_optional_str(row.get("trd_side")),
+                            status=_coerce_optional_str(row.get("order_status")),
+                            dealt_qty=int(_coerce_optional_float(row.get("dealt_qty")) or 0),
+                            avg_price=_coerce_optional_float(row.get("dealt_avg_price")),
+                            raw=row.to_dict(),
+                        )
+                        broker._event_sink.on_order_update(broker._config.account_id, update)
+                        broker._event_sink.on_broker_message(
+                            logging.INFO,
+                            "ORDER_PUSH "
+                            f"account={broker._config.account_id} code={row.get('code')} status={row.get('order_status')} "
+                            f"dealt_qty={row.get('dealt_qty')} avg_price={row.get('dealt_avg_price')} side={row.get('trd_side')}",
+                        )
                 return ret_code, content
 
         return TradeOrderHandler()
@@ -108,13 +164,23 @@ class FutuTradeAccountClient(TradeAccountClient):
                     )
                     return ret_code, content
                 if not content.empty:
-                    row = content.iloc[0]
-                    broker._event_sink.on_broker_message(
-                        logging.INFO,
-                        "DEAL_PUSH "
-                        f"account={broker._config.account_id} code={row.get('code')} qty={row.get('qty')} "
-                        f"price={row.get('price')} side={row.get('trd_side')}",
-                    )
+                    for _, row in content.iterrows():
+                        fill = FillEvent(
+                            account_id=broker._config.account_id,
+                            broker_order_id=_coerce_optional_str(row.get("order_id")) or "UNKNOWN",
+                            code=_coerce_optional_str(row.get("code")),
+                            side=_coerce_optional_str(row.get("trd_side")),
+                            fill_qty=int(_coerce_optional_float(row.get("qty")) or 0),
+                            fill_price=_coerce_optional_float(row.get("price")),
+                            raw=row.to_dict(),
+                        )
+                        broker._event_sink.on_fill(broker._config.account_id, fill)
+                        broker._event_sink.on_broker_message(
+                            logging.INFO,
+                            "DEAL_PUSH "
+                            f"account={broker._config.account_id} code={row.get('code')} qty={row.get('qty')} "
+                            f"price={row.get('price')} side={row.get('trd_side')}",
+                        )
                 return ret_code, content
 
         return TradeDealHandler()
@@ -197,9 +263,19 @@ class FutuTradeAccountClient(TradeAccountClient):
         self._event_sink.on_positions(self._config.account_id, positions)
 
     def _resolve_trade_env(self, futu):
+        """把配置里的字符串环境映射成 Futu SDK 枚举。"""
         if self._config.broker.trade_env == "SIMULATE":
             return futu["TrdEnv"].SIMULATE
         return futu["TrdEnv"].REAL
+
+    def _resolve_trd_side(self, side: str, futu):
+        """把统一 side 字段映射成 Futu SDK 的买卖方向枚举。"""
+        normalized = side.strip().upper()
+        if normalized == "BUY":
+            return futu["TrdSide"].BUY
+        if normalized == "SELL":
+            return futu["TrdSide"].SELL
+        raise ValueError(f"unsupported order side: {side}")
 
 
 def _coerce_optional_float(value: Any) -> float | None:
@@ -222,3 +298,9 @@ def _coerce_optional_str(value: Any) -> str | None:
     if not normalized or normalized.upper() == "N/A":
         return None
     return normalized
+
+
+def _first_row_dict(frame: Any) -> dict[str, Any] | None:
+    if frame is None or not hasattr(frame, "empty") or frame.empty:
+        return None
+    return frame.iloc[0].to_dict()

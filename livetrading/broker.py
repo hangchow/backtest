@@ -36,6 +36,14 @@ def create_daily_history_provider(
         from .history_providers.polygon import PolygonCacheDailyHistoryProvider
 
         return PolygonCacheDailyHistoryProvider(config, logger)
+    if config.type == "local":
+        from .history_providers.local import LocalDataDailyHistoryProvider
+
+        return LocalDataDailyHistoryProvider(
+            config,
+            logger,
+            kline_day_root=config.data_root or ".kline_day",
+        )
     if config.type == "futu":
         from .history_providers.futu import FutuDailyHistoryProvider
 
@@ -53,4 +61,8 @@ def create_trade_account_client(
         from .trade_accounts.futu import FutuTradeAccountClient
 
         return FutuTradeAccountClient(config, event_sink, logger)
+    if config.broker.type == "mock":
+        from .trade_accounts.mock import MockTradeAccountClient
+
+        return MockTradeAccountClient(config, event_sink, logger)
     raise ValueError(f"unsupported broker type: {config.broker.type}")

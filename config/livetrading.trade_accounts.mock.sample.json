@@ -1,0 +1,24 @@
+{
+  "trade_accounts": [
+    {
+      "account_id": "mock_primary",
+      "broker": {
+        "type": "mock",
+        "market": "US",
+        "currency": "USD",
+        "initial_cash": 100000.0,
+        "initial_positions": {},
+        "fee_account": "futu_alt",
+        "security_type": "stock",
+        "account_poll_interval_seconds": 15,
+        "position_poll_interval_seconds": 15
+      },
+      "execution": {
+        "executor": "mock",
+        "enable_real_trading": false,
+        "max_order_notional": 50000.0,
+        "max_order_qty": 500
+      }
+    }
+  ]
+}

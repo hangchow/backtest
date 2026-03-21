@@ -3,7 +3,8 @@ from __future__ import annotations
 import pandas as pd
 
 from ..futu.runtime import _load_futu_api
-from .common import HISTORY_COLUMNS, CachedRemoteDailyHistoryProvider
+from .cached import CachedRemoteDailyHistoryProvider
+from .common import HISTORY_COLUMNS
 
 
 class FutuDailyHistoryProvider(CachedRemoteDailyHistoryProvider):

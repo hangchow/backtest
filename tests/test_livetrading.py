@@ -15,19 +15,23 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from livetrading.broker import create_daily_history_provider
-from livetrading.config import RealtimeQuoteBrokerConfig, load_livetrading_config, load_quote_config, load_trade_accounts_config
+from livetrading.account_state import AccountStateStore
+from livetrading.broker import create_daily_history_provider, create_trade_account_client
+from livetrading.config import RealtimeQuoteBrokerConfig, load_history_config, load_livetrading_config, load_pool_config, load_quote_config, load_trade_accounts_config
 from livetrading.engine import LiveTradingEngine
+from livetrading.execution import AccountRebalancePlan, FutuSimulateExecutor
 from livetrading.history_providers.base import DailyHistoryProvider
-from livetrading.history_providers.common import LocalDataDailyHistoryProvider, _expected_latest_trade_date_for_market
+from livetrading.history_providers.common import _expected_latest_trade_date_for_market
 from livetrading.history_providers.futu import FutuDailyHistoryProvider
+from livetrading.history_providers.local import LocalDataDailyHistoryProvider
 from livetrading.history_providers.polygon import PolygonCacheDailyHistoryProvider
-from livetrading.models import AccountSnapshot, PositionSnapshot, QuoteUpdate
+from livetrading.models import AccountSnapshot, FillEvent, OrderIntent, OrderSubmission, OrderUpdate, PortfolioRebalanceDecision, PositionSnapshot, QuoteUpdate
 from livetrading.pool_strategies import build_pool_strategy
 from livetrading.quote_brokers.base import QuoteBrokerClient
 from livetrading.quote_brokers.mock import MockRealtimeQuoteClient
 from livetrading.trade_accounts.base import TradeAccountClient
 from livetrading.trade_accounts.futu import FutuTradeAccountClient
+from livetrading.trade_accounts.mock import MockTradeAccountClient
 
 
 def build_daily_history(code: str, closes: list[float], volumes: list[float] | None = None) -> pd.DataFrame:
@@ -73,6 +77,8 @@ def build_quote_payload(
     if history_type == "futu":
         history_broker["host"] = history_host
         history_broker["port"] = history_port
+    if history_type == "local":
+        history_broker["data_root"] = ".kline_day"
     return {
         "realtime_broker": {
             "type": "futu",
@@ -114,11 +120,66 @@ def build_trade_payload(accounts: list[dict[str, object]]) -> dict[str, object]:
     return {"trade_accounts": accounts}
 
 
-def build_trade_account_payload(account_id: str, host: str, port: int = 21111, account_index: int = 0) -> dict[str, object]:
+def build_history_payload(
+    *,
+    history_type: str = "polygon",
+    history_host: str = "127.0.0.2",
+    history_port: int = 22222,
+) -> dict[str, object]:
+    history_broker: dict[str, object] = {
+        "type": history_type,
+        "market": "US",
+    }
+    if history_type == "futu":
+        history_broker["host"] = history_host
+        history_broker["port"] = history_port
+    if history_type == "local":
+        history_broker["data_root"] = ".kline_day"
+    return {"history_broker": history_broker}
+
+
+def build_pool_payload(
+    *,
+    codes: list[str] | None = None,
+    strategy_name: str = "dual_momentum",
+    strategy_params: dict[str, object] | None = None,
+) -> dict[str, object]:
     return {
+        "stock_pool": {
+            "codes": codes or ["US.AAPL", "US.MSFT"],
+            "strategy": {
+                "name": strategy_name,
+                "params": strategy_params
+                or {
+                    "lookback_days": 1,
+                    "long_lookback_days": 2,
+                    "long_lookback_weight": 0.0,
+                    "top_n": 1,
+                    "volume_window": 1,
+                    "min_volume_ratio": 1.0,
+                    "market_filter_window": 2,
+                    "volatility_window": 2,
+                    "target_annual_vol": 999.0,
+                    "max_gross_exposure": 1.0,
+                    "rebalance_band_pct": 0.0,
+                },
+            },
+        }
+    }
+
+
+def build_trade_account_payload(
+    account_id: str,
+    host: str,
+    port: int = 21111,
+    account_index: int = 0,
+    execution: dict[str, object] | None = None,
+    broker_type: str = "futu",
+) -> dict[str, object]:
+    payload = {
         "account_id": account_id,
         "broker": {
-            "type": "futu",
+            "type": broker_type,
             "host": host,
             "port": port,
             "market": "US",
@@ -126,6 +187,52 @@ def build_trade_account_payload(account_id: str, host: str, port: int = 21111, a
             "account_index": account_index,
         },
     }
+    if execution is not None:
+        payload["execution"] = execution
+    return payload
+
+
+def build_mock_trade_account_payload(
+    account_id: str = "mock_primary",
+    *,
+    initial_cash: float = 100000.0,
+    initial_positions: dict[str, int] | None = None,
+    execution: dict[str, object] | None = None,
+) -> dict[str, object]:
+    payload = {
+        "account_id": account_id,
+        "broker": {
+            "type": "mock",
+            "market": "US",
+            "currency": "USD",
+            "initial_cash": initial_cash,
+            "initial_positions": initial_positions or {},
+            "fee_account": "futu_alt",
+            "security_type": "stock",
+        },
+    }
+    if execution is not None:
+        payload["execution"] = execution
+    return payload
+
+
+def build_trade_account_config(
+    *,
+    account_id: str = "acct",
+    trade_env: str = "SIMULATE",
+    execution: dict[str, object] | None = None,
+) -> object:
+    quote_payload = build_quote_payload()
+    trade_account_payload = build_trade_account_payload(
+        account_id,
+        "127.0.0.9",
+        execution=execution,
+    )
+    trade_account_payload["broker"]["trade_env"] = trade_env
+    return load_livetrading_config_from_payloads(
+        quote_payload,
+        build_trade_payload([trade_account_payload]),
+    ).trade_accounts[0]
 
 class FakeQuoteBroker(QuoteBrokerClient):
     instances: list["FakeQuoteBroker"] = []
@@ -204,11 +311,23 @@ class FakeTradeAccountClient(TradeAccountClient):
         self.logger = logger
         self.closed = False
         self.connect_calls = 0
+        self.submitted_intents: list[OrderIntent] = []
         FakeTradeAccountClient.instances.append(self)
 
     def connect(self) -> None:
         self.connect_calls += 1
         self.closed = False
+
+    def submit_order(self, intent: OrderIntent) -> OrderSubmission:
+        self.submitted_intents.append(intent)
+        return OrderSubmission(
+            account_id=self.config.account_id,
+            broker_order_id=f"FAKE-ORDER-{len(self.submitted_intents)}",
+            accepted=True,
+            message="fake submission",
+            submitted_qty=intent.qty,
+            submitted_price=intent.limit_price,
+        )
 
     def close(self) -> None:
         self.closed = True
@@ -249,12 +368,21 @@ class FakeHttpServer:
 
 
 class LiveTradingConfigTests(unittest.TestCase):
-    def test_load_livetrading_config_supports_split_quote_and_trade_files(self) -> None:
+    def test_load_livetrading_config_supports_split_quote_history_pool_and_trade_files(self) -> None:
         quote_payload = build_quote_payload(realtime_host="127.0.0.1", realtime_port=11111, history_host="127.0.0.2", history_port=22222)
+        history_payload = build_history_payload(history_type="futu", history_host="127.0.0.2", history_port=22222)
+        pool_payload = build_pool_payload()
+        quote_payload.pop("history_broker")
+        quote_payload.pop("stock_pool")
         quote_payload["runtime"] = {"config_reload_interval_seconds": 3}
         trade_payload = build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.9")])
 
-        config = load_livetrading_config_from_payloads(quote_payload, trade_payload)
+        config = load_livetrading_config_from_payloads(
+            quote_payload,
+            trade_payload,
+            history_payload=history_payload,
+            pool_payload=pool_payload,
+        )
 
         self.assertEqual(config.realtime_broker.type, "futu")
         self.assertEqual(config.realtime_broker.host, "127.0.0.1")
@@ -268,6 +396,48 @@ class LiveTradingConfigTests(unittest.TestCase):
         self.assertEqual(len(config.trade_accounts), 1)
         self.assertEqual(config.trade_accounts[0].account_id, "sim_primary")
         self.assertEqual(config.trade_accounts[0].broker.host, "127.0.0.9")
+
+    def test_load_history_config_supports_wrapped_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "history.json"
+            path.write_text(
+                json.dumps(build_history_payload(history_type="local")),
+                encoding="utf-8",
+            )
+
+            config = load_history_config(path)
+
+        self.assertEqual(config.type, "local")
+        self.assertEqual(config.data_root, ".kline_day")
+
+    def test_load_pool_config_supports_wrapped_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "pool.json"
+            path.write_text(
+                json.dumps(build_pool_payload()),
+                encoding="utf-8",
+            )
+
+            config = load_pool_config(path)
+
+        self.assertEqual(config.codes, ("US.AAPL", "US.MSFT"))
+        self.assertEqual(config.strategy.name, "dual_momentum")
+
+    def test_build_livetrading_config_rejects_missing_history_config(self) -> None:
+        quote_payload = build_quote_payload()
+        quote_payload.pop("history_broker")
+        trade_payload = build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.9")])
+
+        with self.assertRaises(ValueError):
+            load_livetrading_config_from_payloads(quote_payload, trade_payload)
+
+    def test_build_livetrading_config_rejects_missing_pool_config(self) -> None:
+        quote_payload = build_quote_payload()
+        quote_payload.pop("stock_pool")
+        trade_payload = build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.9")])
+
+        with self.assertRaises(ValueError):
+            load_livetrading_config_from_payloads(quote_payload, trade_payload)
 
     def test_load_quote_config_supports_separate_realtime_and_history_sources(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -285,6 +455,17 @@ class LiveTradingConfigTests(unittest.TestCase):
         self.assertEqual(config.history_broker.type, "futu")
         self.assertEqual(config.history_broker.host, "127.0.0.2")
         self.assertEqual(config.history_broker.port, 22222)
+
+    def test_load_quote_config_allows_stock_pool_to_be_split_out(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "quote.json"
+            payload = build_quote_payload("127.0.0.1", 11111, "127.0.0.2", 22222)
+            payload.pop("stock_pool")
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            config = load_quote_config(path)
+
+        self.assertIsNone(config.stock_pool)
 
     def test_load_quote_config_supports_legacy_shared_quote_broker_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -352,6 +533,21 @@ class LiveTradingConfigTests(unittest.TestCase):
         self.assertIsNone(config.history_broker.host)
         self.assertIsNone(config.history_broker.port)
 
+    def test_load_quote_config_supports_local_history_broker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "quote.json"
+            path.write_text(
+                json.dumps(build_quote_payload(history_type="local")),
+                encoding="utf-8",
+            )
+
+            config = load_quote_config(path)
+
+        self.assertEqual(config.history_broker.type, "local")
+        self.assertEqual(config.history_broker.data_root, ".kline_day")
+        self.assertIsNone(config.history_broker.host)
+        self.assertIsNone(config.history_broker.port)
+
     def test_load_quote_config_rejects_unsupported_quote_broker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "quote.json"
@@ -390,6 +586,567 @@ class LiveTradingConfigTests(unittest.TestCase):
         self.assertEqual(config.accounts[1].broker.port, 31111)
         self.assertEqual(config.accounts[1].broker.account_index, 1)
 
+    def test_load_trade_accounts_config_supports_mock_trade_broker(self) -> None:
+        payload = build_trade_payload(
+            [
+                build_mock_trade_account_payload(
+                    initial_cash=12345.0,
+                    initial_positions={"US.MSFT": 7},
+                )
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "trade.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            config = load_trade_accounts_config(path)
+
+        self.assertEqual(config.accounts[0].broker.type, "mock")
+        self.assertEqual(config.accounts[0].broker.host, "mock")
+        self.assertEqual(config.accounts[0].broker.port, 1)
+        self.assertIsNone(config.accounts[0].broker.trade_env)
+        self.assertEqual(config.accounts[0].broker.initial_cash, 12345.0)
+        self.assertEqual(config.accounts[0].broker.initial_positions, (("US.MSFT", 7),))
+
+    def test_load_trade_accounts_config_defaults_executor_to_mock(self) -> None:
+        payload = build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.9")])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "trade.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            config = load_trade_accounts_config(path)
+
+        self.assertEqual(config.accounts[0].execution.executor, "mock")
+        self.assertFalse(config.accounts[0].execution.enable_real_trading)
+
+    def test_build_livetrading_config_rejects_futu_simulate_executor_with_real_trade_env(self) -> None:
+        quote_payload = build_quote_payload()
+        trade_account = build_trade_account_payload(
+            "sim_primary",
+            "127.0.0.9",
+            execution={"executor": "futu_simulate"},
+        )
+        trade_account["broker"]["trade_env"] = "REAL"
+
+        with self.assertRaises(ValueError):
+            load_livetrading_config_from_payloads(quote_payload, build_trade_payload([trade_account]))
+
+    def test_build_livetrading_config_rejects_mock_trade_broker_with_non_mock_executor(self) -> None:
+        quote_payload = build_quote_payload(history_type="local")
+        trade_account = build_mock_trade_account_payload(
+            execution={"executor": "futu_simulate"},
+        )
+
+        with self.assertRaises(ValueError):
+            load_livetrading_config_from_payloads(quote_payload, build_trade_payload([trade_account]))
+
+
+class AccountStateStoreTests(unittest.TestCase):
+    def test_store_reconciles_expected_to_actual_when_no_pending_orders(self) -> None:
+        store = AccountStateStore(logging.getLogger("test.account_state_store"))
+        store.upsert_actual_account(
+            "acct",
+            AccountSnapshot(
+                timestamp=pd.Timestamp("2026-03-13 09:30:00"),
+                total_assets=10000.0,
+                cash=10000.0,
+                available_funds=9000.0,
+                buying_power=9000.0,
+                currency="USD",
+            ),
+        )
+        store.upsert_actual_positions(
+            "acct",
+            {
+                "US.MSFT": PositionSnapshot(
+                    code="US.MSFT",
+                    qty=12,
+                    can_sell_qty=12,
+                    average_cost=100.0,
+                    market_val=1200.0,
+                    unrealized_pl=0.0,
+                    realized_pl=0.0,
+                    currency="USD",
+                )
+            },
+        )
+        store.sync_active_codes("acct", ("US.AAPL", "US.MSFT"))
+        state = store.reconcile_from_actual("acct", ("US.AAPL", "US.MSFT"))
+
+        self.assertEqual(state.expected_cash, 9000.0)
+        self.assertEqual(state.expected_positions["US.AAPL"], 0)
+        self.assertEqual(state.expected_positions["US.MSFT"], 12)
+
+    def test_store_keeps_final_order_pending_until_actual_account_catches_up(self) -> None:
+        account = build_trade_account_config()
+        store = AccountStateStore(logging.getLogger("test.account_state_store"))
+        store.upsert_actual_account(
+            "acct",
+            AccountSnapshot(
+                timestamp=pd.Timestamp("2026-03-13 09:30:00"),
+                total_assets=10000.0,
+                cash=10000.0,
+                available_funds=1000.0,
+                buying_power=1000.0,
+                currency="USD",
+            ),
+        )
+        store.upsert_actual_positions("acct", {})
+        store.sync_active_codes("acct", ("US.MSFT",))
+        submission = OrderSubmission(
+            account_id="acct",
+            broker_order_id="ORDER-1",
+            accepted=True,
+            submitted_qty=10,
+            submitted_price=10.0,
+        )
+        store.mark_submitted(
+            account,
+            OrderIntent(
+                account_id="acct",
+                code="US.MSFT",
+                side="BUY",
+                qty=10,
+                reference_price=10.0,
+                limit_price=10.0,
+                reason="test",
+            ),
+            submission,
+        )
+        state = store.states["acct"]
+        self.assertAlmostEqual(state.expected_cash or 0.0, 898.97, places=2)
+        self.assertEqual(state.expected_positions["US.MSFT"], 10)
+
+        state = store.apply_order_update(
+            account,
+            update=OrderUpdate(
+                account_id="acct",
+                broker_order_id="ORDER-1",
+                code="US.MSFT",
+                side="BUY",
+                status="CANCELLED_PART",
+                dealt_qty=2,
+                avg_price=10.0,
+            ),
+        )
+
+        self.assertAlmostEqual(state.expected_cash or 0.0, 979.79, places=2)
+        self.assertEqual(state.expected_positions["US.MSFT"], 2)
+        self.assertEqual(list(state.pending_orders), ["ORDER-1"])
+
+        store.upsert_actual_account(
+            "acct",
+            AccountSnapshot(
+                timestamp=pd.Timestamp("2026-03-13 09:31:00"),
+                total_assets=10000.0,
+                cash=10000.0,
+                available_funds=979.79,
+                buying_power=979.79,
+                currency="USD",
+            ),
+        )
+        store.upsert_actual_positions(
+            "acct",
+            {
+                "US.MSFT": PositionSnapshot(
+                    code="US.MSFT",
+                    qty=2,
+                    can_sell_qty=2,
+                    average_cost=10.0,
+                    market_val=20.0,
+                    unrealized_pl=0.0,
+                    realized_pl=0.0,
+                    currency="USD",
+                )
+            },
+        )
+        state = store.reconcile_from_actual("acct", ("US.MSFT",))
+
+        self.assertEqual(state.pending_orders, {})
+
+    def test_store_accumulates_fill_qty_before_final_order_update(self) -> None:
+        account = build_trade_account_config()
+        store = AccountStateStore(logging.getLogger("test.account_state_store"))
+        store.upsert_actual_account(
+            "acct",
+            AccountSnapshot(
+                timestamp=pd.Timestamp("2026-03-13 09:30:00"),
+                total_assets=10000.0,
+                cash=10000.0,
+                available_funds=1000.0,
+                buying_power=1000.0,
+                currency="USD",
+            ),
+        )
+        store.upsert_actual_positions("acct", {})
+        store.sync_active_codes("acct", ("US.MSFT",))
+        store.mark_submitted(
+            account,
+            OrderIntent(
+                account_id="acct",
+                code="US.MSFT",
+                side="BUY",
+                qty=10,
+                reference_price=10.0,
+                limit_price=10.0,
+                reason="test",
+            ),
+            OrderSubmission(
+                account_id="acct",
+                broker_order_id="ORDER-2",
+                accepted=True,
+                submitted_qty=10,
+                submitted_price=10.0,
+            ),
+        )
+
+        state = store.apply_fill(
+            account,
+            FillEvent(
+                account_id="acct",
+                broker_order_id="ORDER-2",
+                code="US.MSFT",
+                side="BUY",
+                fill_qty=3,
+                fill_price=10.0,
+            ),
+        )
+
+        self.assertEqual(state.pending_orders["ORDER-2"].dealt_qty, 3)
+        self.assertEqual(state.pending_orders["ORDER-2"].filled_notional, 30.0)
+
+    def test_store_does_not_treat_partial_fill_status_as_final(self) -> None:
+        account = build_trade_account_config()
+        store = AccountStateStore(logging.getLogger("test.account_state_store"))
+        store.upsert_actual_account(
+            "acct",
+            AccountSnapshot(
+                timestamp=pd.Timestamp("2026-03-13 09:30:00"),
+                total_assets=10000.0,
+                cash=10000.0,
+                available_funds=1000.0,
+                buying_power=1000.0,
+                currency="USD",
+            ),
+        )
+        store.upsert_actual_positions("acct", {})
+        store.sync_active_codes("acct", ("US.MSFT",))
+        store.mark_submitted(
+            account,
+            OrderIntent(
+                account_id="acct",
+                code="US.MSFT",
+                side="BUY",
+                qty=10,
+                reference_price=10.0,
+                limit_price=10.0,
+                reason="test",
+            ),
+            OrderSubmission(
+                account_id="acct",
+                broker_order_id="ORDER-3",
+                accepted=True,
+                submitted_qty=10,
+                submitted_price=10.0,
+            ),
+        )
+
+        state = store.apply_order_update(
+            account,
+            OrderUpdate(
+                account_id="acct",
+                broker_order_id="ORDER-3",
+                code="US.MSFT",
+                side="BUY",
+                status="FILLED_PART",
+                dealt_qty=3,
+                avg_price=9.8,
+            ),
+        )
+
+        self.assertAlmostEqual(state.expected_cash or 0.0, 898.97, places=2)
+        self.assertEqual(state.expected_positions["US.MSFT"], 10)
+        self.assertFalse(state.pending_orders["ORDER-3"].settled_expected)
+
+    def test_store_uses_fill_notional_when_final_update_has_no_avg_price(self) -> None:
+        account = build_trade_account_config()
+        store = AccountStateStore(logging.getLogger("test.account_state_store"))
+        store.upsert_actual_account(
+            "acct",
+            AccountSnapshot(
+                timestamp=pd.Timestamp("2026-03-13 09:30:00"),
+                total_assets=10000.0,
+                cash=10000.0,
+                available_funds=1000.0,
+                buying_power=1000.0,
+                currency="USD",
+            ),
+        )
+        store.upsert_actual_positions("acct", {})
+        store.sync_active_codes("acct", ("US.MSFT",))
+        store.mark_submitted(
+            account,
+            OrderIntent(
+                account_id="acct",
+                code="US.MSFT",
+                side="BUY",
+                qty=10,
+                reference_price=10.0,
+                limit_price=10.0,
+                reason="test",
+            ),
+            OrderSubmission(
+                account_id="acct",
+                broker_order_id="ORDER-4",
+                accepted=True,
+                submitted_qty=10,
+                submitted_price=10.0,
+            ),
+        )
+        store.apply_fill(
+            account,
+            FillEvent(
+                account_id="acct",
+                broker_order_id="ORDER-4",
+                code="US.MSFT",
+                side="BUY",
+                fill_qty=2,
+                fill_price=9.0,
+            ),
+        )
+
+        state = store.apply_order_update(
+            account,
+            OrderUpdate(
+                account_id="acct",
+                broker_order_id="ORDER-4",
+                code="US.MSFT",
+                side="BUY",
+                status="CANCELLED_PART",
+                dealt_qty=2,
+                avg_price=None,
+            ),
+        )
+
+        self.assertAlmostEqual(state.expected_cash or 0.0, 981.81, places=2)
+        self.assertEqual(state.expected_positions["US.MSFT"], 2)
+
+    def test_store_reconciles_final_order_again_after_fill_arrives_late(self) -> None:
+        account = build_trade_account_config()
+        store = AccountStateStore(logging.getLogger("test.account_state_store"))
+        store.upsert_actual_account(
+            "acct",
+            AccountSnapshot(
+                timestamp=pd.Timestamp("2026-03-13 09:30:00"),
+                total_assets=10000.0,
+                cash=10000.0,
+                available_funds=1000.0,
+                buying_power=1000.0,
+                currency="USD",
+            ),
+        )
+        store.upsert_actual_positions("acct", {})
+        store.sync_active_codes("acct", ("US.MSFT",))
+        store.mark_submitted(
+            account,
+            OrderIntent(
+                account_id="acct",
+                code="US.MSFT",
+                side="BUY",
+                qty=10,
+                reference_price=10.0,
+                limit_price=10.0,
+                reason="test",
+            ),
+            OrderSubmission(
+                account_id="acct",
+                broker_order_id="ORDER-5",
+                accepted=True,
+                submitted_qty=10,
+                submitted_price=10.0,
+            ),
+        )
+
+        state = store.apply_order_update(
+            account,
+            OrderUpdate(
+                account_id="acct",
+                broker_order_id="ORDER-5",
+                code="US.MSFT",
+                side="BUY",
+                status="CANCELLED_PART",
+                dealt_qty=2,
+                avg_price=None,
+            ),
+        )
+        self.assertAlmostEqual(state.expected_cash or 0.0, 979.79, places=2)
+
+        state = store.apply_fill(
+            account,
+            FillEvent(
+                account_id="acct",
+                broker_order_id="ORDER-5",
+                code="US.MSFT",
+                side="BUY",
+                fill_qty=2,
+                fill_price=9.0,
+            ),
+        )
+
+        self.assertAlmostEqual(state.expected_cash or 0.0, 981.81, places=2)
+        self.assertEqual(state.expected_positions["US.MSFT"], 2)
+        self.assertTrue(state.pending_orders["ORDER-5"].settled_expected)
+
+    def test_prune_keeps_pending_order_codes_until_they_settle(self) -> None:
+        account = build_trade_account_config()
+        store = AccountStateStore(logging.getLogger("test.account_state_store"))
+        store.upsert_actual_account(
+            "acct",
+            AccountSnapshot(
+                timestamp=pd.Timestamp("2026-03-13 09:30:00"),
+                total_assets=10000.0,
+                cash=10000.0,
+                available_funds=1000.0,
+                buying_power=1000.0,
+                currency="USD",
+            ),
+        )
+        store.upsert_actual_positions("acct", {})
+        store.sync_active_codes("acct", ("US.AAPL",))
+        store.mark_submitted(
+            account,
+            OrderIntent(
+                account_id="acct",
+                code="US.AAPL",
+                side="BUY",
+                qty=1,
+                reference_price=100.0,
+                limit_price=100.0,
+                reason="test",
+            ),
+            OrderSubmission(
+                account_id="acct",
+                broker_order_id="ORDER-6",
+                accepted=True,
+                submitted_qty=1,
+                submitted_price=100.0,
+            ),
+        )
+
+        store.prune(active_account_ids={"acct"}, active_codes={"US.MSFT"})
+        state = store.sync_active_codes("acct", ("US.MSFT",))
+
+        self.assertIn("ORDER-6", state.pending_orders)
+        self.assertIn("US.AAPL", state.expected_positions)
+        self.assertIn("US.AAPL", state.shadow_positions)
+
+    def test_build_livetrading_config_rejects_futu_real_without_real_enabled(self) -> None:
+        quote_payload = build_quote_payload()
+        trade_account = build_trade_account_payload(
+            "real_primary",
+            "127.0.0.9",
+            execution={"executor": "futu_real", "enable_real_trading": False},
+        )
+        trade_account["broker"]["trade_env"] = "REAL"
+
+        with self.assertRaises(ValueError):
+            load_livetrading_config_from_payloads(quote_payload, build_trade_payload([trade_account]))
+
+
+class OrderExecutorTests(unittest.TestCase):
+    def test_futu_simulate_executor_resizes_buy_qty_by_available_cash_and_fee(self) -> None:
+        account = build_trade_account_config(execution={"executor": "futu_simulate"})
+        store = AccountStateStore(logging.getLogger("test.order_executor"))
+        state = store.upsert_actual_account(
+            account.account_id,
+            AccountSnapshot(
+                timestamp=pd.Timestamp("2026-03-13 09:30:00"),
+                total_assets=250.0,
+                cash=250.0,
+                available_funds=250.0,
+                buying_power=250.0,
+                currency="USD",
+            ),
+        )
+        store.upsert_actual_positions(account.account_id, {})
+        store.sync_active_codes(account.account_id, ("US.MSFT",))
+
+        client = FakeTradeAccountClient(account, object(), logging.getLogger("test.order_executor.client"))
+        executor = FutuSimulateExecutor(logging.getLogger("test.order_executor.exec"), store, client)
+        executor.execute_plan(
+            plan=AccountRebalancePlan(
+                account=account,
+                decision=PortfolioRebalanceDecision(
+                    signal_time=pd.Timestamp("2026-03-13 09:30:00"),
+                    target_weights={"US.MSFT": 1.0},
+                    reason="test",
+                ),
+                sell_intents=(),
+                buy_intents=(
+                    OrderIntent(
+                        account_id=account.account_id,
+                        code="US.MSFT",
+                        side="BUY",
+                        qty=3,
+                        reference_price=100.0,
+                        limit_price=100.0,
+                        reason="test",
+                    ),
+                ),
+            ),
+            state=state,
+        )
+
+        self.assertEqual(len(client.submitted_intents), 1)
+        self.assertEqual(client.submitted_intents[0].qty, 2)
+        self.assertEqual(len(state.pending_orders), 1)
+
+    def test_futu_simulate_executor_skips_buy_when_cash_cannot_cover_fee(self) -> None:
+        account = build_trade_account_config(execution={"executor": "futu_simulate"})
+        store = AccountStateStore(logging.getLogger("test.order_executor"))
+        state = store.upsert_actual_account(
+            account.account_id,
+            AccountSnapshot(
+                timestamp=pd.Timestamp("2026-03-13 09:30:00"),
+                total_assets=100.0,
+                cash=100.0,
+                available_funds=100.0,
+                buying_power=100.0,
+                currency="USD",
+            ),
+        )
+        store.upsert_actual_positions(account.account_id, {})
+        store.sync_active_codes(account.account_id, ("US.MSFT",))
+
+        client = FakeTradeAccountClient(account, object(), logging.getLogger("test.order_executor.client"))
+        executor = FutuSimulateExecutor(logging.getLogger("test.order_executor.exec"), store, client)
+        executor.execute_plan(
+            plan=AccountRebalancePlan(
+                account=account,
+                decision=PortfolioRebalanceDecision(
+                    signal_time=pd.Timestamp("2026-03-13 09:30:00"),
+                    target_weights={"US.MSFT": 1.0},
+                    reason="test",
+                ),
+                sell_intents=(),
+                buy_intents=(
+                    OrderIntent(
+                        account_id=account.account_id,
+                        code="US.MSFT",
+                        side="BUY",
+                        qty=1,
+                        reference_price=100.0,
+                        limit_price=100.0,
+                        reason="test",
+                    ),
+                ),
+            ),
+            state=state,
+        )
+
+        self.assertEqual(client.submitted_intents, [])
+        self.assertEqual(state.pending_orders, {})
+
 
 class MockRealtimeQuoteClientTests(unittest.TestCase):
     def test_mock_quote_client_translates_runtime_push_payload(self) -> None:
@@ -424,6 +1181,80 @@ class MockRealtimeQuoteClientTests(unittest.TestCase):
         self.assertEqual(sink.quotes[0].code, "US.AAPL")
         self.assertEqual(sink.quotes[0].last_price, 104.5)
         self.assertEqual(sink.quotes[0].source, "mock")
+
+
+class MockTradeAccountClientTests(unittest.TestCase):
+    def test_mock_trade_account_client_pushes_local_baseline_on_connect(self) -> None:
+        account = load_livetrading_config_from_payloads(
+            build_quote_payload(history_type="local"),
+            build_trade_payload(
+                [
+                    build_mock_trade_account_payload(
+                        initial_cash=12345.0,
+                        initial_positions={"US.MSFT": 3},
+                    )
+                ]
+            ),
+        ).trade_accounts[0]
+
+        class RecordingSink:
+            def __init__(self) -> None:
+                self.accounts: list[tuple[str, AccountSnapshot]] = []
+                self.positions: list[tuple[str, dict[str, PositionSnapshot]]] = []
+                self.messages: list[tuple[int, str]] = []
+
+            def on_account(self, account_id: str, snapshot: AccountSnapshot) -> None:
+                self.accounts.append((account_id, snapshot))
+
+            def on_positions(self, account_id: str, positions: dict[str, PositionSnapshot]) -> None:
+                self.positions.append((account_id, positions))
+
+            def on_order_update(self, account_id: str, update: OrderUpdate) -> None:
+                return None
+
+            def on_fill(self, account_id: str, fill: FillEvent) -> None:
+                return None
+
+            def on_broker_message(self, level: int, message: str) -> None:
+                self.messages.append((level, message))
+
+        sink = RecordingSink()
+        client = MockTradeAccountClient(account, sink, logging.getLogger("test.mock_trade_account"))
+
+        client.connect()
+
+        self.assertEqual(len(sink.accounts), 1)
+        self.assertEqual(sink.accounts[0][0], "mock_primary")
+        self.assertEqual(sink.accounts[0][1].available_funds, 12345.0)
+        self.assertEqual(len(sink.positions), 1)
+        self.assertEqual(sink.positions[0][1]["US.MSFT"].qty, 3)
+        self.assertTrue(any("mock account connected" in message for _, message in sink.messages))
+
+    def test_create_trade_account_client_supports_mock_trade_broker(self) -> None:
+        account = load_livetrading_config_from_payloads(
+            build_quote_payload(history_type="local"),
+            build_trade_payload([build_mock_trade_account_payload()]),
+        ).trade_accounts[0]
+
+        class Sink:
+            def on_account(self, account_id: str, snapshot: AccountSnapshot) -> None:
+                return None
+
+            def on_positions(self, account_id: str, positions: dict[str, PositionSnapshot]) -> None:
+                return None
+
+            def on_order_update(self, account_id: str, update: OrderUpdate) -> None:
+                return None
+
+            def on_fill(self, account_id: str, fill: FillEvent) -> None:
+                return None
+
+            def on_broker_message(self, level: int, message: str) -> None:
+                return None
+
+        client = create_trade_account_client(account, Sink(), logging.getLogger("test.mock_trade_account.factory"))
+
+        self.assertIsInstance(client, MockTradeAccountClient)
 
 
 class LocalDataDailyHistoryProviderTests(unittest.TestCase):
@@ -835,6 +1666,164 @@ class FutuTradeAccountClientTests(unittest.TestCase):
         self.assertEqual(len(client._trade_ctx.handlers), 2)
         self.assertIsInstance(client._poll_thread, PollThreadStub)
         self.assertTrue(client._poll_thread.started)
+
+    def test_submit_order_calls_place_order_with_expected_futu_arguments(self) -> None:
+        config = load_livetrading_config_from_payloads(
+            build_quote_payload(),
+            build_trade_payload(
+                [
+                    build_trade_account_payload(
+                        "acct",
+                        "127.0.0.1",
+                        execution={"executor": "futu_simulate"},
+                    )
+                ]
+            ),
+        ).trade_accounts[0]
+
+        class RecordingSink:
+            def on_account(self, account_id: str, snapshot: AccountSnapshot) -> None:
+                return None
+
+            def on_positions(self, account_id: str, positions: dict[str, PositionSnapshot]) -> None:
+                return None
+
+            def on_order_update(self, account_id: str, update) -> None:
+                return None
+
+            def on_fill(self, account_id: str, fill) -> None:
+                return None
+
+            def on_broker_message(self, level: int, message: str) -> None:
+                return None
+
+        class EnumValue:
+            def __init__(self, **values) -> None:
+                for key, value in values.items():
+                    setattr(self, key, value)
+
+        class FakeTradeContext:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            def place_order(self, **kwargs):
+                self.calls.append(kwargs)
+                return 0, pd.DataFrame(
+                    [
+                        {
+                            "order_id": "ORDER-1",
+                            "qty": kwargs["qty"],
+                            "price": kwargs["price"],
+                        }
+                    ]
+                )
+
+        client = FutuTradeAccountClient(config, RecordingSink(), logging.getLogger("test.futu_trade_account.submit"))
+        fake_trade_ctx = FakeTradeContext()
+        client._trade_ctx = fake_trade_ctx
+        client._futu = {
+            "RET_OK": 0,
+            "OrderType": EnumValue(NORMAL="NORMAL"),
+            "TrdSide": EnumValue(BUY="BUY", SELL="SELL"),
+            "TrdEnv": EnumValue(SIMULATE="SIMULATE", REAL="REAL"),
+        }
+
+        submission = client.submit_order(
+            OrderIntent(
+                account_id="acct",
+                code="US.MSFT",
+                side="BUY",
+                qty=10,
+                reference_price=120.0,
+                limit_price=120.0,
+                reason="test",
+            )
+        )
+
+        self.assertTrue(submission.accepted)
+        self.assertEqual(submission.broker_order_id, "ORDER-1")
+        self.assertEqual(fake_trade_ctx.calls[0]["code"], "US.MSFT")
+        self.assertEqual(fake_trade_ctx.calls[0]["qty"], 10)
+        self.assertEqual(fake_trade_ctx.calls[0]["trd_side"], "BUY")
+        self.assertEqual(fake_trade_ctx.calls[0]["order_type"], "NORMAL")
+        self.assertEqual(fake_trade_ctx.calls[0]["trd_env"], "SIMULATE")
+        self.assertEqual(fake_trade_ctx.calls[0]["acc_index"], 0)
+
+    def test_trade_push_handlers_emit_structured_order_and_fill_events(self) -> None:
+        config = load_livetrading_config_from_payloads(
+            build_quote_payload(),
+            build_trade_payload([build_trade_account_payload("acct", "127.0.0.1")]),
+        ).trade_accounts[0]
+
+        class RecordingSink:
+            def __init__(self) -> None:
+                self.order_updates = []
+                self.fills = []
+                self.messages = []
+
+            def on_account(self, account_id: str, snapshot: AccountSnapshot) -> None:
+                return None
+
+            def on_positions(self, account_id: str, positions: dict[str, PositionSnapshot]) -> None:
+                return None
+
+            def on_order_update(self, account_id: str, update) -> None:
+                self.order_updates.append((account_id, update))
+
+            def on_fill(self, account_id: str, fill) -> None:
+                self.fills.append((account_id, fill))
+
+            def on_broker_message(self, level: int, message: str) -> None:
+                self.messages.append((level, message))
+
+        class HandlerBase:
+            def on_recv_rsp(self, rsp_pb):
+                return 0, rsp_pb
+
+        sink = RecordingSink()
+        client = FutuTradeAccountClient(config, sink, logging.getLogger("test.futu_trade_account.push"))
+        client._futu = {
+            "RET_OK": 0,
+            "TradeOrderHandlerBase": HandlerBase,
+            "TradeDealHandlerBase": HandlerBase,
+        }
+
+        order_handler = client._build_trade_order_handler()
+        deal_handler = client._build_trade_deal_handler()
+        order_handler.on_recv_rsp(
+            pd.DataFrame(
+                [
+                    {
+                        "order_id": "ORDER-1",
+                        "code": "US.MSFT",
+                        "order_status": "SUBMITTED",
+                        "dealt_qty": 2,
+                        "dealt_avg_price": 120.5,
+                        "trd_side": "BUY",
+                    }
+                ]
+            )
+        )
+        deal_handler.on_recv_rsp(
+            pd.DataFrame(
+                [
+                    {
+                        "order_id": "ORDER-1",
+                        "code": "US.MSFT",
+                        "qty": 2,
+                        "price": 120.5,
+                        "trd_side": "BUY",
+                    }
+                ]
+            )
+        )
+
+        self.assertEqual(len(sink.order_updates), 1)
+        self.assertEqual(sink.order_updates[0][1].broker_order_id, "ORDER-1")
+        self.assertEqual(sink.order_updates[0][1].status, "SUBMITTED")
+        self.assertEqual(len(sink.fills), 1)
+        self.assertEqual(sink.fills[0][1].broker_order_id, "ORDER-1")
+        self.assertEqual(sink.fills[0][1].fill_qty, 2)
 
     def test_polygon_cache_provider_reads_dot_kline_day_and_trims_to_requested_bars_when_fresh(self) -> None:
         remote_calls: list[tuple[str, int]] = []
@@ -1447,6 +2436,141 @@ class LiveTradingEngineTests(unittest.TestCase):
         self.assertGreater(state_secondary.shadow_positions["US.MSFT"], 0)
         self.assertLess(state_secondary.shadow_cash or 0.0, 20000.0)
 
+    def test_engine_marks_pending_order_and_expected_state_for_futu_simulate_executor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            quote_path = Path(tmp) / "quote.json"
+            trade_path = Path(tmp) / "trade.json"
+            quote_path.write_text(json.dumps(build_quote_payload()), encoding="utf-8")
+            trade_path.write_text(
+                json.dumps(
+                    build_trade_payload(
+                        [
+                            build_trade_account_payload(
+                                "sim_primary",
+                                "127.0.0.9",
+                                execution={"executor": "futu_simulate"},
+                            )
+                        ]
+                    )
+                ),
+                encoding="utf-8",
+            )
+            config = load_livetrading_config(quote_path, trade_path)
+
+            engine = LiveTradingEngine(
+                quote_path,
+                trade_path,
+                quote_broker_factory=FakeQuoteBroker,
+                history_provider_factory=FakeHistoryProvider,
+                trade_account_factory=FakeTradeAccountClient,
+            )
+            engine.apply_config(config)
+            engine.on_account(
+                "sim_primary",
+                AccountSnapshot(
+                    timestamp=pd.Timestamp("2026-03-13 09:30:00"),
+                    total_assets=10000.0,
+                    cash=10000.0,
+                    available_funds=10000.0,
+                    buying_power=10000.0,
+                    currency="USD",
+                ),
+            )
+            engine.on_positions("sim_primary", {})
+            engine.on_quote(
+                QuoteUpdate(
+                    code="US.AAPL",
+                    timestamp=pd.Timestamp("2026-03-13 09:29:00"),
+                    last_price=104.0,
+                )
+            )
+            engine.on_quote(
+                QuoteUpdate(
+                    code="US.MSFT",
+                    timestamp=pd.Timestamp("2026-03-13 09:29:00"),
+                    last_price=121.0,
+                )
+            )
+            engine.on_bar("US.AAPL", build_minute_bar("US.AAPL", "2026-03-13 09:30:00", 104.0))
+            engine.stop()
+
+        state = engine._account_states["sim_primary"]
+        self.assertEqual(len(state.pending_orders), 1)
+        self.assertEqual(FakeTradeAccountClient.instances[0].submitted_intents[0].side, "BUY")
+        self.assertEqual(state.shadow_positions["US.MSFT"], 0)
+        self.assertGreater(state.expected_positions["US.MSFT"], 0)
+        self.assertLess(state.expected_cash or 0.0, 10000.0)
+
+    def test_engine_continues_other_accounts_when_live_account_not_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            quote_path = Path(tmp) / "quote.json"
+            trade_path = Path(tmp) / "trade.json"
+            quote_path.write_text(json.dumps(build_quote_payload()), encoding="utf-8")
+            trade_path.write_text(
+                json.dumps(
+                    build_trade_payload(
+                        [
+                            build_trade_account_payload(
+                                "sim_submit",
+                                "127.0.0.9",
+                                execution={"executor": "futu_simulate"},
+                            ),
+                            build_trade_account_payload(
+                                "sim_mock",
+                                "127.0.0.10",
+                                execution={"executor": "mock"},
+                            ),
+                        ]
+                    )
+                ),
+                encoding="utf-8",
+            )
+            config = load_livetrading_config(quote_path, trade_path)
+
+            engine = LiveTradingEngine(
+                quote_path,
+                trade_path,
+                quote_broker_factory=FakeQuoteBroker,
+                history_provider_factory=FakeHistoryProvider,
+                trade_account_factory=FakeTradeAccountClient,
+            )
+            engine.apply_config(config)
+            engine.on_account(
+                "sim_mock",
+                AccountSnapshot(
+                    timestamp=pd.Timestamp("2026-03-13 09:30:00"),
+                    total_assets=10000.0,
+                    cash=10000.0,
+                    available_funds=10000.0,
+                    buying_power=10000.0,
+                    currency="USD",
+                ),
+            )
+            engine.on_positions("sim_mock", {})
+            engine.on_quote(
+                QuoteUpdate(
+                    code="US.AAPL",
+                    timestamp=pd.Timestamp("2026-03-13 09:29:00"),
+                    last_price=104.0,
+                )
+            )
+            engine.on_quote(
+                QuoteUpdate(
+                    code="US.MSFT",
+                    timestamp=pd.Timestamp("2026-03-13 09:29:00"),
+                    last_price=121.0,
+                )
+            )
+
+            engine.on_bar("US.AAPL", build_minute_bar("US.AAPL", "2026-03-13 09:30:00", 104.0))
+            engine.stop()
+
+        mock_state = engine._account_states["sim_mock"]
+        submit_state = engine._account_states["sim_submit"]
+        self.assertGreater(mock_state.shadow_positions["US.MSFT"], 0)
+        self.assertEqual(submit_state.pending_orders, {})
+        self.assertEqual(FakeTradeAccountClient.instances[0].submitted_intents, [])
+
     def test_engine_logs_account_and_positions_only_after_config_changes(self) -> None:
         class ListHandler(logging.Handler):
             def __init__(self) -> None:
@@ -1617,13 +2741,28 @@ class LiveTradingEngineTests(unittest.TestCase):
         self.assertEqual(FakeQuoteBroker.instances[0].connect_calls, 1)
 
 
-def load_livetrading_config_from_payloads(quote_payload: dict, trade_payload: dict) -> object:
+def load_livetrading_config_from_payloads(
+    quote_payload: dict,
+    trade_payload: dict,
+    history_payload: dict | None = None,
+    pool_payload: dict | None = None,
+) -> object:
     with tempfile.TemporaryDirectory() as tmp:
         quote_path = Path(tmp) / "quote.json"
         trade_path = Path(tmp) / "trade.json"
         quote_path.write_text(json.dumps(quote_payload), encoding="utf-8")
         trade_path.write_text(json.dumps(trade_payload), encoding="utf-8")
-        return load_livetrading_config(quote_path, trade_path)
+        if history_payload is None and pool_payload is None:
+            return load_livetrading_config(quote_path, trade_path)
+        history_path = None
+        if history_payload is not None:
+            history_path = Path(tmp) / "history.json"
+            history_path.write_text(json.dumps(history_payload), encoding="utf-8")
+        pool_path = None
+        if pool_payload is not None:
+            pool_path = Path(tmp) / "pool.json"
+            pool_path.write_text(json.dumps(pool_payload), encoding="utf-8")
+        return load_livetrading_config(quote_path, trade_path, history_path, pool_path)
 
 
 if __name__ == "__main__":

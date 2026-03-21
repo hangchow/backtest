@@ -10,7 +10,8 @@ from urllib.request import urlopen
 
 import pandas as pd
 
-from .common import HISTORY_COLUMNS, NEW_YORK, CachedRemoteDailyHistoryProvider
+from .cached import CachedRemoteDailyHistoryProvider
+from .common import HISTORY_COLUMNS, NEW_YORK
 
 
 class PolygonCacheDailyHistoryProvider(CachedRemoteDailyHistoryProvider):

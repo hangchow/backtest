@@ -15,6 +15,7 @@ def _load_futu_api() -> dict[str, Any]:
         KLType,
         OpenQuoteContext,
         OpenSecTradeContext,
+        OrderType,
         RET_OK,
         StockQuoteHandlerBase,
         SubType,
@@ -22,6 +23,7 @@ def _load_futu_api() -> dict[str, Any]:
         TradeOrderHandlerBase,
         TrdEnv,
         TrdMarket,
+        TrdSide,
     )
 
     return {
@@ -30,6 +32,7 @@ def _load_futu_api() -> dict[str, Any]:
         "KLType": KLType,
         "OpenQuoteContext": OpenQuoteContext,
         "OpenSecTradeContext": OpenSecTradeContext,
+        "OrderType": OrderType,
         "RET_OK": RET_OK,
         "StockQuoteHandlerBase": StockQuoteHandlerBase,
         "SubType": SubType,
@@ -37,4 +40,5 @@ def _load_futu_api() -> dict[str, Any]:
         "TradeOrderHandlerBase": TradeOrderHandlerBase,
         "TrdEnv": TrdEnv,
         "TrdMarket": TrdMarket,
+        "TrdSide": TrdSide,
     }
