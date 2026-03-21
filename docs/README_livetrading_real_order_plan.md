@@ -1,201 +1,94 @@
-# livetrading 真实下单补齐方案
+# livetrading 下单执行方案
 
-这份文档讨论如何在当前 `livetrading` 架构上，补齐“从策略信号到真实提交订单”的执行链路。
+这份文档只讲一件事：
 
-文档边界：
+策略已经能算出“该买什么、卖什么”，下一步下单执行怎么做。
 
-- 如果你要看当前 mock 行情怎么运行、怎么推 bar，见 [README_livetrading_mock_signal.md](/Users/sean/workspace/backtest-feature-livetrading-startup/docs/README_livetrading_mock_signal.md)
-- 如果你要看当前运行链路和时序图，见 [README_livetrading_sequence.md](/Users/sean/workspace/backtest-feature-livetrading-startup/docs/README_livetrading_sequence.md)
-- 如果你要看 mock 侧如何继续重构，见 [README_livetrading_mock_refactor.md](/Users/sean/workspace/backtest-feature-livetrading-startup/docs/README_livetrading_mock_refactor.md)
+为了简单，执行器只保留 3 种：
 
-## 1. 当前状态
+- `MockExecutor`
+  - 不走 Futu
+  - 只打印“准备下什么单”
+- `FutuSimulateExecutor`
+  - 走 Futu 模拟交易环境
+- `FutuRealExecutor`
+  - 走 Futu 真实交易环境
 
-当前代码已经有：
+旧文档里的 `dry_run`，这里统一改叫 `MockExecutor`。
 
-- 行情输入
-  - `mock` / `futu` realtime quote client
-- 策略出信号
-  - `DualMomentumPoolStrategy`
-  - `PortfolioRebalanceDecision`
-- 账户状态同步
-  - `accinfo_query()`
-  - `position_list_query()`
-- dry-run 执行
-  - 计算目标股数
-  - 计算手续费
-  - 更新 `shadow_cash` / `shadow_positions`
-  - 输出 `DRY_RUN_REBALANCE` / `DRY_RUN_ORDER`
+## 1. 最终要的效果
 
-当前代码还没有：
+同一份策略信号，最后只会走下面三选一：
 
-- `TradeAccountClient.submit_order(...)`
-- 真实订单模型
-  - `OrderIntent`
-  - `OrderSubmission`
-  - `OrderUpdate`
-  - `FillEvent`
-- 订单状态机
-  - pending / submitted / partially_filled / filled / rejected / canceled
-- 基于订单回报的账户状态推进
-- 真实下单安全开关
+1. `MockExecutor`
+2. `FutuSimulateExecutor`
+3. `FutuRealExecutor`
 
-所以现在“不会真实下单”的根本原因不是 `mock` 行情，而是整个执行层还停留在 dry-run。
+不要再搞一个大而全的执行器，再在里面判断：
 
-## 2. 目标
+- `if simulate`
+- `if real`
+- `if mock`
 
-### 2.1 第一阶段目标
+这样最后一定会乱。
 
-- 保持当前策略和配置热更新主流程不变
-- 把“该下什么单”和“怎么执行这些单”拆开
-- 补齐真实下单链路，但首版只支持：
-  - Futu
-  - `trade_env=SIMULATE`
-  - 限价单
-  - long-only
-- 保留当前 dry-run 模式，且默认仍是 dry-run
+正确做法是：
 
-### 2.2 非目标
+- 规划层共用一套
+- 执行层分成 3 个类
 
-- 首版不支持自动撤单
-- 首版不支持追单 / 改价
-- 首版不支持复杂订单类型
-  - 市价单
-  - 止损单
-  - 条件单
-- 首版不支持 `trade_env=REAL` 直接放开
-- 首版不解决所有“用户在 App 手工交易”场景，只先补齐检测和对账机制
+## 2. 三个执行器分别做什么
 
-## 3. 设计原则
+### 2.1 `MockExecutor`
 
-### 3.1 执行模式必须显式配置
+用途：
 
-`trade_env=REAL` 只表示“连接真实交易环境”，不能等价于“允许真实下单”。
+- 本地看策略下单结果
+- 联调策略和调仓逻辑
+- 不连 Futu 也能跑
 
-要真实下单，必须同时满足：
+行为：
 
-- `execution.mode = broker_submit`
-- `broker.trade_env = SIMULATE`
+- 收到调仓计划
+- 逐笔打印订单
+- 不提交给 Futu
+- 不依赖 `ORDER_PUSH` / `DEAL_PUSH`
 
-只有等 `SIMULATE` 路径跑稳后，才考虑引入：
+### 2.2 `FutuSimulateExecutor`
 
-- `execution.allow_real_env = true`
-- `broker.trade_env = REAL`
+用途：
 
-### 3.2 规划和执行必须拆开
+- 用 Futu 模拟环境验证真实提单链路
+- 验证提交、回报、成交、对账
 
-当前 [livetrading/execution.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/execution.py) 里的 `DryRunRebalanceExecutor.execute_account_rebalance()` 仍然同时做了两件事：
+行为：
 
-- 规划
-  - 计算组合价值
-  - 计算目标股数
-  - 生成卖单 / 买单
-- 执行
-  - 直接修改 `shadow_cash` / `shadow_positions`
-  - 直接输出 dry-run 日志
+- 收到调仓计划
+- 调 Futu `place_order(...)`
+- `trade_env = SIMULATE`
+- 消费 `ORDER_PUSH` / `DEAL_PUSH`
 
-真实下单需要把这两层拆开，否则无法复用同一套“调仓规划”去支持：
+### 2.3 `FutuRealExecutor`
 
-- dry-run
-- broker submit
-- 后续的 paper trading / replay
+用途：
 
-### 3.3 实际账户状态必须是最终真相源
+- 真正连真实账户下单
 
-真实下单以后，不能再简单把 `shadow_cash` / `shadow_positions` 当成“已经成交”的状态。
+行为：
 
-更合理的规则是：
+- 收到调仓计划
+- 调 Futu `place_order(...)`
+- `trade_env = REAL`
+- 消费 `ORDER_PUSH` / `DEAL_PUSH`
+- 比模拟环境多一层安全开关
 
-- `actual_account`
-  - 来自 broker 轮询 / push
-- `actual_positions`
-  - 来自 broker 轮询 / push
-- `pending_orders`
-  - 记录已提交但未完全落地的订单
-- `expected_*`
-  - 用于临时预测执行中的状态
+## 3. 配置怎么写
 
-最终仍以 `actual_*` 为真相源。
-
-### 3.4 安全默认值优先
-
-默认行为必须仍然是：
-
-- dry-run
-- 不真实下单
-
-首版真实下单还必须有额外保险：
-
-- 只允许 `SIMULATE`
-- 单笔最大金额限制
-- 单笔最大股数限制
-- 必须存在参考价
-- 必须先完成账户和持仓同步
-- 每次提交都打印显式 `ORDER_SUBMITTING` 日志
-
-## 4. 当前缺口
-
-从现有代码看，至少有这几个结构缺口：
-
-### 4.1 `TradeAccountClient` 没有下单接口
-
-[livetrading/trade_accounts/base.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/trade_accounts/base.py) 里的 `TradeAccountClient` 只有：
-
-- `connect()`
-- `close()`
-
-需要扩展成至少支持：
-
-- `submit_order(intent: OrderIntent) -> OrderSubmission`
-
-### 4.2 引擎执行层把“提交订单”和“视为成交”写死在一起
-
-当前 dry-run 在 [livetrading/execution.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/execution.py) 里会直接：
-
-- 计算 `fee_total`
-- 更新 `shadow_cash`
-- 更新 `shadow_positions`
-- 打 `DRY_RUN_ORDER`
-
-真实下单后，这个顺序必须改成：
-
-- 先生成 `OrderIntent`
-- 提交给 broker
-- 收到 `OrderSubmission`
-- 等待 `ORDER_PUSH` / `DEAL_PUSH`
-- 再推进状态
-
-### 4.3 已有 `ORDER_PUSH` / `DEAL_PUSH`，但没有引擎侧消费
-
-[FutuTradeAccountClient](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/trade_accounts/futu.py) 已经注册了：
-
-- `_build_trade_order_handler()`
-- `_build_trade_deal_handler()`
-
-但现在它们只打日志，没有回调成结构化事件给引擎。
-
-### 4.4 当前账户状态模型不够表达“执行中”
-
-当前 [TradeAccountState](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/execution.py) 只有：
-
-- `actual_account`
-- `actual_positions`
-- `shadow_cash`
-- `shadow_positions`
-
-这不足以表达：
-
-- 某单已提交但未成交
-- 某单部分成交
-- 实际账户被用户在 App 手工改动
-- 本地期望状态与实际状态漂移
-
-## 5. 目标配置方案
-
-建议在每个 `trade_accounts[]` 下新增独立的 `execution` 段，而不是把执行开关塞进 `broker`：
+每个账户配置一个 `execution.executor`：
 
 ```json
 {
-  "account_id": "sim_primary",
+  "account_id": "us_primary",
   "broker": {
     "type": "futu",
     "host": "127.0.0.1",
@@ -205,212 +98,233 @@
     "account_index": 0
   },
   "execution": {
-    "mode": "dry_run",
-    "order_type": "limit",
-    "allow_real_env": false,
-    "buy_limit_price_offset_bps": 0.0,
-    "sell_limit_price_offset_bps": 0.0,
+    "executor": "futu_simulate",
+    "enable_real_trading": false,
     "max_order_notional": 50000.0,
-    "max_order_qty": 500,
-    "require_fresh_account_state": true
+    "max_order_qty": 500
   }
 }
 ```
 
-建议语义：
+只需要记住这 3 条：
 
-- `mode`
-  - `dry_run`
-  - `broker_submit`
-- `allow_real_env`
-  - 仅当 `trade_env=REAL` 时需要显式为 `true`
-- `buy_limit_price_offset_bps`
-  - 买单限价在参考价基础上向上偏移多少基点
-- `sell_limit_price_offset_bps`
-  - 卖单限价在参考价基础上向下偏移多少基点
-- `require_fresh_account_state`
-  - 如果账户资金或持仓太久没同步，拒绝提交真实订单
+1. `executor = mock`
+   - 不走 Futu
+2. `executor = futu_simulate`
+   - 必须配 `trade_env = SIMULATE`
+3. `executor = futu_real`
+   - 必须配 `trade_env = REAL`
+   - 必须配 `enable_real_trading = true`
 
-## 6. 目标模块划分
+### 3.1 逐字段说明
 
-建议在现有 [livetrading/execution.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/execution.py) 的基础上，继续补这些模块：
+下面把上面那份配置里的每个字段都单独说明。
 
-```text
-livetrading/
-  execution_models.py
-  execution_planner.py
-  execution.py
-  account_state.py
-```
+#### 顶层字段
 
-建议职责：
+- `account_id`
+  - 这是这份账户配置在系统里的唯一名字。
+  - 主要用途是区分不同交易账户，比如 `us_primary`、`us_backup`。
+  - 引擎内部会拿它做日志标识、状态归属标识和字典 key。
+  - 它强调的是“系统里的逻辑账户名”，不一定等于券商展示给用户的真实账号字符串。
 
-- `execution_models.py`
-  - `OrderIntent`
-  - `OrderSubmission`
-  - `OrderUpdate`
-  - `FillEvent`
-  - `PendingOrder`
-- `execution_planner.py`
-  - `AccountRebalancePlan`
-  - `RebalancePlanner`
-- `execution.py`
-  - 现有 `DryRunRebalanceExecutor`
-  - 后续可继续拆成 `OrderExecutor` / `DryRunOrderExecutor` / `BrokerSubmitExecutor`
-- `account_state.py`
-  - `AccountRuntimeState`
-  - `AccountStateStore`
-  - 对账 / 漂移检测逻辑
+- `broker`
+  - 这一层描述的是“怎么连到券商交易端”。
+  - 它回答的是连接地址、市场、交易环境、账户索引这些问题。
+  - 简单说，`broker` 决定“连哪里、连哪套账户环境”。
 
-现有文件的主要改动方向：
+- `execution`
+  - 这一层描述的是“信号出来以后到底怎么执行”。
+  - 它回答的是走 mock、走模拟提单、还是真实提单，以及执行时的安全限制。
+  - 简单说，`execution` 决定“怎么下单”。
 
-- [livetrading/config.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/config.py)
-  - 新增 `ExecutionConfig`
-- [livetrading/trade_accounts/base.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/trade_accounts/base.py)
-  - 扩展 `TradeAccountClient`
-  - 扩展 `TradeAccountEventSink`
-- [livetrading/trade_accounts/futu.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/trade_accounts/futu.py)
-  - 在 `FutuTradeAccountClient` 里实现 `submit_order(...)`
-- [livetrading/engine.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/engine.py)
-  - 现在已经不再自己硬编码 dry-run 执行
-  - 改成协调 planner / executor / state store
+#### `broker` 字段
 
-## 7. 关键数据模型
+- `broker.type`
+  - 示例值：`futu`
+  - 表示这份账户配置使用哪一种 broker 适配器。
+  - 现在这里写 `futu`，意思是走 Futu 的交易接入实现。
+  - 以后如果系统支持别的券商，这里才会出现别的值。
 
-建议新增这些核心对象：
+- `broker.host`
+  - 示例值：`127.0.0.1`
+  - 表示 Futu OpenD 所在的主机地址。
+  - `127.0.0.1` 代表 OpenD 跑在本机。
+  - 如果 OpenD 跑在另一台机器上，这里就应该改成对应的 IP 或域名。
 
-### 7.1 `OrderIntent`
+- `broker.port`
+  - 示例值：`11111`
+  - 表示 Futu OpenD 的监听端口。
+  - 它和 `host` 一起决定交易连接入口。
+  - 这个值必须和 OpenD 实际启动时使用的端口一致，否则交易端连不上。
 
-表示“引擎打算提交什么单”，但还没发给 broker。
+- `broker.market`
+  - 示例值：`US`
+  - 表示这个账户对应的交易市场。
+  - `US` 代表美股市场。
+  - 这个字段会影响标的合法性校验、手续费模型选择，以及后续使用哪套市场上下文。
+
+- `broker.trade_env`
+  - 示例值：`SIMULATE`
+  - 表示 Futu 的交易环境。
+  - `SIMULATE` 代表模拟交易环境。
+  - `REAL` 代表真实交易环境。
+  - 这个字段解决的是“连接哪套 Futu 账户环境”，不是“执行层要不要真的提交订单”。
+
+- `broker.account_index`
+  - 示例值：`0`
+  - 表示当前连接下要使用第几个交易账户。
+  - 如果同一个 OpenD 下面挂了多个账户，系统会靠这个索引去选具体账户。
+  - `0` 通常表示第一个账户。
+  - 这个值配错了，可能会读错账户，也可能把订单发到错误账户。
+
+#### `execution` 字段
+
+- `execution.executor`
+  - 示例值：`futu_simulate`
+  - 表示执行器类型，也就是执行层走哪条实现路径。
+  - `mock` 的意思是不连接 Futu，只打印计划下什么单。
+  - `futu_simulate` 的意思是真的调用 Futu 提单接口，但单子发到模拟环境。
+  - `futu_real` 的意思是真的调用 Futu 提单接口，并且单子发到真实环境。
+
+- `execution.enable_real_trading`
+  - 示例值：`false`
+  - 这是一个显式的安全开关。
+  - 它的目的不是选择执行器，而是避免误把真实订单发出去。
+  - 当 `executor = futu_real` 时，通常必须显式写成 `true` 才允许继续。
+  - 当 `executor = mock` 或 `futu_simulate` 时，这个字段一般保持 `false`。
+
+- `execution.max_order_notional`
+  - 示例值：`50000.0`
+  - 表示单笔订单允许的最大名义金额上限。
+  - 名义金额通常就是 `price * qty`。
+  - 例如单笔买单价格是 250 美元、数量是 300 股，那么名义金额就是 75000 美元，会超过这个限制。
+  - 这个字段属于执行层风控，不属于策略信号本身。
+  - 它的作用是防止配置错误、价格异常或仓位计算错误时一次性打出过大的订单。
+
+- `execution.max_order_qty`
+  - 示例值：`500`
+  - 表示单笔订单允许的最大股数上限。
+  - 不管价格是多少，只要某笔订单数量超过 500 股，就应该被拒绝、截断或者拆单。
+  - 这个字段也是执行层风控。
+  - 它主要防的是“数量异常大”的错误，不和 `max_order_notional` 重复，二者是两道不同的保护。
+
+### 3.2 最重要的关系
+
+最容易混淆的是下面这两个字段：
+
+- `broker.trade_env`
+  - 决定连接 Futu 的哪套环境。
+- `execution.executor`
+  - 决定执行层走哪一种下单实现。
+
+这两个字段不能互相替代。
+
+例如：
+
+- `trade_env = SIMULATE`
+  - 表示连接的是 Futu 模拟环境。
+- `executor = futu_simulate`
+  - 表示执行层真的会把订单提交到这个模拟环境。
+
+再比如：
+
+- `trade_env = REAL`
+  - 表示连接的是真实交易环境。
+- `executor = futu_real`
+  - 表示执行层真的会往真实环境发单。
+
+所以要把这两个概念分开理解：
+
+- `broker.*`
+  - 更偏“连接层”
+- `execution.*`
+  - 更偏“执行层和风控层”
+
+## 4. 代码结构
+
+建议只保留下面这几个角色：
+
+- `RebalancePlanner`
+  - 负责把策略信号变成订单计划
+- `OrderExecutor`
+  - 执行器接口
+- `MockExecutor`
+  - 打印订单
+- `FutuSimulateExecutor`
+  - 提交模拟单
+- `FutuRealExecutor`
+  - 提交真实单
+- `FutuTradeAccountClient`
+  - 和 Futu 通信
+- `AccountStateStore`
+  - 存账户状态、持仓状态、订单状态
+
+最重要的一条：
+
+- `RebalancePlanner` 只负责“该下什么单”
+- `Executor` 只负责“怎么下单”
+
+## 5. 必要的数据对象
+
+只保留 4 个核心对象就够了：
+
+### 5.1 `OrderIntent`
+
+表示“准备下的一笔单”。
 
 建议字段：
 
-- `intent_id`
 - `account_id`
-- `signal_time`
 - `code`
 - `side`
 - `qty`
-- `reference_price`
 - `limit_price`
-- `order_type`
 - `reason`
-- `metadata`
 
-### 7.2 `OrderSubmission`
+### 5.2 `OrderSubmission`
 
-表示“broker 已经收到提交请求”的返回结果。
+表示“提交结果”。
 
 建议字段：
 
-- `intent_id`
+- `broker_order_id`
 - `accepted`
-- `broker_order_id`
-- `submitted_qty`
-- `submitted_price`
-- `status`
-  - `submitted`
-  - `rejected`
 - `message`
-- `raw`
 
-### 7.3 `OrderUpdate`
+### 5.3 `OrderUpdate`
 
-表示订单状态更新。
+表示“订单状态更新”。
 
 建议字段：
 
-- `account_id`
 - `broker_order_id`
-- `code`
-- `side`
 - `status`
-  - `submitted`
-  - `partially_filled`
-  - `filled`
-  - `canceled`
-  - `rejected`
-- `submitted_qty`
 - `dealt_qty`
 - `avg_price`
-- `updated_at`
-- `raw`
 
-### 7.4 `FillEvent`
+### 5.4 `FillEvent`
 
-表示成交事件。
+表示“成交回报”。
 
 建议字段：
 
-- `account_id`
 - `broker_order_id`
-- `code`
-- `side`
 - `fill_qty`
 - `fill_price`
-- `filled_at`
-- `raw`
 
-### 7.5 `AccountRuntimeState`
-
-建议把账户运行态扩成：
-
-- `actual_account`
-- `actual_positions`
-- `expected_cash`
-- `expected_positions`
-- `pending_orders`
-- `last_account_sync_at`
-- `last_position_sync_at`
-- `last_reconciled_at`
-
-说明：
-
-- `actual_*`
-  - broker 真相源
-- `expected_*`
-  - 本地执行期望状态
-- `pending_orders`
-  - 已提交但尚未完成的订单
-
-## 8. 类图
+## 6. 类图
 
 ```mermaid
 classDiagram
     class LiveTradingEngine {
-        -AccountStateStore account_state_store
         -RebalancePlanner planner
         -OrderExecutor executor
-        +on_account()
-        +on_positions()
-        +on_order_update()
-        +on_fill()
-    }
-
-    class AccountStateStore {
-        +upsert_actual_account()
-        +upsert_actual_positions()
-        +mark_submitted()
-        +apply_fill()
-        +reconcile_from_actual()
-    }
-
-    class AccountRuntimeState {
-        +actual_account
-        +actual_positions
-        +expected_cash
-        +expected_positions
-        +pending_orders
+        -AccountStateStore state_store
     }
 
     class RebalancePlanner {
-        +build_account_plan()
-    }
-
-    class AccountRebalancePlan {
-        +account_id
-        +sell_intents
-        +buy_intents
+        +build_plan()
     }
 
     class OrderExecutor {
@@ -418,259 +332,164 @@ classDiagram
         +execute_plan()
     }
 
-    class DryRunOrderExecutor {
+    class MockExecutor {
         +execute_plan()
     }
 
-    class BrokerSubmitExecutor {
+    class FutuSimulateExecutor {
         +execute_plan()
     }
 
-    class TradeAccountClient {
-        <<interface>>
-        +connect()
-        +close()
-        +submit_order()
+    class FutuRealExecutor {
+        +execute_plan()
     }
 
     class FutuTradeAccountClient {
         +submit_order()
-        -_build_trade_order_handler()
-        -_build_trade_deal_handler()
     }
 
-    class OrderIntent {
-        +intent_id
-        +account_id
-        +code
-        +side
-        +qty
-        +limit_price
+    class AccountStateStore {
+        +upsert_actual_account()
+        +upsert_actual_positions()
+        +apply_order_update()
+        +apply_fill()
     }
 
-    class OrderSubmission {
-        +intent_id
-        +accepted
-        +broker_order_id
-        +status
-    }
+    class OrderIntent
+    class OrderSubmission
+    class OrderUpdate
+    class FillEvent
 
-    class OrderUpdate {
-        +broker_order_id
-        +status
-        +dealt_qty
-        +avg_price
-    }
-
-    class FillEvent {
-        +broker_order_id
-        +fill_qty
-        +fill_price
-    }
-
-    LiveTradingEngine --> AccountStateStore
     LiveTradingEngine --> RebalancePlanner
     LiveTradingEngine --> OrderExecutor
-    AccountStateStore --> AccountRuntimeState
-    RebalancePlanner --> AccountRebalancePlan
-    AccountRebalancePlan --> OrderIntent
-    OrderExecutor <|.. DryRunOrderExecutor
-    OrderExecutor <|.. BrokerSubmitExecutor
-    BrokerSubmitExecutor --> TradeAccountClient
-    TradeAccountClient <|.. FutuTradeAccountClient
-    BrokerSubmitExecutor --> OrderSubmission
+    LiveTradingEngine --> AccountStateStore
+    OrderExecutor <|.. MockExecutor
+    OrderExecutor <|.. FutuSimulateExecutor
+    OrderExecutor <|.. FutuRealExecutor
+    FutuSimulateExecutor --> FutuTradeAccountClient
+    FutuRealExecutor --> FutuTradeAccountClient
+    RebalancePlanner --> OrderIntent
+    FutuTradeAccountClient --> OrderSubmission
     LiveTradingEngine --> OrderUpdate
     LiveTradingEngine --> FillEvent
 ```
 
-## 9. 关键时序图
+这个类图只表达两件事：
 
-### 9.1 `broker_submit` 模式下的真实提单链路
+- 规划器只有一个
+- 执行器有三个
 
-```mermaid
-sequenceDiagram
-    participant ENG as LiveTradingEngine
-    participant STORE as AccountStateStore
-    participant PLAN as RebalancePlanner
-    participant EXEC as BrokerSubmitExecutor
-    participant TAC as TradeAccountClient
-    participant FUTU as Futu OpenD
+## 7. 时序图
 
-    ENG->>STORE: 读取 actual_* / expected_* / pending_orders
-    ENG->>PLAN: build_account_plan(decision, account_state, prices)
-    PLAN-->>ENG: AccountRebalancePlan(sell_intents, buy_intents)
-
-    ENG->>EXEC: execute_plan(plan)
-    loop 先卖后买
-        EXEC->>TAC: submit_order(OrderIntent)
-        TAC->>FUTU: place_order(...)
-        FUTU-->>TAC: submit ack
-        TAC-->>EXEC: OrderSubmission(accepted, broker_order_id, status)
-        EXEC->>STORE: mark_submitted(submission)
-        EXEC-->>ENG: ORDER_SUBMITTED log
-    end
-
-    FUTU-->>TAC: ORDER_PUSH / DEAL_PUSH
-    TAC-->>ENG: on_order_update(OrderUpdate)
-    ENG->>STORE: apply_order_update(update)
-    TAC-->>ENG: on_fill(FillEvent)
-    ENG->>STORE: apply_fill(fill)
-    ENG-->>ENG: 更新 expected_cash / expected_positions / pending_orders
-```
-
-### 9.2 用户在 App 手工操作后的对账链路
-
-```mermaid
-sequenceDiagram
-    actor U as User(App)
-    participant FUTU as Futu OpenD
-    participant TAC as FutuTradeAccountClient
-    participant ENG as LiveTradingEngine
-    participant STORE as AccountStateStore
-
-    U->>FUTU: 手工买卖 / 撤单 / 调整持仓
-    TAC->>TAC: _poll_account()
-    TAC-->>ENG: on_account(AccountSnapshot)
-    ENG->>STORE: upsert_actual_account(snapshot)
-
-    TAC->>TAC: _poll_positions()
-    TAC-->>ENG: on_positions(dict[code, PositionSnapshot])
-    ENG->>STORE: upsert_actual_positions(positions)
-
-    alt 当前没有 pending_orders
-        STORE->>STORE: reconcile_from_actual()<br/>expected_* 对齐 actual_*
-    else 当前仍有执行中订单
-        STORE->>STORE: 只记录 drift，不强制覆盖 expected_*
-        STORE-->>ENG: 发出 ACCOUNT_STATE_DRIFT log
-    end
-```
-
-### 9.3 启动时按执行模式选择 executor
+### 7.1 启动时选哪个执行器
 
 ```mermaid
 sequenceDiagram
     participant ENG as LiveTradingEngine
-    participant CFG as LiveTradingConfig
+    participant CFG as Config
     participant FAC as ExecutorFactory
-    participant DRE as DryRunOrderExecutor
-    participant BRE as BrokerSubmitExecutor
 
-    ENG->>CFG: 读取 trade_accounts[].execution.mode
-    ENG->>FAC: build_executor(account.execution.mode)
-    alt mode == dry_run
-        FAC-->>ENG: DRE
-        ENG->>DRE: execute_plan(...)
-    else mode == broker_submit
-        FAC-->>ENG: BRE
-        ENG->>BRE: execute_plan(...)
+    ENG->>CFG: 读取 account.execution.executor
+    ENG->>FAC: build_executor(executor)
+
+    alt executor == mock
+        FAC-->>ENG: MockExecutor
+    else executor == futu_simulate
+        FAC-->>ENG: FutuSimulateExecutor
+    else executor == futu_real
+        FAC-->>ENG: FutuRealExecutor
     end
 ```
 
-## 10. 分阶段落地方案
+### 7.2 `MockExecutor`
 
-### Phase 0: 纯重构，不改外部行为
+```mermaid
+sequenceDiagram
+    participant ENG as LiveTradingEngine
+    participant PLAN as RebalancePlanner
+    participant EXE as MockExecutor
 
-- 提取 `RebalancePlanner`
-- 提取 `DryRunOrderExecutor`
-- 提取 `AccountStateStore`
-- `LiveTradingEngine` 改成协调者
+    ENG->>PLAN: build_plan(decision, prices, positions)
+    PLAN-->>ENG: OrderIntent[]
+    ENG->>EXE: execute_plan(intents)
+    loop each intent
+        EXE-->>ENG: MOCK_ORDER log
+    end
+```
 
-验收标准：
+### 7.3 `FutuSimulateExecutor`
 
-- 当前 `DRY_RUN_REBALANCE` / `DRY_RUN_ORDER` 行为不变
-- 现有测试全部继续通过
+```mermaid
+sequenceDiagram
+    participant ENG as LiveTradingEngine
+    participant PLAN as RebalancePlanner
+    participant EXE as FutuSimulateExecutor
+    participant TAC as FutuTradeAccountClient
+    participant FUTU as Futu OpenD
 
-### Phase 1: 补齐订单模型和接口
+    ENG->>PLAN: build_plan(decision, prices, positions)
+    PLAN-->>ENG: OrderIntent[]
+    ENG->>EXE: execute_plan(intents)
 
-- 新增：
-  - `OrderIntent`
-  - `OrderSubmission`
-  - `OrderUpdate`
-  - `FillEvent`
-- `TradeAccountClient` 增加 `submit_order(...)`
-- `TradeAccountEventSink` 增加：
-  - `on_order_update(...)`
-  - `on_fill(...)`
+    loop each intent
+        EXE->>EXE: 校验 trade_env == SIMULATE
+        EXE->>TAC: submit_order(intent)
+        TAC->>FUTU: place_order(..., trd_env=SIMULATE)
+        FUTU-->>TAC: submit ack
+        TAC-->>ENG: on_order_update(...)
+        TAC-->>ENG: on_fill(...)
+    end
+```
 
-验收标准：
+### 7.4 `FutuRealExecutor`
 
-- 可以用 fake client 覆盖 submit / update / fill 路径
-- 不接真实 Futu 也能在单元测试里跑通状态机
+```mermaid
+sequenceDiagram
+    participant ENG as LiveTradingEngine
+    participant PLAN as RebalancePlanner
+    participant EXE as FutuRealExecutor
+    participant TAC as FutuTradeAccountClient
+    participant FUTU as Futu OpenD
 
-### Phase 2: 接 Futu `SIMULATE` 真实提单
+    ENG->>PLAN: build_plan(decision, prices, positions)
+    PLAN-->>ENG: OrderIntent[]
+    ENG->>EXE: execute_plan(intents)
 
-- `FutuTradeAccountClient.submit_order(...)`
-- 把 `ORDER_PUSH` / `DEAL_PUSH` 改成结构化回调
-- 新增 `BrokerSubmitExecutor`
+    EXE->>EXE: 校验 trade_env == REAL
+    EXE->>EXE: 校验 enable_real_trading == true
 
-验收标准：
+    loop each intent
+        EXE->>TAC: submit_order(intent)
+        TAC->>FUTU: place_order(..., trd_env=REAL)
+        FUTU-->>TAC: submit ack
+        TAC-->>ENG: on_order_update(...)
+        TAC-->>ENG: on_fill(...)
+    end
+```
 
-- 在 `SIMULATE` 账户能实际提交单子
-- 日志能看到：
-  - `ORDER_SUBMITTED`
-  - `ORDER_UPDATE`
-  - `FILL_APPLIED`
+## 8. 落地顺序
 
-### Phase 3: 对账与漂移处理
+按最简单的顺序做：
 
-- `AccountStateStore.reconcile_from_actual()`
-- 检测：
-  - 用户在 App 手工改仓
-  - 本地 expected 和实际持仓漂移
-- 先只做：
-  - 记录 drift
-  - 在无 pending 订单时自动对齐
-
-验收标准：
-
-- 手工交易后系统不会误以为本地 expected 就是真实状态
-- drift 会被显式日志标出
-
-### Phase 4: 放开 `REAL`
-
-前提：
-
-- `SIMULATE` 已稳定
-- drift / pending / fill 流程跑顺
-- 风控项都已落地
-
-再考虑增加：
-
-- `execution.allow_real_env = true`
-- `broker.trade_env = REAL`
-
-## 11. 最小可交付版本建议
-
-如果只做最小、可控、尽快落地的一版，我建议范围限定为：
-
-- 只支持 Futu
-- 只支持 `trade_env=SIMULATE`
-- 只支持限价单
-- 只支持股票
-- 只支持 long-only
-- 不做撤单
-- 不做追单
-- 不做自动重试
-- 不做复杂风控
-
-这个版本的目标不是“完整交易系统”，而是：
-
-- 证明当前策略链路可以从 `PortfolioRebalanceDecision`
-- 走到 `submit_order(...)`
-- 再走回 `ORDER_PUSH` / `DEAL_PUSH`
-- 最终闭环到账户状态
-
-## 12. 建议的实施顺序
-
-1. 先抽 `RebalancePlanner`
-2. 再抽 `DryRunOrderExecutor`
-3. 再引入 `AccountStateStore`
-4. 再补订单模型和 `submit_order(...)`
-5. 再接 `BrokerSubmitExecutor`
-6. 最后才考虑 `REAL`
+1. 先抽出 `RebalancePlanner`
+2. 再实现 `MockExecutor`
+3. 再实现 `FutuSimulateExecutor`
+4. 最后实现 `FutuRealExecutor`
 
 原因很简单：
 
-- 先把 dry-run 的“规划”和“执行”拆开，后面的真实下单才有稳定落点
-- 先在 `SIMULATE` 跑通，再谈 `REAL`
-- 先让状态机和对账逻辑成立，再谈高级执行策略
+- `MockExecutor` 最容易验证
+- `FutuSimulateExecutor` 跑通以后，才能安心做真实下单
+- `FutuRealExecutor` 风险最高，必须最后做
+
+## 9. 一句话总结
+
+不要再写一个万能执行器。
+
+就 3 个执行器：
+
+- `MockExecutor`
+- `FutuSimulateExecutor`
+- `FutuRealExecutor`
+
+同一套策略规划，接 3 种执行方式，这样最简单，也最不容易看乱。
