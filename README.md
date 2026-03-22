@@ -38,8 +38,12 @@ source .venv/bin/active
   - 历史 warm-up 配置：`history_broker`
   - 股票池配置：`stock_pool`
   - 交易账户配置：`trade_accounts[]`
+- `livetrading/pool_strategy_registry.py`
+  - 维护 live pool strategy 的注册表。
+  - 当前内建策略由 `livetrading/pool_strategies.py` 注册，配置校验也从这里读取支持的策略名。
 - `livetrading/pool_strategies.py`
-  - 实现组合级策略适配，当前支持 `dual_momentum`。
+  - 定义 `PoolLiveStrategy` 抽象，并提供 `build_pool_strategy()` facade。
+  - 当前内建 live 策略 `dual_momentum` 也在这里实现并注册。
 - `livetrading/runtime_state.py`
   - 统一承载 engine 运行期共享状态：当前配置、broker/client、价格缓存、warm-up pending 标记等。
 - `livetrading/config_applier.py`
@@ -98,8 +102,9 @@ source .venv/bin/active
   - `trade_accounts`
   - 负责账户同步和执行器选择。
 - `realtime_broker` 支持 `futu` 和 `mock`；`history_broker` 支持 `polygon`、`futu` 和 `local`；`trade_accounts[].broker.type` 支持 `futu` 和 `mock`。
+- `stock_pool.strategy.name` 的支持列表来自 `livetrading/pool_strategy_registry.py` 的当前注册表。
 - 这些支持类型不是写死在 `config.py` 里，而是来自 `livetrading/broker_registry.py` 的当前注册表。
-- 如果你要扩一个新 broker/provider/account 类型，需要先在启动阶段 import 你的扩展模块并调用对应 `register_*`，再去加载配置文件。
+- 如果你要扩一个新 broker/provider/account/strategy 类型，需要先在启动阶段 import 你的扩展模块并调用对应 `register_*`，再去加载配置文件。
 - 如果你只想做完全本地的 mock 联调，可以用：
   - `realtime_broker.type=mock`
   - `history_broker.type=local`
@@ -174,7 +179,7 @@ source .venv/bin/active
   - `stock_pool.codes`
   - 股票池代码列表。
   - `stock_pool.strategy`
-  - 当前支持 `dual_momentum`。
+  - 当前内建支持 `dual_momentum`。
 - 实盘交易配置
   - `trade_accounts[].account_id`
   - 本地账户标识，用于日志和后续多用户隔离。

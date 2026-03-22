@@ -10,6 +10,7 @@ from .broker import (
     supported_quote_broker_types,
     supported_trade_account_client_types,
 )
+from .pool_strategy_registry import supported_pool_strategy_names
 
 SUPPORTED_EXECUTOR_TYPES = frozenset({"mock", "futu_simulate", "futu_real"})
 SUPPORTED_ORDER_SESSIONS = frozenset({"RTH", "ETH", "ALL", "OVERNIGHT"})
@@ -547,13 +548,17 @@ def _parse_initial_positions(value: Any, *, label: str) -> tuple[tuple[str, int]
 
 def _parse_strategy_config(raw: Any, *, label: str) -> StrategyConfig:
     if isinstance(raw, Mapping):
-        strategy_name = str(raw.get("name", "")).strip()
+        strategy_name = str(raw.get("name", "")).strip().lower()
         params = dict(_require_mapping(raw.get("params", {}), f"{label}.params"))
     else:
-        strategy_name = str(raw or "").strip()
+        strategy_name = str(raw or "").strip().lower()
         params = {}
     if not strategy_name:
         raise ValueError(f"{label}.name must not be empty")
+    supported_names = supported_pool_strategy_names()
+    if strategy_name not in supported_names:
+        supported = ", ".join(sorted(supported_names))
+        raise ValueError(f"{label}.name must be one of: {supported}")
     return StrategyConfig(name=strategy_name, params=params)
 
 

@@ -14,6 +14,12 @@ from strategy.dual_momentum_state import DualMomentumDailyState
 from strategy.rebalance import RebalancePolicy
 from .config import StockPoolConfig
 from .models import PortfolioRebalanceDecision
+from .pool_strategy_registry import (
+    register_pool_strategy,
+    resolve_pool_strategy_factory,
+    supported_pool_strategy_names,
+    unregister_pool_strategy,
+)
 
 
 class PoolLiveStrategy(ABC):
@@ -103,9 +109,28 @@ class DualMomentumPoolStrategy(PoolLiveStrategy):
         )
 
 
+_BUILTINS_REGISTERED = False
+
+
+def ensure_builtin_pool_strategy_registrations() -> None:
+    global _BUILTINS_REGISTERED
+    if _BUILTINS_REGISTERED:
+        return
+    register_pool_strategy("dual_momentum", DualMomentumPoolStrategy)
+    _BUILTINS_REGISTERED = True
+
+
 def build_pool_strategy(config: StockPoolConfig) -> PoolLiveStrategy:
-    """按 stock_pool.strategy.name 构建 live 股票池策略。"""
-    strategy_name = config.strategy.name.strip().lower()
-    if strategy_name == "dual_momentum":
-        return DualMomentumPoolStrategy(config)
-    raise ValueError(f"unsupported stock_pool strategy: {config.strategy.name}")
+    """按注册表构建 live 股票池策略。"""
+    return resolve_pool_strategy_factory(config.strategy.name)(config)
+
+
+__all__ = [
+    "DualMomentumPoolStrategy",
+    "PoolLiveStrategy",
+    "build_pool_strategy",
+    "ensure_builtin_pool_strategy_registrations",
+    "register_pool_strategy",
+    "supported_pool_strategy_names",
+    "unregister_pool_strategy",
+]

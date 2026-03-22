@@ -35,6 +35,7 @@ from livetrading.config import (
     load_history_config,
     load_livetrading_config,
     load_pool_config,
+    load_pool_config_from_text,
     load_quote_config,
     load_quote_config_from_text,
     load_trade_accounts_config,
@@ -48,7 +49,13 @@ from livetrading.history_providers.futu import FutuDailyHistoryProvider
 from livetrading.history_providers.local import LocalDataDailyHistoryProvider
 from livetrading.history_providers.polygon import PolygonCacheDailyHistoryProvider
 from livetrading.models import AccountSnapshot, FillEvent, OrderIntent, OrderSubmission, OrderUpdate, PortfolioRebalanceDecision, PositionSnapshot, QuoteUpdate
-from livetrading.pool_strategies import build_pool_strategy
+from livetrading.pool_strategies import (
+    PoolLiveStrategy,
+    build_pool_strategy,
+    register_pool_strategy,
+    supported_pool_strategy_names,
+    unregister_pool_strategy,
+)
 from livetrading.quote_brokers.base import QuoteBrokerClient
 from livetrading.quote_brokers.mock import MockRealtimeQuoteClient
 from livetrading.trade_accounts.base import TradeAccountClient
@@ -1759,6 +1766,32 @@ class FactoryRegistryTests(unittest.TestCase):
 
         self.assertIn("custom_trade", supported_trade_account_client_types())
         self.assertIsInstance(client, CustomTradeAccountClient)
+
+
+class PoolStrategyRegistryTests(unittest.TestCase):
+    def test_build_pool_strategy_supports_registered_strategy(self) -> None:
+        class CustomPoolStrategy(PoolLiveStrategy):
+            def required_daily_warmup_bars(self) -> int:
+                return 3
+
+            def bootstrap(self, histories: dict[str, pd.DataFrame]) -> None:
+                self.histories = histories
+
+            def on_bar(self, code: str, bar: pd.Series | dict[str, object]) -> PortfolioRebalanceDecision | None:
+                return None
+
+        register_pool_strategy("custom_pool", CustomPoolStrategy)
+        self.addCleanup(unregister_pool_strategy, "custom_pool")
+
+        pool_config = load_pool_config_from_text(json.dumps(build_pool_payload(strategy_name="custom_pool")))
+        strategy = build_pool_strategy(pool_config)
+
+        self.assertIn("custom_pool", supported_pool_strategy_names())
+        self.assertIsInstance(strategy, CustomPoolStrategy)
+
+    def test_load_pool_config_rejects_unsupported_strategy_name(self) -> None:
+        with self.assertRaisesRegex(ValueError, "stock_pool.strategy.name must be one of"):
+            load_pool_config_from_text(json.dumps(build_pool_payload(strategy_name="unsupported_strategy")))
 
 
 class LocalDataDailyHistoryProviderTests(unittest.TestCase):

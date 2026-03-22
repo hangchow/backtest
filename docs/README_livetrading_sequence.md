@@ -26,6 +26,7 @@
 - [livetrading/config_applier.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/config_applier.py)
 - [livetrading/event_sinks.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/event_sinks.py)
 - [livetrading/portfolio.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/portfolio.py)
+- [livetrading/pool_strategy_registry.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/pool_strategy_registry.py)
 - [livetrading/config.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/config.py)
 - [livetrading/broker_registry.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/broker_registry.py)
 - [livetrading/broker.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/broker.py)
@@ -58,6 +59,7 @@
 - quote / trade account 回调由 `livetrading/event_sinks.py` 负责
 - 组合决策拆单和执行器分发由 `livetrading/portfolio.py` 负责
 - quote/history/trade 的内建实现由各自子包注册到 `livetrading/broker_registry.py`，`livetrading/broker.py` 只保留 facade
+- live pool strategy 的内建实现由 `livetrading/pool_strategies.py` 注册到 `livetrading/pool_strategy_registry.py`
 
 下面的 Mermaid 图仍用 `ENG` 表示整体入口，便于阅读；对应代码时，要连同这些协作者一起看。
 
@@ -138,12 +140,14 @@ sequenceDiagram
 sequenceDiagram
     participant ENG as livetrading/engine.py
     participant PLS as pool_strategies.py\nDualMomentumPoolStrategy
+    participant SREG as pool_strategy_registry.py
     participant STATE as dual_momentum_state.py\nDualMomentumDailyState
     participant REG as broker_registry.py
     participant HFAC as broker.py\ncreate_daily_history_provider
     participant HB as history_providers/*.py\nDailyHistoryProvider impl
 
-    ENG->>PLS: build_pool_strategy()<br/>按 stock_pool.strategy.name 构建 live 股票池策略
+    ENG->>PLS: build_pool_strategy()<br/>按注册表构建 live 股票池策略
+    PLS->>SREG: resolve_pool_strategy_factory()
     ENG->>PLS: required_daily_warmup_bars()<br/>返回 dual momentum 至少需要的 warm-up 日线根数
     PLS-->>ENG: warmup_bars
 
@@ -335,6 +339,9 @@ sequenceDiagram
   - CLI 入口，只负责启动和停止 engine
 - [livetrading/config.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/config.py)
   - 解析 quote / history / pool / trade 四份配置，拼成 `LiveTradingConfig`
+- [livetrading/pool_strategy_registry.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/pool_strategy_registry.py)
+  - live pool strategy 的注册表边界
+  - 配置解析和 `build_pool_strategy()` 都通过它查当前支持的策略名
 - [livetrading/broker_registry.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/broker_registry.py)
   - quote broker / history provider / trade account client 的注册表边界
   - 内建类型由各自基础设施子包注册，配置校验也从这里读支持类型
@@ -386,6 +393,7 @@ sequenceDiagram
   - 把行情、账户、策略、planner、executor、state store 串起来
 - [livetrading/pool_strategies.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/pool_strategies.py)
   - live 侧股票池策略适配层
+  - 定义 `PoolLiveStrategy` 抽象，并注册内建 `dual_momentum`
 - [strategy/dual_momentum_state.py](/Users/sean/workspace/backtest-feature-livetrading-startup/strategy/dual_momentum_state.py)
   - 把分钟 bar 增量聚合成“已完成日线窗口”
 - [strategy/dual_momentum.py](/Users/sean/workspace/backtest-feature-livetrading-startup/strategy/dual_momentum.py)
@@ -403,6 +411,7 @@ sequenceDiagram
 quote client / trade account client / history provider
 -> broker_registry.py + broker.py facade
 -> engine.py
+-> pool_strategy_registry.py + pool_strategies.py facade
 -> pool_strategies.py
 -> dual_momentum_state.py + dual_momentum.py
 -> account_state.py
