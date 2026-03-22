@@ -40,6 +40,14 @@ source .venv/bin/active
   - 交易账户配置：`trade_accounts[]`
 - `livetrading/pool_strategies.py`
   - 实现组合级策略适配，当前支持 `dual_momentum`。
+- `livetrading/runtime_state.py`
+  - 统一承载 engine 运行期共享状态：当前配置、broker/client、价格缓存、warm-up pending 标记等。
+- `livetrading/config_applier.py`
+  - 负责配置 diff、连接重建、策略 warm-up 和账户侧配置应用。
+- `livetrading/event_sinks.py`
+  - 把 quote/trade account 外部事件收口到独立 sink，分别处理行情事件和账户事件。
+- `livetrading/portfolio.py`
+  - 提供 `PortfolioCoordinator`，负责把组合决策拆成账户级计划并交给执行器。
 - `livetrading/broker.py`
   - 定义 `QuoteBrokerClient`、`DailyHistoryProvider` 和 `TradeAccountClient` 抽象。
   - 当前实现：
@@ -61,7 +69,7 @@ source .venv/bin/active
   - `futu` 负责查询资金、持仓、订单回报和成交回报。
   - `mock` 直接把配置里的 `initial_cash / initial_positions` 推进 engine，不访问 Futu。
 - `livetrading/engine.py`
-  - 驱动双配置热更新、组合级调仓信号判定、账户运行态推进，以及按账户选择执行器。
+  - 保留主循环和整体装配职责，但把配置应用、事件接收和组合执行分别委托给独立协作者。
 - `livetrading/account_state.py`
   - 统一维护 `actual_*`、`shadow_*`、`expected_*` 和 `pending_orders`。
   - live 提单路径会先乐观推进 `expected_*`，再根据订单/成交回报纠偏。

@@ -84,10 +84,18 @@
 - [livetrading/trade_accounts/mock.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/trade_accounts/mock.py)
   - 本地账户基线，不访问 Futu
 - [livetrading/engine.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/engine.py)
-  - 串起策略信号、planner、executor、account state
+  - 负责整体装配和主循环
+- [livetrading/portfolio.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/portfolio.py)
+  - `PortfolioCoordinator` 负责把组合决策拆成账户计划并分发给执行器
+- [livetrading/event_sinks.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/event_sinks.py)
+  - 负责承接行情与账户事件，并把状态推进收口到对应协作者
 
 职责边界是：
 
+- `LiveTradingEngine`
+  - 只负责装配协作者和维护主循环
+- `PortfolioCoordinator`
+  - 只负责“拿到组合决策后，怎么协调 planner / executor / trade client”
 - `RebalancePlanner`
   - 只负责“该下什么单”
 - `Executor`
@@ -118,8 +126,13 @@
 ```mermaid
 classDiagram
     class LiveTradingEngine {
+        -PortfolioCoordinator portfolio_coordinator
+    }
+
+    class PortfolioCoordinator {
         -RebalancePlanner planner
         -AccountStateStore account_state_store
+        +execute_portfolio_rebalance()
     }
 
     class RebalancePlanner {
@@ -153,8 +166,9 @@ classDiagram
         +submit_order()
     }
 
-    LiveTradingEngine --> RebalancePlanner
-    LiveTradingEngine --> AccountStateStore
+    LiveTradingEngine --> PortfolioCoordinator
+    PortfolioCoordinator --> RebalancePlanner
+    PortfolioCoordinator --> AccountStateStore
     OrderExecutor <|.. MockExecutor
     OrderExecutor <|.. FutuSimulateExecutor
     OrderExecutor <|.. FutuRealExecutor

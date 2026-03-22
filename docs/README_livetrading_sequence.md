@@ -22,6 +22,10 @@
 
 - [livetrading.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading.py)
 - [livetrading/engine.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/engine.py)
+- [livetrading/runtime_state.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/runtime_state.py)
+- [livetrading/config_applier.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/config_applier.py)
+- [livetrading/event_sinks.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/event_sinks.py)
+- [livetrading/portfolio.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/portfolio.py)
 - [livetrading/config.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/config.py)
 - [livetrading/broker.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/broker.py)
 - [livetrading/execution.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/execution.py)
@@ -46,6 +50,14 @@
 - [strategy/fees.py](/Users/sean/workspace/backtest-feature-livetrading-startup/strategy/fees.py)
 
 下面 Mermaid 里的方法说明，和代码里对应方法的中文注释保持一致，方便你对着图直接跳代码。
+
+当前实现里，`livetrading/engine.py` 已经收缩成装配层：
+
+- 配置 diff / 连接重建 / warm-up 由 `livetrading/config_applier.py` 负责
+- quote / trade account 回调由 `livetrading/event_sinks.py` 负责
+- 组合决策拆单和执行器分发由 `livetrading/portfolio.py` 负责
+
+下面的 Mermaid 图仍用 `ENG` 表示整体入口，便于阅读；对应代码时，要连同这些协作者一起看。
 
 ## 1. 启动 + 配置加载 + quote / history / pool / trade client 选择
 
