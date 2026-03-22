@@ -27,6 +27,7 @@
 - [livetrading/event_sinks.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/event_sinks.py)
 - [livetrading/portfolio.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/portfolio.py)
 - [livetrading/config.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/config.py)
+- [livetrading/broker_registry.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/broker_registry.py)
 - [livetrading/broker.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/broker.py)
 - [livetrading/execution.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/execution.py)
 - [livetrading/futu/adapters.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/futu/adapters.py)
@@ -56,6 +57,7 @@
 - 配置 diff / 连接重建 / warm-up 由 `livetrading/config_applier.py` 负责
 - quote / trade account 回调由 `livetrading/event_sinks.py` 负责
 - 组合决策拆单和执行器分发由 `livetrading/portfolio.py` 负责
+- quote/history/trade 的内建实现由各自子包注册到 `livetrading/broker_registry.py`，`livetrading/broker.py` 只保留 facade
 
 下面的 Mermaid 图仍用 `ENG` 表示整体入口，便于阅读；对应代码时，要连同这些协作者一起看。
 
@@ -67,6 +69,7 @@ sequenceDiagram
     participant CLI as livetrading.py
     participant ENG as livetrading/engine.py
     participant CFG as livetrading/config.py
+    participant REG as broker_registry.py
     participant FAC as broker.py\ncreate_quote_broker_client
     participant FRT as futu/runtime.py\n_load_futu_api
     participant QBASE as quote_brokers/base.py\nQuoteBrokerClient / QuoteBrokerEventSink
@@ -86,7 +89,8 @@ sequenceDiagram
     ENG->>CFG: build_livetrading_config()<br/>合并 quote/history/pool/trade 配置并校验 market
     CFG-->>ENG: LiveTradingConfig
 
-    ENG->>FAC: create_quote_broker_client()<br/>按配置选择 realtime quote client 实现
+    ENG->>FAC: create_quote_broker_client()<br/>按注册表解析 realtime quote client 实现
+    FAC->>REG: resolve_quote_broker_factory()
     Note over ENG,QBASE: engine 只依赖 QuoteBrokerClient 抽象，<br/>同时实现 QuoteBrokerEventSink 回调接口
     alt realtime_broker.type == "mock"
         FAC->>MQ: instantiate MockRealtimeQuoteClient
@@ -100,7 +104,8 @@ sequenceDiagram
     end
 
     ENG->>ENG: _apply_trade_accounts_config()<br/>按配置增删或重连 trade account client
-    ENG->>TAF: create_trade_account_client()<br/>按配置选择交易账户 client 实现
+    ENG->>TAF: create_trade_account_client()<br/>按注册表解析交易账户 client 实现
+    TAF->>REG: resolve_trade_account_client_factory()
     alt trade_accounts[].broker.type == "mock"
         TAF->>TM: instantiate MockTradeAccountClient
         ENG->>TM: connect()<br/>直接把本地 initial_cash / initial_positions 推给 engine
@@ -134,6 +139,7 @@ sequenceDiagram
     participant ENG as livetrading/engine.py
     participant PLS as pool_strategies.py\nDualMomentumPoolStrategy
     participant STATE as dual_momentum_state.py\nDualMomentumDailyState
+    participant REG as broker_registry.py
     participant HFAC as broker.py\ncreate_daily_history_provider
     participant HB as history_providers/*.py\nDailyHistoryProvider impl
 
@@ -141,7 +147,8 @@ sequenceDiagram
     ENG->>PLS: required_daily_warmup_bars()<br/>返回 dual momentum 至少需要的 warm-up 日线根数
     PLS-->>ENG: warmup_bars
 
-    ENG->>HFAC: create_daily_history_provider()<br/>按配置选择 warm-up 日线 provider 实现
+    ENG->>HFAC: create_daily_history_provider()<br/>按注册表解析 warm-up 日线 provider 实现
+    HFAC->>REG: resolve_daily_history_provider_factory()
     HFAC->>HB: instantiate provider
     ENG->>HB: fetch_daily_histories()<br/>为股票池拉取 warm-up 所需的日线窗口
     HB-->>ENG: warmup daily histories
@@ -328,6 +335,9 @@ sequenceDiagram
   - CLI 入口，只负责启动和停止 engine
 - [livetrading/config.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/config.py)
   - 解析 quote / history / pool / trade 四份配置，拼成 `LiveTradingConfig`
+- [livetrading/broker_registry.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/broker_registry.py)
+  - quote broker / history provider / trade account client 的注册表边界
+  - 内建类型由各自基础设施子包注册，配置校验也从这里读支持类型
 - [livetrading/broker.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/broker.py)
   - facade / factory 层
   - 提供：
@@ -391,7 +401,7 @@ sequenceDiagram
 
 ```text
 quote client / trade account client / history provider
--> broker.py factory
+-> broker_registry.py + broker.py facade
 -> engine.py
 -> pool_strategies.py
 -> dual_momentum_state.py + dual_momentum.py

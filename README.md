@@ -48,9 +48,12 @@ source .venv/bin/active
   - 把 quote/trade account 外部事件收口到独立 sink，分别处理行情事件和账户事件。
 - `livetrading/portfolio.py`
   - 提供 `PortfolioCoordinator`，负责把组合决策拆成账户级计划并交给执行器。
+- `livetrading/broker_registry.py`
+  - 维护 quote broker / history provider / trade account client 的注册表。
+  - 当前内建类型由各自基础设施子包注册进来，配置校验也从这里读取支持类型。
 - `livetrading/broker.py`
-  - 定义 `QuoteBrokerClient`、`DailyHistoryProvider` 和 `TradeAccountClient` 抽象。
-  - 当前实现：
+  - 对外暴露 create/register facade，运行时按注册表解析具体实现。
+  - 当前内建注册：
   - `realtime_broker`
   - 支持 `futu` 和 `mock`。
   - `futu` 通过 OpenD 订阅 `QUOTE` 和 `K_1M`。
@@ -95,6 +98,8 @@ source .venv/bin/active
   - `trade_accounts`
   - 负责账户同步和执行器选择。
 - `realtime_broker` 支持 `futu` 和 `mock`；`history_broker` 支持 `polygon`、`futu` 和 `local`；`trade_accounts[].broker.type` 支持 `futu` 和 `mock`。
+- 这些支持类型不是写死在 `config.py` 里，而是来自 `livetrading/broker_registry.py` 的当前注册表。
+- 如果你要扩一个新 broker/provider/account 类型，需要先在启动阶段 import 你的扩展模块并调用对应 `register_*`，再去加载配置文件。
 - 如果你只想做完全本地的 mock 联调，可以用：
   - `realtime_broker.type=mock`
   - `history_broker.type=local`

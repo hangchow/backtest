@@ -16,8 +16,30 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from livetrading.account_state import AccountStateStore
-from livetrading.broker import create_daily_history_provider, create_trade_account_client
-from livetrading.config import RealtimeQuoteBrokerConfig, load_history_config, load_livetrading_config, load_pool_config, load_quote_config, load_trade_accounts_config
+from livetrading.broker import (
+    create_daily_history_provider,
+    create_quote_broker_client,
+    create_trade_account_client,
+    register_daily_history_provider,
+    register_quote_broker_client,
+    register_trade_account_client,
+    supported_daily_history_provider_types,
+    supported_quote_broker_types,
+    supported_trade_account_client_types,
+    unregister_daily_history_provider,
+    unregister_quote_broker_client,
+    unregister_trade_account_client,
+)
+from livetrading.config import (
+    RealtimeQuoteBrokerConfig,
+    load_history_config,
+    load_livetrading_config,
+    load_pool_config,
+    load_quote_config,
+    load_quote_config_from_text,
+    load_trade_accounts_config,
+    load_trade_accounts_config_from_text,
+)
 from livetrading.engine import LiveTradingEngine
 from livetrading.execution import AccountRebalancePlan, FutuSimulateExecutor, RebalancePlanner
 from livetrading.history_providers.base import DailyHistoryProvider
@@ -1618,6 +1640,125 @@ class MockTradeAccountClientTests(unittest.TestCase):
         client = create_trade_account_client(account, Sink(), logging.getLogger("test.mock_trade_account.factory"))
 
         self.assertIsInstance(client, MockTradeAccountClient)
+
+
+class FactoryRegistryTests(unittest.TestCase):
+    def test_create_quote_broker_client_supports_registered_quote_broker(self) -> None:
+        class CustomQuoteBroker(QuoteBrokerClient):
+            def __init__(self, config: RealtimeQuoteBrokerConfig, event_sink: object, logger: logging.Logger) -> None:
+                self.config = config
+                self.event_sink = event_sink
+                self.logger = logger
+
+            def connect(self, codes) -> None:
+                return None
+
+            def update_symbols(self, codes) -> None:
+                return None
+
+            def close(self) -> None:
+                return None
+
+        register_quote_broker_client("custom_quote", CustomQuoteBroker)
+        self.addCleanup(unregister_quote_broker_client, "custom_quote")
+
+        payload = build_quote_payload(history_type="local")
+        payload["realtime_broker"]["type"] = "custom_quote"
+
+        config = load_quote_config_from_text(json.dumps(payload))
+        client = create_quote_broker_client(
+            config.realtime_broker,
+            RecordingQuoteSink(),
+            logging.getLogger("test.custom_quote.factory"),
+        )
+
+        self.assertIn("custom_quote", supported_quote_broker_types())
+        self.assertIsInstance(client, CustomQuoteBroker)
+
+    def test_create_daily_history_provider_supports_registered_history_provider(self) -> None:
+        class CustomDailyHistoryProvider(DailyHistoryProvider):
+            def __init__(self, config, logger: logging.Logger) -> None:
+                self.config = config
+                self.logger = logger
+
+            def fetch_daily_histories(self, codes, daily_warmup_bars):
+                return {}
+
+            def close(self) -> None:
+                return None
+
+        register_daily_history_provider("custom_history", CustomDailyHistoryProvider)
+        self.addCleanup(unregister_daily_history_provider, "custom_history")
+
+        payload = build_quote_payload()
+        payload["history_broker"] = {
+            "type": "custom_history",
+            "host": "127.0.0.2",
+            "port": 22222,
+            "market": "US",
+        }
+
+        config = load_quote_config_from_text(json.dumps(payload))
+        provider = create_daily_history_provider(
+            config.history_broker,
+            logging.getLogger("test.custom_history.factory"),
+        )
+
+        self.assertIn("custom_history", supported_daily_history_provider_types())
+        self.assertIsInstance(provider, CustomDailyHistoryProvider)
+
+    def test_create_trade_account_client_supports_registered_trade_account(self) -> None:
+        class CustomTradeAccountClient(TradeAccountClient):
+            def __init__(self, config, event_sink: object, logger: logging.Logger) -> None:
+                self.config = config
+                self.event_sink = event_sink
+                self.logger = logger
+
+            def connect(self) -> None:
+                return None
+
+            def submit_order(self, intent: OrderIntent) -> OrderSubmission:
+                return OrderSubmission(
+                    account_id=intent.account_id,
+                    broker_order_id="custom-order-1",
+                    accepted=True,
+                )
+
+            def close(self) -> None:
+                return None
+
+        class Sink:
+            def on_account(self, account_id: str, snapshot: AccountSnapshot) -> None:
+                return None
+
+            def on_positions(self, account_id: str, positions: dict[str, PositionSnapshot]) -> None:
+                return None
+
+            def on_order_update(self, account_id: str, update: OrderUpdate) -> None:
+                return None
+
+            def on_fill(self, account_id: str, fill: FillEvent) -> None:
+                return None
+
+            def on_broker_message(self, level: int, message: str) -> None:
+                return None
+
+        register_trade_account_client("custom_trade", CustomTradeAccountClient)
+        self.addCleanup(unregister_trade_account_client, "custom_trade")
+
+        payload = build_trade_payload(
+            [build_trade_account_payload("custom_primary", "127.0.0.9", broker_type="custom_trade")]
+        )
+
+        config = load_trade_accounts_config_from_text(json.dumps(payload))
+        client = create_trade_account_client(
+            config.accounts[0],
+            Sink(),
+            logging.getLogger("test.custom_trade.factory"),
+        )
+
+        self.assertIn("custom_trade", supported_trade_account_client_types())
+        self.assertIsInstance(client, CustomTradeAccountClient)
 
 
 class LocalDataDailyHistoryProviderTests(unittest.TestCase):

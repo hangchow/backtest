@@ -3,6 +3,21 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from .broker_registry import (
+    register_daily_history_provider,
+    register_quote_broker_client,
+    register_trade_account_client,
+    resolve_daily_history_provider_factory,
+    resolve_quote_broker_factory,
+    resolve_trade_account_client_factory,
+    supported_daily_history_provider_types,
+    supported_quote_broker_types,
+    supported_trade_account_client_types,
+    unregister_daily_history_provider,
+    unregister_quote_broker_client,
+    unregister_trade_account_client,
+)
+
 if TYPE_CHECKING:
     from .config import HistoryBrokerConfig, RealtimeQuoteBrokerConfig, TradeAccountConfig
     from .history_providers.base import DailyHistoryProvider
@@ -15,40 +30,16 @@ def create_quote_broker_client(
     event_sink: QuoteBrokerEventSink,
     logger: logging.Logger,
 ) -> QuoteBrokerClient:
-    """按配置选择 realtime quote client 实现。"""
-    if config.type == "futu":
-        from .quote_brokers.futu import FutuRealtimeQuoteClient
-
-        return FutuRealtimeQuoteClient(config, event_sink, logger)
-    if config.type == "mock":
-        from .quote_brokers.mock import MockRealtimeQuoteClient
-
-        return MockRealtimeQuoteClient(config, event_sink, logger)
-    raise ValueError(f"unsupported broker type: {config.type}")
+    """按注册表选择 realtime quote client 实现。"""
+    return resolve_quote_broker_factory(config.type)(config, event_sink, logger)
 
 
 def create_daily_history_provider(
     config: HistoryBrokerConfig,
     logger: logging.Logger,
 ) -> DailyHistoryProvider:
-    """按配置选择 warm-up 日线 provider 实现。"""
-    if config.type == "polygon":
-        from .history_providers.polygon import PolygonCacheDailyHistoryProvider
-
-        return PolygonCacheDailyHistoryProvider(config, logger)
-    if config.type == "local":
-        from .history_providers.local import LocalDataDailyHistoryProvider
-
-        return LocalDataDailyHistoryProvider(
-            config,
-            logger,
-            kline_day_root=config.data_root or ".kline_day",
-        )
-    if config.type == "futu":
-        from .history_providers.futu import FutuDailyHistoryProvider
-
-        return FutuDailyHistoryProvider(config, logger)
-    raise ValueError(f"unsupported broker type: {config.type}")
+    """按注册表选择 warm-up 日线 provider 实现。"""
+    return resolve_daily_history_provider_factory(config.type)(config, logger)
 
 
 def create_trade_account_client(
@@ -56,13 +47,21 @@ def create_trade_account_client(
     event_sink: TradeAccountEventSink,
     logger: logging.Logger,
 ) -> TradeAccountClient:
-    """按配置选择交易账户 client 实现。"""
-    if config.broker.type == "futu":
-        from .trade_accounts.futu import FutuTradeAccountClient
+    """按注册表选择交易账户 client 实现。"""
+    return resolve_trade_account_client_factory(config.broker.type)(config, event_sink, logger)
 
-        return FutuTradeAccountClient(config, event_sink, logger)
-    if config.broker.type == "mock":
-        from .trade_accounts.mock import MockTradeAccountClient
 
-        return MockTradeAccountClient(config, event_sink, logger)
-    raise ValueError(f"unsupported broker type: {config.broker.type}")
+__all__ = [
+    "create_daily_history_provider",
+    "create_quote_broker_client",
+    "create_trade_account_client",
+    "register_daily_history_provider",
+    "register_quote_broker_client",
+    "register_trade_account_client",
+    "supported_daily_history_provider_types",
+    "supported_quote_broker_types",
+    "supported_trade_account_client_types",
+    "unregister_daily_history_provider",
+    "unregister_quote_broker_client",
+    "unregister_trade_account_client",
+]

@@ -5,10 +5,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
+from .broker import (
+    supported_daily_history_provider_types,
+    supported_quote_broker_types,
+    supported_trade_account_client_types,
+)
 
-SUPPORTED_REALTIME_QUOTE_BROKER_TYPES = frozenset({"futu", "mock"})
-SUPPORTED_HISTORY_BROKER_TYPES = frozenset({"futu", "polygon", "local"})
-SUPPORTED_TRADE_BROKER_TYPES = frozenset({"futu", "mock"})
 SUPPORTED_EXECUTOR_TYPES = frozenset({"mock", "futu_simulate", "futu_real"})
 SUPPORTED_ORDER_SESSIONS = frozenset({"RTH", "ETH", "ALL", "OVERNIGHT"})
 QUOTE_CONFIG_ALLOWED_TOP_LEVEL_KEYS = frozenset({"realtime_broker", "quote_broker", "broker", "history_broker", "stock_pool", "runtime"})
@@ -324,7 +326,7 @@ def _parse_realtime_quote_broker_config(raw: Mapping[str, Any], *, label: str) -
             raw.get("type"),
             label=f"{label}.type",
             default="futu",
-            supported_types=SUPPORTED_REALTIME_QUOTE_BROKER_TYPES,
+            supported_types=supported_quote_broker_types(),
         ),
         host=host,
         port=port,
@@ -342,7 +344,7 @@ def _parse_history_broker_config(raw: Mapping[str, Any], *, label: str) -> Histo
         raw.get("type"),
         label=f"{label}.type",
         default="futu",
-        supported_types=SUPPORTED_HISTORY_BROKER_TYPES,
+        supported_types=supported_daily_history_provider_types(),
     )
     market = _parse_market(raw.get("market"), label=f"{label}.market")
     if broker_type == "polygon":
@@ -381,7 +383,7 @@ def _parse_trade_broker_config(raw: Mapping[str, Any], *, label: str) -> TradeBr
         raw.get("type"),
         label=f"{label}.type",
         default="futu",
-        supported_types=SUPPORTED_TRADE_BROKER_TYPES,
+        supported_types=supported_trade_account_client_types(),
     )
     if broker_type == "mock":
         host = str(raw.get("trade_host", raw.get("host", "mock"))).strip() or "mock"
