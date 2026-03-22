@@ -26,7 +26,7 @@
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
-.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -e .
 source .venv/bin/active
 ```
 
@@ -68,7 +68,9 @@ source .venv/bin/active
 - `livetrading/execution.py`
   - 提供 `RebalancePlanner`、`MockExecutor`、`FutuSimulateExecutor`、`FutuRealExecutor`。
 - `livetrading.py`
-  - CLI 入口。
+  - 兼容保留的根目录 CLI 入口；内部转发到包内 CLI。
+- `livetrading/__main__.py`
+  - 包入口，支持 `python -m livetrading`。
 
 ## 设计要点
 
@@ -103,7 +105,15 @@ source .venv/bin/active
 
 ## 配置文件
 
-现在运行 `livetrading.py` 时，推荐拆成 4 份 JSON：
+现在运行 `livetrading.py` 时，推荐拆成 4 份 JSON。
+
+等价的模块入口也可用：
+
+```bash
+./.venv/bin/python -m livetrading --quote-config ... --trade-config ...
+```
+
+下面的示例继续沿用根目录 `livetrading.py` 写法：
 
 - `config/livetrading.quote.futu.sample.json`
   - 实时行情配置样例。
@@ -186,6 +196,8 @@ source .venv/bin/active
   - 单笔订单最大股数
 
 ## 运行
+
+下面三组命令继续使用根目录 `livetrading.py` 作为兼容入口；如果你更偏好模块方式，可以把 `livetrading.py` 等价替换成 `-m livetrading`。
 
 Futu行情订阅、Futu历史数据、Futu真实环境下单：
 

@@ -1,16 +1,9 @@
 from __future__ import annotations
 
 from datetime import date
-import sys
 import unittest
-from pathlib import Path
 
 import pandas as pd
-
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
 
 from tests.fetch_polygon_1m import convert_to_local_layout, iter_month_ranges, with_api_key
 

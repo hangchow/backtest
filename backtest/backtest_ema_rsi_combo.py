@@ -30,56 +30,30 @@ import argparse
 
 import pandas as pd
 
-try:
-    from .backtest_common import (
-        add_data_source_args,
-        add_eval_end_arg,
-        add_eval_start_arg,
-        add_fee_args,
-        add_market_arg,
-        add_volume_filter_args,
-        compute_buy_quantity_with_fees,
-        compute_order_fees,
-        compute_relative_volume,
-        load_histories,
-        load_history,
-        normalize_max_open_positions,
-        normalize_market,
-        parse_eval_end,
-        parse_eval_start,
-        resolve_codes,
-        resolve_data_dir,
-        resolve_eval_window,
-        validate_market_for_symbol,
-        validate_market_for_symbols,
-        validate_volume_filter,
-    )
-    from .backtest_rsi_reversion import compute_rsi
-except ImportError:
-    from backtest_common import (
-        add_data_source_args,
-        add_eval_end_arg,
-        add_eval_start_arg,
-        add_fee_args,
-        add_market_arg,
-        add_volume_filter_args,
-        compute_buy_quantity_with_fees,
-        compute_order_fees,
-        compute_relative_volume,
-        load_histories,
-        load_history,
-        normalize_max_open_positions,
-        normalize_market,
-        parse_eval_end,
-        parse_eval_start,
-        resolve_codes,
-        resolve_data_dir,
-        resolve_eval_window,
-        validate_market_for_symbol,
-        validate_market_for_symbols,
-        validate_volume_filter,
-    )
-    from backtest_rsi_reversion import compute_rsi
+from backtest.backtest_common import (
+    add_data_source_args,
+    add_eval_end_arg,
+    add_eval_start_arg,
+    add_fee_args,
+    add_market_arg,
+    add_volume_filter_args,
+    compute_buy_quantity_with_fees,
+    compute_order_fees,
+    compute_relative_volume,
+    load_histories,
+    load_history,
+    normalize_max_open_positions,
+    normalize_market,
+    parse_eval_end,
+    parse_eval_start,
+    resolve_codes,
+    resolve_data_dir,
+    resolve_eval_window,
+    validate_market_for_symbol,
+    validate_market_for_symbols,
+    validate_volume_filter,
+)
+from backtest.backtest_rsi_reversion import compute_rsi
 
 
 DEFAULT_INITIAL_CASH = 100_000.0

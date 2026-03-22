@@ -60,7 +60,7 @@
 所有命令都必须显式传入 `--market HK`。
 
 ```bash
-./.venv/bin/python backtest/backtest_rsi_reversion.py \
+./.venv/bin/python -m backtest.backtest_rsi_reversion \
   --codes HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981 \
   --market HK \
   --initial-cash 800000 \
@@ -70,7 +70,7 @@
   --eval-end 2026-03-06 \
   --show-trades 0
 
-./.venv/bin/python backtest/backtest_ema_cross.py \
+./.venv/bin/python -m backtest.backtest_ema_cross \
   --codes HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981 \
   --market HK \
   --initial-cash 800000 \
@@ -81,7 +81,7 @@
   --eval-end 2026-03-06 \
   --show-trades 0
 
-./.venv/bin/python backtest/backtest_ema_rsi_combo.py \
+./.venv/bin/python -m backtest.backtest_ema_rsi_combo \
   --codes HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981 \
   --market HK \
   --initial-cash 800000 \
@@ -94,7 +94,7 @@
   --eval-end 2026-03-06 \
   --show-trades 0
 
-./.venv/bin/python backtest/backtest_ema_rsi_bull_range.py \
+./.venv/bin/python -m backtest.backtest_ema_rsi_bull_range \
   --codes HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981 \
   --market HK \
   --initial-cash 800000 \
@@ -110,7 +110,7 @@
   --eval-end 2026-03-06 \
   --show-trades 0
 
-./.venv/bin/python backtest/backtest_dual_momentum.py \
+./.venv/bin/python -m backtest.backtest_dual_momentum \
   --codes HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981 \
   --market HK \
   --initial-cash 800000 \
@@ -131,7 +131,7 @@
   --show-trades 0
 
 
-./.venv/bin/python backtest/backtest_dual_momentum_ema_rsi_hybrid.py \
+./.venv/bin/python -m backtest.backtest_dual_momentum_ema_rsi_hybrid \
   --codes HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981 \
   --market HK \
   --initial-cash 800000 \

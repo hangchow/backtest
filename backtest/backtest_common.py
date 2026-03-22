@@ -2,14 +2,9 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-import sys
 from typing import Any
 
 import pandas as pd
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
 
 from strategy.fees import FEE_ACCOUNT_PROFILES, compute_order_fees
 from strategy.volume import compute_relative_volume, compute_volume_scale, validate_volume_filter

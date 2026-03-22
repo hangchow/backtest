@@ -11,7 +11,7 @@
 3. Python 环境已安装依赖：
 
 ```bash
-./.venv/bin/pip install -r requirements.txt
+./.venv/bin/pip install -e .
 ```
 
 如果只想安装这个脚本的最小依赖，也可以单独安装：

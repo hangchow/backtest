@@ -18,7 +18,7 @@
 ## 基本用法
 
 ```bash
-./.venv/bin/python backtest/backtest_dual_momentum.py \
+./.venv/bin/python -m backtest.backtest_dual_momentum \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA US.AMZN US.AAPL US.V US.VOO \
   --market US \
   --initial-cash 100000 \

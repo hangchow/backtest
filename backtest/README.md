@@ -2,6 +2,22 @@
 
 本文档用于统一维护回测相关的项目概览、文档入口、回测参数口径与账户费用。
 
+## 运行方式
+
+回测入口统一按模块方式运行：
+
+```bash
+./.venv/bin/python -m backtest.<module> ...
+```
+
+例如：
+
+```bash
+./.venv/bin/python -m backtest.backtest_dual_momentum --help
+```
+
+不再支持依赖脚本路径的 `python backtest/<script>.py ...` 运行方式。
+
 ## 项目概览
 
 这个项目基于港美股样本股票的 `1分钟 K 线` 与 `日 K 线` 数据，做单标与股票池的量化策略回测；仓库里另外还包含一个独立的 `livetrading` 实时交易框架，支持 `mock / futu_simulate / futu_real` 三种执行模式。

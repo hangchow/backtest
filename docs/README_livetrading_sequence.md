@@ -4,6 +4,8 @@
 
 下面的启动命令只是为了给时序图提供一个具体入口示例，不代表本文只讨论 `mock` 行情模式。
 
+等价的包入口 `./.venv/bin/python -m livetrading ...` 也可用；本文继续沿用根目录 `livetrading.py` 写法，方便和现有脚本命令保持一致。
+
 如果你要看执行器设计、`mock / futu_simulate / futu_real` 三种模式的差异，见 [README_livetrading_real_order_plan.md](/Users/sean/workspace/backtest-feature-livetrading-startup/docs/README_livetrading_real_order_plan.md)。
 
 示例命令：

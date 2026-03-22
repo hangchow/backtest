@@ -22,13 +22,13 @@
 ## 基本用法
 
 ```bash
-./.venv/bin/python backtest/backtest_ema_rsi_combo.py --codes HK.00700 --market HK --initial-cash 800000
+./.venv/bin/python -m backtest.backtest_ema_rsi_combo --codes HK.00700 --market HK --initial-cash 800000
 ```
 
 如果你不想隔夜持仓：
 
 ```bash
-./.venv/bin/python backtest/backtest_ema_rsi_combo.py --codes HK.00700 --market HK --initial-cash 800000 --flat-at-close
+./.venv/bin/python -m backtest.backtest_ema_rsi_combo --codes HK.00700 --market HK --initial-cash 800000 --flat-at-close
 ```
 
 ## 常用参数

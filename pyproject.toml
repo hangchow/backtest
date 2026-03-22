@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "backtest-feature-livetrading-startup"
+version = "0.1.0"
+description = "Backtest and live-trading utilities for stock strategies."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas",
+    "futu-api",
+    "requests",
+    "beautifulsoup4",
+    "exchange-calendars",
+]
+
+[tool.setuptools.packages.find]
+include = ["backtest*", "livetrading*", "strategy*"]

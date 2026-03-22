@@ -8,40 +8,22 @@ import time
 
 import pandas as pd
 
-try:
-    from .backtest_common import (
-        add_fee_args,
-        add_market_arg,
-        load_histories,
-        normalize_market,
-        parse_eval_end,
-        parse_eval_start,
-        validate_market_for_symbols,
-    )
-    from . import backtest_dual_momentum as dual_momentum
-    from . import backtest_dual_momentum_ema_rsi_hybrid as hybrid
-    from . import backtest_ema_cross as ema_cross
-    from . import backtest_ema_rsi_bull_range as ema_rsi_bull_range
-    from . import backtest_ema_rsi_combo as ema_rsi_combo
-    from . import backtest_momentum_monthly as momentum_monthly
-    from . import backtest_rsi_reversion as rsi_reversion
-except ImportError:
-    from backtest_common import (
-        add_fee_args,
-        add_market_arg,
-        load_histories,
-        normalize_market,
-        parse_eval_end,
-        parse_eval_start,
-        validate_market_for_symbols,
-    )
-    import backtest_dual_momentum as dual_momentum
-    import backtest_dual_momentum_ema_rsi_hybrid as hybrid
-    import backtest_ema_cross as ema_cross
-    import backtest_ema_rsi_bull_range as ema_rsi_bull_range
-    import backtest_ema_rsi_combo as ema_rsi_combo
-    import backtest_momentum_monthly as momentum_monthly
-    import backtest_rsi_reversion as rsi_reversion
+from backtest import backtest_dual_momentum as dual_momentum
+from backtest import backtest_dual_momentum_ema_rsi_hybrid as hybrid
+from backtest import backtest_ema_cross as ema_cross
+from backtest import backtest_ema_rsi_bull_range as ema_rsi_bull_range
+from backtest import backtest_ema_rsi_combo as ema_rsi_combo
+from backtest import backtest_momentum_monthly as momentum_monthly
+from backtest import backtest_rsi_reversion as rsi_reversion
+from backtest.backtest_common import (
+    add_fee_args,
+    add_market_arg,
+    load_histories,
+    normalize_market,
+    parse_eval_end,
+    parse_eval_start,
+    validate_market_for_symbols,
+)
 
 
 DEFAULT_MINUTE_DATA_ROOT = Path("kline_minute")

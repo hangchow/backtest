@@ -24,43 +24,22 @@ from __future__ import annotations
 
 import argparse
 
-try:
-    from . import backtest_ema_rsi_combo as combo
-except ImportError:
-    import backtest_ema_rsi_combo as combo
-
-try:
-    from .backtest_common import (
-        add_data_source_args,
-        add_eval_end_arg,
-        add_eval_start_arg,
-        add_fee_args,
-        add_market_arg,
-        load_histories,
-        load_history,
-        parse_eval_end,
-        parse_eval_start,
-        resolve_codes,
-        resolve_data_dir,
-        validate_market_for_symbol,
-        validate_market_for_symbols,
-    )
-except ImportError:
-    from backtest_common import (
-        add_data_source_args,
-        add_eval_end_arg,
-        add_eval_start_arg,
-        add_fee_args,
-        add_market_arg,
-        load_histories,
-        load_history,
-        parse_eval_end,
-        parse_eval_start,
-        resolve_codes,
-        resolve_data_dir,
-        validate_market_for_symbol,
-        validate_market_for_symbols,
-    )
+from backtest import backtest_ema_rsi_combo as combo
+from backtest.backtest_common import (
+    add_data_source_args,
+    add_eval_end_arg,
+    add_eval_start_arg,
+    add_fee_args,
+    add_market_arg,
+    load_histories,
+    load_history,
+    parse_eval_end,
+    parse_eval_start,
+    resolve_codes,
+    resolve_data_dir,
+    validate_market_for_symbol,
+    validate_market_for_symbols,
+)
 
 
 DEFAULT_INITIAL_CASH = combo.DEFAULT_INITIAL_CASH

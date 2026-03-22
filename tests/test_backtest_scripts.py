@@ -1,19 +1,12 @@
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 import pandas as pd
-
-# Resolve imports relative to this repository so the tests work under both
-# `python tests/test_backtest_scripts.py` and `python -m unittest ...`.
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
 
 from backtest.backtest_rsi_reversion import compute_rsi
 from tests.fetch_futu_day import save_weekly_files as save_futu_weekly_files

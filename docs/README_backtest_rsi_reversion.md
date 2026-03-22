@@ -23,13 +23,13 @@
 指定标的代码运行：
 
 ```bash
-./.venv/bin/python backtest/backtest_rsi_reversion.py --codes HK.00700 --market HK --initial-cash 800000
+./.venv/bin/python -m backtest.backtest_rsi_reversion --codes HK.00700 --market HK --initial-cash 800000
 ```
 
 如果要每天收盘前强制平仓：
 
 ```bash
-./.venv/bin/python backtest/backtest_rsi_reversion.py --codes HK.00700 --market HK --initial-cash 800000 --flat-at-close
+./.venv/bin/python -m backtest.backtest_rsi_reversion --codes HK.00700 --market HK --initial-cash 800000 --flat-at-close
 ```
 
 ## 常用参数
@@ -56,7 +56,7 @@
 自定义参数运行：
 
 ```bash
-./.venv/bin/python backtest/backtest_rsi_reversion.py \
+./.venv/bin/python -m backtest.backtest_rsi_reversion \
   --codes HK.00700 \
   --market HK \
   --initial-cash 800000 \
@@ -69,7 +69,7 @@
 不打印交易样例：
 
 ```bash
-./.venv/bin/python backtest/backtest_rsi_reversion.py --codes HK.00700 --market HK --initial-cash 800000 --show-trades 0
+./.venv/bin/python -m backtest.backtest_rsi_reversion --codes HK.00700 --market HK --initial-cash 800000 --show-trades 0
 ```
 
 ## 输出内容

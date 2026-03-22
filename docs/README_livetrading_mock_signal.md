@@ -99,6 +99,8 @@ REBALANCE_SKIPPED ... reason=no_portfolio_value
   --trade-config config/livetrading.trade_accounts.mock.sample.json
 ```
 
+如果你更习惯模块入口，也可以等价地运行 `./.venv/bin/python -m livetrading ...`；本文继续沿用根目录脚本写法。
+
 这组样例默认是：
 
 - `mock` 实时行情入口

@@ -35,14 +35,22 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-import sys
 
 import pandas as pd
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
+from backtest.backtest_common import (
+    add_eval_end_arg,
+    add_eval_start_arg,
+    add_fee_args,
+    add_market_arg,
+    compute_order_fees,
+    normalize_market,
+    parse_eval_end,
+    parse_eval_start,
+    resolve_eval_window,
+    resolve_codes,
+    validate_market_for_symbols,
+)
 from strategy.dual_momentum import (
     DEFAULT_LONG_LOOKBACK_DAYS,
     DEFAULT_LONG_LOOKBACK_WEIGHT,
@@ -65,35 +73,6 @@ from strategy.rebalance import (
     compute_affordable_qty_with_fee,
     compute_portfolio_value,
 )
-
-try:
-    from .backtest_common import (
-        add_eval_end_arg,
-        add_eval_start_arg,
-        add_fee_args,
-        add_market_arg,
-        compute_order_fees,
-        normalize_market,
-        parse_eval_end,
-        parse_eval_start,
-        resolve_eval_window,
-        resolve_codes,
-        validate_market_for_symbols,
-    )
-except ImportError:
-    from backtest_common import (
-        add_eval_end_arg,
-        add_eval_start_arg,
-        add_fee_args,
-        add_market_arg,
-        compute_order_fees,
-        normalize_market,
-        parse_eval_end,
-        parse_eval_start,
-        resolve_eval_window,
-        resolve_codes,
-        validate_market_for_symbols,
-    )
 
 
 DEFAULT_INITIAL_CASH = 100_000.0

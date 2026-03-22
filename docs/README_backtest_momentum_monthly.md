@@ -58,7 +58,7 @@
 
 ### HK（窗口1）
 ```bash
-python3 backtest/backtest_momentum_monthly.py \
+./.venv/bin/python -m backtest.backtest_momentum_monthly \
   --codes HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981 \
   --market HK \
   --initial-cash 800000 \
@@ -73,7 +73,7 @@ python3 backtest/backtest_momentum_monthly.py \
 
 ### HK（窗口2）
 ```bash
-python3 backtest/backtest_momentum_monthly.py \
+./.venv/bin/python -m backtest.backtest_momentum_monthly \
   --codes HK.00700 HK.09988 HK.00005 HK.01810 HK.03690 HK.01211 HK.03750 HK.00981 \
   --market HK \
   --initial-cash 800000 \
@@ -88,7 +88,7 @@ python3 backtest/backtest_momentum_monthly.py \
 
 ### US（窗口1）
 ```bash
-python3 backtest/backtest_momentum_monthly.py \
+./.venv/bin/python -m backtest.backtest_momentum_monthly \
   --codes US.AAPL US.MSFT US.GOOG US.AMZN US.NVDA US.TSLA US.V US.VOO \
   --market US \
   --initial-cash 100000 \
@@ -103,7 +103,7 @@ python3 backtest/backtest_momentum_monthly.py \
 
 ### US（窗口2）
 ```bash
-python3 backtest/backtest_momentum_monthly.py \
+./.venv/bin/python -m backtest.backtest_momentum_monthly \
   --codes US.AAPL US.MSFT US.GOOG US.AMZN US.NVDA US.TSLA US.V US.VOO \
   --market US \
   --initial-cash 100000 \

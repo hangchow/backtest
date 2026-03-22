@@ -59,4 +59,4 @@
 
 ## 导入说明
 
-测试文件会根据自身位置推导仓库根目录并加入 `sys.path`，所以不依赖你当前 shell 恰好在哪个目录。
+推荐先执行 `./.venv/bin/pip install -e .`，然后统一通过 `python -m unittest ...` 运行测试；测试文件本身不再修改 `sys.path`。

@@ -36,9 +36,9 @@
 ## 复现命令示例
 
 ```bash
-./.venv/bin/python backtest/backtest_rsi_reversion.py --codes HK.00700 --market HK --initial-cash 800000 --fee-account futu_alt --show-trades 0
-./.venv/bin/python backtest/backtest_ema_cross.py --codes HK.00700 --market HK --initial-cash 800000 --fee-account futu_alt --show-trades 0
-./.venv/bin/python backtest/backtest_ema_rsi_combo.py --codes HK.00700 --market HK --initial-cash 800000 --fee-account futu_alt --show-trades 0
-./.venv/bin/python backtest/backtest_ema_rsi_bull_range.py --codes HK.00700 --market HK --initial-cash 800000 --fee-account futu_alt --show-trades 0
-./.venv/bin/python backtest/backtest_dual_momentum.py --codes HK.00700 --market HK --initial-cash 800000 --fee-account futu_alt --show-trades 0
+./.venv/bin/python -m backtest.backtest_rsi_reversion --codes HK.00700 --market HK --initial-cash 800000 --fee-account futu_alt --show-trades 0
+./.venv/bin/python -m backtest.backtest_ema_cross --codes HK.00700 --market HK --initial-cash 800000 --fee-account futu_alt --show-trades 0
+./.venv/bin/python -m backtest.backtest_ema_rsi_combo --codes HK.00700 --market HK --initial-cash 800000 --fee-account futu_alt --show-trades 0
+./.venv/bin/python -m backtest.backtest_ema_rsi_bull_range --codes HK.00700 --market HK --initial-cash 800000 --fee-account futu_alt --show-trades 0
+./.venv/bin/python -m backtest.backtest_dual_momentum --codes HK.00700 --market HK --initial-cash 800000 --fee-account futu_alt --show-trades 0
 ```

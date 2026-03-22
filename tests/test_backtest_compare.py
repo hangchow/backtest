@@ -7,11 +7,6 @@ from pathlib import Path
 
 import pandas as pd
 
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
 from backtest import backtest_dual_momentum_ema_rsi_hybrid as hybrid_backtest
 from backtest.backtest_compare import (
     ALL_STRATEGY_KEYS,

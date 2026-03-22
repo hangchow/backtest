@@ -1,5 +1,6 @@
 __pycache__/
 *.pyc
+*.egg-info/
 .DS_Store
 .venv
 .com.futunn.FutuOpenD/
@@ -7,4 +8,3 @@ __pycache__/
 .kline_day/
 .kline_minute/
 output/
-

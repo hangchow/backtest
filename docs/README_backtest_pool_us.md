@@ -66,7 +66,7 @@
 所有命令都必须显式传入 `--market US`。
 
 ```bash
-python3 backtest/backtest_rsi_reversion.py \
+./.venv/bin/python -m backtest.backtest_rsi_reversion \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA US.AMZN US.AAPL US.V US.VOO \
   --market US \
   --initial-cash 100000 \
@@ -76,7 +76,7 @@ python3 backtest/backtest_rsi_reversion.py \
   --eval-end 2026-03-06 \
   --show-trades 0
 
-python3 backtest/backtest_ema_cross.py \
+./.venv/bin/python -m backtest.backtest_ema_cross \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA US.AMZN US.AAPL US.V US.VOO \
   --market US \
   --initial-cash 100000 \
@@ -87,7 +87,7 @@ python3 backtest/backtest_ema_cross.py \
   --eval-end 2026-03-06 \
   --show-trades 0
 
-python3 backtest/backtest_ema_rsi_combo.py \
+./.venv/bin/python -m backtest.backtest_ema_rsi_combo \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA US.AMZN US.AAPL US.V US.VOO \
   --market US \
   --initial-cash 100000 \
@@ -100,7 +100,7 @@ python3 backtest/backtest_ema_rsi_combo.py \
   --eval-end 2026-03-06 \
   --show-trades 0
 
-python3 backtest/backtest_ema_rsi_bull_range.py \
+./.venv/bin/python -m backtest.backtest_ema_rsi_bull_range \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA US.AMZN US.AAPL US.V US.VOO \
   --market US \
   --initial-cash 100000 \
@@ -116,7 +116,7 @@ python3 backtest/backtest_ema_rsi_bull_range.py \
   --eval-end 2026-03-06 \
   --show-trades 0
 
-python3 backtest/backtest_dual_momentum.py \
+./.venv/bin/python -m backtest.backtest_dual_momentum \
   --codes US.MSFT US.NVDA US.GOOG US.TSLA US.AMZN US.AAPL US.V US.VOO \
   --market US \
   --initial-cash 100000 \

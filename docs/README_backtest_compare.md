@@ -44,7 +44,7 @@
 单标默认比较 4 个分钟级策略的单标模式：
 
 ```bash
-./.venv/bin/python backtest/backtest_compare.py \
+./.venv/bin/python -m backtest.backtest_compare \
   --market US \
   --fee-account futu_alt \
   --code US.MSFT
@@ -53,7 +53,7 @@
 只跑单标 section：
 
 ```bash
-./.venv/bin/python backtest/backtest_compare.py \
+./.venv/bin/python -m backtest.backtest_compare \
   --scope single \
   --market US \
   --fee-account futu_alt \
@@ -90,7 +90,7 @@
 只跑股票池 section：
 
 ```bash
-./.venv/bin/python backtest/backtest_compare.py \
+./.venv/bin/python -m backtest.backtest_compare \
   --scope pool \
   --market HK \
   --fee-account futu_alt \
@@ -102,7 +102,7 @@
 只跑股票池 section，且只保留原生股票池策略：
 
 ```bash
-./.venv/bin/python backtest/backtest_compare.py \
+./.venv/bin/python -m backtest.backtest_compare \
   --scope pool \
   --market HK \
   --fee-account futu_alt \
@@ -147,7 +147,7 @@
 指定分钟/日线数据根目录：
 
 ```bash
-./.venv/bin/python backtest/backtest_compare.py \
+./.venv/bin/python -m backtest.backtest_compare \
   --minute-data-root /path/to/kline_minute \
   --daily-data-root /path/to/kline_day \
   --market US \
@@ -159,7 +159,7 @@
 覆盖默认评估窗口：
 
 ```bash
-./.venv/bin/python backtest/backtest_compare.py \
+./.venv/bin/python -m backtest.backtest_compare \
   --market US \
   --fee-account futu_alt \
   --code US.MSFT \
@@ -171,7 +171,7 @@
 统一指定所有策略的初始资金：
 
 ```bash
-./.venv/bin/python backtest/backtest_compare.py \
+./.venv/bin/python -m backtest.backtest_compare \
   --market HK \
   --initial-cash 800000 \
   --fee-account futu_alt \
@@ -182,7 +182,7 @@
 把输出直接保存成 Markdown 文件：
 
 ```bash
-./.venv/bin/python backtest/backtest_compare.py \
+./.venv/bin/python -m backtest.backtest_compare \
   --market US \
   --fee-account futu_alt \
   --code US.MSFT \
