@@ -6,7 +6,7 @@ from typing import Any
 
 import pandas as pd
 
-from strategy.fees import FEE_ACCOUNT_PROFILES, compute_order_fees
+from trading_domain.fees import FEE_ACCOUNT_PROFILES, compute_order_fees
 from strategy.volume import compute_relative_volume, compute_volume_scale, validate_volume_filter
 
 

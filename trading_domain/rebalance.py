@@ -11,7 +11,7 @@ DEFAULT_REBALANCE_BAND_PCT = 0.1
 
 @dataclass(frozen=True)
 class RebalancePolicy:
-    # 调仓带是执行层参数，不属于 dual momentum 信号本身。
+    # 调仓带是组合/执行域参数，不属于某个信号策略本身。
     band_pct: float = DEFAULT_REBALANCE_BAND_PCT
 
     @classmethod

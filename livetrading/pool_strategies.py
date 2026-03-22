@@ -11,7 +11,7 @@ from strategy.dual_momentum import (
     build_dual_momentum_signal,
 )
 from strategy.dual_momentum_state import DualMomentumDailyState
-from strategy.rebalance import RebalancePolicy
+from trading_domain.rebalance import RebalancePolicy
 from .config import StockPoolConfig
 from .models import PortfolioRebalanceDecision
 from .pool_strategy_registry import (

@@ -61,7 +61,7 @@ from livetrading.quote_brokers.mock import MockRealtimeQuoteClient
 from livetrading.trade_accounts.base import TradeAccountClient
 from livetrading.trade_accounts.futu import FutuTradeAccountClient
 from livetrading.trade_accounts.mock import MockTradeAccountClient
-from strategy.fees import compute_order_fees
+from trading_domain.fees import compute_order_fees
 
 
 def build_daily_history(code: str, closes: list[float], volumes: list[float] | None = None) -> pd.DataFrame:

@@ -48,8 +48,8 @@
 - [livetrading/pool_strategies.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/pool_strategies.py)
 - [strategy/dual_momentum_state.py](/Users/sean/workspace/backtest-feature-livetrading-startup/strategy/dual_momentum_state.py)
 - [strategy/dual_momentum.py](/Users/sean/workspace/backtest-feature-livetrading-startup/strategy/dual_momentum.py)
-- [strategy/rebalance.py](/Users/sean/workspace/backtest-feature-livetrading-startup/strategy/rebalance.py)
-- [strategy/fees.py](/Users/sean/workspace/backtest-feature-livetrading-startup/strategy/fees.py)
+- [trading_domain/rebalance.py](/Users/sean/workspace/backtest-feature-livetrading-startup/trading_domain/rebalance.py)
+- [trading_domain/fees.py](/Users/sean/workspace/backtest-feature-livetrading-startup/trading_domain/fees.py)
 
 下面 Mermaid 里的方法说明，和代码里对应方法的中文注释保持一致，方便你对着图直接跳代码。
 
@@ -299,8 +299,8 @@ sequenceDiagram
     participant PLAN as execution.py\nRebalancePlanner
     participant EXE as execution.py\nMockExecutor / FutuSimulateExecutor / FutuRealExecutor
     participant TAC as trade_accounts/futu.py\nFutuTradeAccountClient
-    participant RB as rebalance.py
-    participant FEE as fees.py
+    participant RB as trading_domain/rebalance.py
+    participant FEE as trading_domain/fees.py
 
     ENG->>ENG: _execute_portfolio_rebalance()<br/>收集参考价并按账户循环执行
     ENG->>STORE: planning_cash / planning_positions()<br/>按 executor 选择 shadow 或 expected 视图
@@ -398,10 +398,10 @@ sequenceDiagram
   - 把分钟 bar 增量聚合成“已完成日线窗口”
 - [strategy/dual_momentum.py](/Users/sean/workspace/backtest-feature-livetrading-startup/strategy/dual_momentum.py)
   - 纯信号逻辑，输出 `target_weights`
-- [strategy/rebalance.py](/Users/sean/workspace/backtest-feature-livetrading-startup/strategy/rebalance.py)
-  - 执行层的目标股数、可买数量、调仓带
-- [strategy/fees.py](/Users/sean/workspace/backtest-feature-livetrading-startup/strategy/fees.py)
-  - 手续费计算
+- [trading_domain/rebalance.py](/Users/sean/workspace/backtest-feature-livetrading-startup/trading_domain/rebalance.py)
+  - 共享的目标股数、可买数量、调仓带计算
+- [trading_domain/fees.py](/Users/sean/workspace/backtest-feature-livetrading-startup/trading_domain/fees.py)
+  - 共享的手续费计算
 
 ## 8. 一句话总结
 
@@ -416,7 +416,7 @@ quote client / trade account client / history provider
 -> dual_momentum_state.py + dual_momentum.py
 -> account_state.py
 -> execution.py
--> rebalance.py + fees.py
+-> trading_domain/rebalance.py + trading_domain/fees.py
 -> DRY_RUN_ORDER / ORDER_SUBMITTED / ORDER_UPDATE / FILL / ACCOUNT / POSITIONS logs
 ```
 

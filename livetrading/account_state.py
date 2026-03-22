@@ -5,7 +5,7 @@ import logging
 
 import pandas as pd
 
-from strategy.fees import compute_order_fees
+from trading_domain.fees import compute_order_fees
 
 from .config import TradeAccountConfig
 from .models import AccountSnapshot, FillEvent, OrderIntent, OrderSubmission, OrderUpdate, PositionSnapshot
