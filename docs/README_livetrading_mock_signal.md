@@ -1,119 +1,50 @@
-# 实时行情 Mock 触发买卖点说明
+# 实时行情 Mock 稳定复现 `DRY_RUN_ORDER`
 
-这份文档说明如何在不依赖外部实时行情和交易账户的情况下，用仓库里已经支持的 `mock` 实时行情入口，手工推送分钟 K 线，并让 `livetrading` 打出 `DRY_RUN_ORDER` 的买卖日志。
+这份文档只解决一件事：在不依赖外部实时行情和真实交易账户的情况下，稳定复现 `BUY -> SELL -> BUY` 的 `DRY_RUN_ORDER` 日志。
 
-文档边界：
+先说最重要的一句：
 
-- 本文只负责“怎么运行 mock、怎么推 bar、怎么复现 BUY / SELL”
-- 如果你要看运行链路，见 [README_livetrading_sequence.md](../docs/README_livetrading_sequence.md)
-- 如果你要看当前执行层怎么分成 `mock / futu_simulate / futu_real`，见 [README_livetrading_real_order_plan.md](../docs/README_livetrading_real_order_plan.md)
+- 直接使用 [config/livetrading.pool.sample.json](../config/livetrading.pool.sample.json) 和现有 `.kline_day/`，只能保证程序能启动。
+- 它**不能**保证一定打出 `DRY_RUN_ORDER`。
+- 如果你只是从文档里复制命令想立刻复现买卖单，请使用本文下面这组**专用样例配置和专用本地日线夹具**。
 
-适用场景：
+如果你要看运行链路，见 [README_livetrading_sequence.md](../docs/README_livetrading_sequence.md)。
+如果你要看当前执行层怎么分成 `mock / futu_simulate / futu_real`，见 [README_livetrading_real_order_plan.md](../docs/README_livetrading_real_order_plan.md)。
 
-- `realtime_broker` 不能再走 `127.0.0.1:11111` 的 Futu 美股实时订阅。
-- 你希望走“本地日线 warm-up + mock 行情 + mock 账户 + mock 执行”的联调流程。
-- 你希望通过手工构造分钟 K，验证信号、调仓和 dry-run 下单日志。
+## 1. 这次要用哪几份配置
 
-## 1. 先理解触发条件
-
-当前实时策略不是“来一根分钟 bar 就立刻买卖”，而是：
-
-- 策略名：`dual_momentum`
-- 触发时机：`新交易日的第一根分钟 bar`
-- 信号依据：`上一交易日` 及更早的已完成日线
-
-也就是说：
-
-- 同一天内连续推很多分钟 bar，通常不会重复触发调仓。
-- 真正触发信号的是“日期切换”这一刻。
-- 如果你想稳定触发买点/卖点，不能只随便推一条 `09:30`，还要让“上一交易日的收盘结构”满足策略选股条件。
-
-## 2. 运行前提
-
-### 2.1 行情配置改成 mock
-
-用仓库里的三份样例配置：
+请使用下面四份文件：
 
 - [config/livetrading.quote.mock.sample.json](../config/livetrading.quote.mock.sample.json)
-- [config/livetrading.history.local.sample.json](../config/livetrading.history.local.sample.json)
-- [config/livetrading.pool.sample.json](../config/livetrading.pool.sample.json)
+- [config/livetrading.history.local.mock_signal.sample.json](../config/livetrading.history.local.mock_signal.sample.json)
+- [config/livetrading.pool.mock_signal.sample.json](../config/livetrading.pool.mock_signal.sample.json)
+- [config/livetrading.trade_account.mock.sample.json](../config/livetrading.trade_account.mock.sample.json)
 
-核心字段是：
+其中：
 
-```json
-{
-  "realtime_broker": {
-    "type": "mock",
-    "host": "127.0.0.1",
-    "port": 19111
-  }
-}
-```
+- `quote` 仍然使用仓库现成的 `mock` 行情入口
+- `trade_account` 仍然使用仓库现成的 `mock` 账户基线
+- `history` 改成读取仓库内置的受控日线夹具目录 [livetrading_mock_signal_kline_day](./livetrading_mock_signal_kline_day)
+- `pool` 改成只保留 `US.AAPL` / `US.MSFT` 两只股票，并把 dual momentum 参数缩短到可控窗口
 
-仓库里的 history 样例把 `history_broker` 配成了 `local`，也就是只从本地 `.kline_day/` 读取 warm-up 日线，不访问 Polygon 或 Futu。
+这组专用样例的目的不是模拟实盘，而是让本文里的推送顺序可以稳定复现同样的订单日志。
 
-如果你后面主动改成 `polygon` 或 `futu`，那就重新引入了外部依赖，不再是本文说的“全 mock 联调”。
-
-另外要注意：`local` 不等于“自动生成日线”。如果 `.kline_day/` 里没有对应股票的日线文件，warm-up 还是会缺数据。
-
-### 2.2 账户侧必须已经有资金和持仓状态
-
-要看到 `DRY_RUN_ORDER`，引擎里必须先有：
-
-- `available_funds` / `shadow_cash`
-- `positions` / `shadow_positions`
-
-否则只会出现：
-
-```text
-REBALANCE_SKIPPED ... reason=no_portfolio_value
-```
-
-如果你用仓库里的 [config/livetrading.trade_account.mock.sample.json](../config/livetrading.trade_account.mock.sample.json)，这些基线不是从 Futu 拉的，而是启动时直接用：
-
-- `broker.initial_cash`
-- `broker.initial_positions`
-
-初始化到 engine 里。
-
-如果你后面把 trade account 配置改回 `futu`，那才需要等待 Futu 账户和持仓同步完成。
-
-### 2.3 目标股票必须先有参考价
-
-引擎下 dry-run 单时，需要每个目标股票都有最新参考价。参考价来自：
-
-- 最新 `quote`
-- 或最新分钟 `bar.close`
-
-所以在真正触发调仓前，最好先给股票池里的目标股票各推一条 bar，确保它们都有价格。
-
-## 3. 启动方式
+## 2. 启动方式
 
 ```bash
 ./.venv/bin/python livetrading.py \
   --quote-config config/livetrading.quote.mock.sample.json \
-  --history-config config/livetrading.history.local.sample.json \
-  --pool-config config/livetrading.pool.sample.json \
+  --history-config config/livetrading.history.local.mock_signal.sample.json \
+  --pool-config config/livetrading.pool.mock_signal.sample.json \
   --trade-config config/livetrading.trade_account.mock.sample.json
 ```
 
-如果你更习惯模块入口，也可以等价地运行 `./.venv/bin/python -m livetrading ...`；本文继续沿用根目录脚本写法。
+启动后你应该先看到：
 
-这组样例默认是：
-
-- `mock` 实时行情入口
-- `local` warm-up 日线
-- 独立 `stock_pool` 配置
-- `mock` 账户基线
-- `mock` 执行器
-
-也就是说，启动这条链路时不需要 `POLYGON_API_KEY`，也不需要 Futu OpenD。
-
-启动后，`mock` 行情入口会监听：
-
-```text
-http://127.0.0.1:19111/push
-```
+- `mock realtime quote broker listening at http://127.0.0.1:19111/push`
+- `warm-up loaded from kline_day code=US.AAPL rows=3`
+- `warm-up loaded from kline_day code=US.MSFT rows=3`
+- `account=mock_primary mock account connected cash=100000.0 positions={}`
 
 健康检查：
 
@@ -121,116 +52,37 @@ http://127.0.0.1:19111/push
 curl http://127.0.0.1:19111/health
 ```
 
-## 4. 手工推送格式
+## 3. 为什么这组样例一定能出单
 
-单条 bar：
+这组受控日线夹具的已完成日线是：
 
-```bash
-curl -X POST http://127.0.0.1:19111/push \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "code": "US.AAPL",
-    "time_key": "2026-03-13 09:30:00",
-    "open": 130.0,
-    "close": 130.0,
-    "high": 130.0,
-    "low": 130.0,
-    "volume": 5000
-  }'
-```
+- `2026-03-10`：`AAPL=100`，`MSFT=100`
+- `2026-03-11`：`AAPL=100`，`MSFT=100`
+- `2026-03-12`：`AAPL=100`，`MSFT=120`
 
-批量 bar：
+所以当 `2026-03-13` 的第一根分钟 bar 到来时，策略会基于“截至 `2026-03-12` 的已完成日线”判断：
 
-```bash
-curl -X POST http://127.0.0.1:19111/push \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "bars": [
-      {"code": "US.AAPL", "time_key": "2026-03-12 15:59:00", "close": 100.0, "volume": 1000},
-      {"code": "US.MSFT", "time_key": "2026-03-12 15:59:00", "close": 120.0, "volume": 1000}
-    ]
-  }'
-```
+- `MSFT` 比 `AAPL` 强
+- 市场过滤是 risk-on
+- 第一笔目标仓位应该买入 `US.MSFT`
 
-`mock` 收到后会做两件事：
+随后，只要把 `2026-03-13` 这一天的收盘结构改成：
 
-- 先合成一条 `quote`
-- 再推对应的分钟 `bar`
+- `AAPL=130`
+- `MSFT=110`
 
-这样既能更新参考价，也能驱动策略状态机。
+那么到了 `2026-03-14` 的第一根分钟 bar，策略就会把目标从 `US.MSFT` 切到 `US.AAPL`。
 
-## 5. 怎样稳定触发 BUY / SELL
+## 4. 逐步推送顺序
 
-这是关键。
+当前 live 策略不是“来一根分钟 bar 就立刻买卖”，而是：
 
-为了稳定复现，必须满足两层条件：
+- 只在`新交易日的第一根分钟 bar`触发一次调仓
+- 信号依据是`上一交易日`及更早的已完成日线
 
-1. `上一交易日` 的已完成日线结果，要让策略确实想调仓。
-2. `当前交易日第一根分钟 bar` 要把这个调仓信号触发出来。
+因此必须按下面顺序推送。
 
-### 5.1 当前策略的最小可控思路
-
-仓库当前默认 live 策略是 `dual_momentum`。如果你想用最少的股票验证，建议只保留两只：
-
-- `US.AAPL`
-- `US.MSFT`
-
-并使用类似下面这组参数：
-
-```json
-{
-  "lookback_days": 1,
-  "long_lookback_days": 2,
-  "long_lookback_weight": 0.0,
-  "top_n": 1,
-  "volume_window": 1,
-  "min_volume_ratio": 1.0,
-  "market_filter_window": 2,
-  "volatility_window": 2,
-  "target_annual_vol": 999.0,
-  "max_gross_exposure": 1.0,
-  "rebalance_band_pct": 0.0
-}
-```
-
-这组参数的目的不是实盘最优，而是让“受控触发”更直接：
-
-- 只看 1 天相对强弱
-- 只持有最强的 1 只
-- 不让调仓带把小变化吞掉
-
-### 5.2 受控验证时的日线前提
-
-要精确复现买卖，最好保证 warm-up 日线是可控的。
-
-我验证时使用的受控日线逻辑是：
-
-- 截至 `2026-03-12`
-- `US.AAPL` 最近两天收盘：`100 -> 100`
-- `US.MSFT` 最近两天收盘：`100 -> 120`
-
-这样在 `2026-03-13` 开盘第一根分钟 bar 到来时，策略会认为：
-
-- `MSFT` 比 `AAPL` 更强
-- 目标仓位应该切到 `US.MSFT`
-
-然后再让 `2026-03-13` 这一天的“日线收盘结构”变成：
-
-- `US.AAPL`：`100 -> 130`
-- `US.MSFT`：`120 -> 110`
-
-这样到 `2026-03-14` 开盘第一根分钟 bar 到来时，策略会反过来认为：
-
-- `AAPL` 更强
-- 目标仓位应该从 `US.MSFT` 切到 `US.AAPL`
-
-## 6. 一套实际可复现的推送顺序
-
-下面这组请求，是我已经实际验证过能打出 `BUY -> SELL -> BUY` dry-run 日志的一组顺序。
-
-注意：这组顺序默认你已经满足了上面的“受控日线前提”。如果你主动把 `history_broker` 改回 `polygon` 或 `futu`，那么最终信号方向会受到外部历史数据影响，不保证和下面完全一样。
-
-### 6.1 先给股票池补参考价
+### 4.1 先给目标股票补参考价
 
 ```bash
 curl -X POST http://127.0.0.1:19111/push \
@@ -243,12 +95,9 @@ curl -X POST http://127.0.0.1:19111/push \
   }'
 ```
 
-作用：
+这一步只更新参考价，不触发调仓。
 
-- 让引擎里 `AAPL` / `MSFT` 都先有价格
-- 还不会触发调仓，因为还没有切到新交易日
-
-### 6.2 推新交易日第一根 bar，触发第一次 BUY
+### 4.2 推下一交易日第一根 bar，触发第一次 BUY
 
 ```bash
 curl -X POST http://127.0.0.1:19111/push \
@@ -261,23 +110,16 @@ curl -X POST http://127.0.0.1:19111/push \
   }'
 ```
 
-这里的关键不是推了 `AAPL` 本身，而是：
+这里的关键不是推了 `AAPL` 本身，而是交易日从 `2026-03-12` 切到了 `2026-03-13`。
 
-- 时间从 `2026-03-12` 切到了 `2026-03-13`
-- 状态机开始用“截至 `2026-03-12` 的已完成日线”计算信号
-
-在上面的受控前提下，此时会打出类似：
+此时应该出现：
 
 ```text
-DRY_RUN_REBALANCE ... (targets=US.MSFT)
-DRY_RUN_ORDER ... action=BUY code=US.MSFT ...
+INFO DRY_RUN_REBALANCE account_id=mock_primary signal_time=2026-03-13 09:30:00 reason=dual_momentum rebalance using completed daily data through 2026-03-12 (targets=US.MSFT) target_weights={'US.MSFT': 1.0}
+INFO DRY_RUN_ORDER account_id=mock_primary action=BUY code=US.MSFT ...
 ```
 
-### 6.3 改写当天的日线结构
-
-为了让下一次开盘切仓到 `AAPL`，需要把 `2026-03-13` 这一天的最终收盘结构改成“`AAPL` 强、`MSFT` 弱”。
-
-最少只需要补一条 `MSFT` 的收盘 bar：
+### 4.3 改写 `2026-03-13` 这一天的最终收盘结构
 
 ```bash
 curl -X POST http://127.0.0.1:19111/push \
@@ -290,12 +132,12 @@ curl -X POST http://127.0.0.1:19111/push \
   }'
 ```
 
-这时日内状态会变成：
+推完后，日内状态会变成：
 
 - `AAPL` 当天 close 仍然是 `130.0`
 - `MSFT` 当天 close 变成 `110.0`
 
-### 6.4 再推下一交易日第一根 bar，触发 SELL + BUY
+### 4.4 再推下一交易日第一根 bar，触发 SELL + BUY
 
 ```bash
 curl -X POST http://127.0.0.1:19111/push \
@@ -308,55 +150,53 @@ curl -X POST http://127.0.0.1:19111/push \
   }'
 ```
 
-此时会用“截至 `2026-03-13` 的已完成日线”重新计算，日志里会出现：
+此时应该出现：
 
 ```text
-DRY_RUN_REBALANCE ... (targets=US.AAPL)
-DRY_RUN_ORDER ... action=SELL code=US.MSFT ...
-DRY_RUN_ORDER ... action=BUY code=US.AAPL ...
+INFO DRY_RUN_REBALANCE account_id=mock_primary signal_time=2026-03-14 09:30:00 reason=dual_momentum rebalance using completed daily data through 2026-03-13 (targets=US.AAPL) target_weights={'US.AAPL': 1.0}
+INFO DRY_RUN_ORDER account_id=mock_primary action=SELL code=US.MSFT ...
+INFO DRY_RUN_ORDER account_id=mock_primary action=BUY code=US.AAPL ...
 ```
 
-## 7. 我实际验证到的日志样例
+## 5. 如果你改回默认样例配置，为什么结果会不一样
 
-下面是我实际跑出来的关键日志：
+如果你改回下面这组文件：
 
-```text
-INFO DRY_RUN_REBALANCE account_id=sim_primary signal_time=2026-03-13 09:30:00 reason=dual_momentum rebalance using completed daily data through 2026-03-12 (targets=US.MSFT) target_weights={'US.MSFT': 1.0}
-INFO DRY_RUN_ORDER account_id=sim_primary action=BUY code=US.MSFT qty=83 price=120.0000 signal_time=2026-03-13 09:30:00 ...
+- [config/livetrading.history.local.sample.json](../config/livetrading.history.local.sample.json)
+- [config/livetrading.pool.sample.json](../config/livetrading.pool.sample.json)
 
-INFO DRY_RUN_REBALANCE account_id=sim_primary signal_time=2026-03-14 09:30:00 reason=dual_momentum rebalance using completed daily data through 2026-03-13 (targets=US.AAPL) target_weights={'US.AAPL': 1.0}
-INFO DRY_RUN_ORDER account_id=sim_primary action=SELL code=US.MSFT qty=83 price=110.0000 signal_time=2026-03-14 09:30:00 ...
-INFO DRY_RUN_ORDER account_id=sim_primary action=BUY code=US.AAPL qty=69 price=131.0000 signal_time=2026-03-14 09:30:00 ...
-```
+那么日志很可能和本文不同，这是预期行为，不是程序坏了。
 
-## 8. 为什么你照着推了却没下单
+原因有三点：
 
-常见原因只有几类：
-
-- 没有账户资金状态
-  - 现象：`REBALANCE_SKIPPED ... reason=no_portfolio_value`
-  - `mock` 账户样例下通常说明 `initial_cash` 配得不对，或者启动时账户基线没有成功初始化
-- 目标股票没有参考价
-  - 现象：有 `DRY_RUN_REBALANCE`，但没有对应股票的 `DRY_RUN_ORDER`
-- 推送时间没有跨交易日
-  - 现象：同一天推很多 bar，都不出新调仓
-- 实际 warm-up 日线不是受控的
-  - 现象：日志有调仓，但目标不是你预期的那只股票
-- 市场过滤变成 risk-off
-  - 现象：`DRY_RUN_REBALANCE` 的 `target_weights={}`，策略切到现金
-
-## 9. 最重要的一句
-
-如果你只是想“证明整条链路能打出买卖单日志”，那就要把问题拆成两层：
-
-- `realtime_broker` 用 `mock` 解决实时订阅问题
-- `history_broker` 用 `local` 解决 warm-up 日线的外部依赖问题
-- `trade_account.broker.type` 用 `mock` 解决账户基线的外部依赖问题
+- 默认 `pool.sample` 使用 5 只股票和更长的参数窗口，不是本文这组可控的双股票短窗口。
+- 默认 `history.local.sample` 会读取你当前工作区里的 `.kline_day/`，不会自动生成本文假设的受控日线。
+- dual momentum 还有市场过滤；即使有候选股票，只要市场过滤变成 risk-off，结果也会是 `target_weights={}`，日志里表现为 `(targets=CASH)`。
 
 也就是说：
 
-- `mock` 负责“把实时事件送进来”
-- `受控日线` 负责“保证策略一定想买/卖你指定的股票”
-- `mock` 账户负责“给执行器一个本地的现金和持仓起点”
+- `sample` 配置适合验证“程序是否能启动、mock 链路是否通”
+- `mock_signal` 专用配置适合验证“是否能稳定打出 dry-run 买卖单”
 
-只靠随便推几根分钟 K，通常不够稳定复现买卖点。
+## 6. 常见问题
+
+- 现象：只有 `DRY_RUN_REBALANCE`，没有 `DRY_RUN_ORDER`
+  - 先确认你用的是本文这组 `mock_signal` 专用配置，而不是默认 `pool.sample`
+  - 再确认你是否先执行了“4.1 先给目标股票补参考价”
+- 现象：同一天推很多 bar，只有第一次触发调仓
+  - 这是正常行为；策略只在新的交易日第一次进入时触发一次
+- 现象：日志里出现 `(targets=CASH)` 和 `target_weights={}`
+  - 这表示策略最终切到了现金，常见原因是你没有使用本文的受控历史数据，或者你切回了默认样例配置
+
+## 7. 最重要的一句
+
+如果你的目标是“从文档直接复制命令，然后稳定看到 `DRY_RUN_ORDER`”，请不要使用默认的 `pool.sample` 和默认 `.kline_day/`。
+
+请直接使用本文这组：
+
+- [config/livetrading.quote.mock.sample.json](../config/livetrading.quote.mock.sample.json)
+- [config/livetrading.history.local.mock_signal.sample.json](../config/livetrading.history.local.mock_signal.sample.json)
+- [config/livetrading.pool.mock_signal.sample.json](../config/livetrading.pool.mock_signal.sample.json)
+- [config/livetrading.trade_account.mock.sample.json](../config/livetrading.trade_account.mock.sample.json)
+
+这组配置和仓库内置的受控日线夹具是配套的，目的就是让本文的推送顺序可以直接复现出买卖单日志。
