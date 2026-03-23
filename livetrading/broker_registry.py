@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from .config import HistoryBrokerConfig, RealtimeQuoteBrokerConfig, TradeAccountConfig
     from .history_providers.base import DailyHistoryProvider
     from .quote_brokers.base import QuoteBrokerClient, QuoteBrokerEventSink
-    from .trade_accounts.base import TradeAccountClient, TradeAccountEventSink
+    from .trade_account.base import TradeAccountClient, TradeAccountEventSink
     QuoteBrokerFactory = Callable[[RealtimeQuoteBrokerConfig, QuoteBrokerEventSink, logging.Logger], QuoteBrokerClient]
     DailyHistoryProviderFactory = Callable[[HistoryBrokerConfig, logging.Logger], DailyHistoryProvider]
     TradeAccountClientFactory = Callable[[TradeAccountConfig, TradeAccountEventSink, logging.Logger], TradeAccountClient]
@@ -134,7 +134,7 @@ def unregister_trade_account_client(broker_type: str) -> None:
 
 
 def ensure_builtin_trade_account_client_registrations() -> None:
-    from .trade_accounts import ensure_builtin_trade_account_client_registrations as ensure_registrations
+    from .trade_account import ensure_builtin_trade_account_client_registrations as ensure_registrations
 
     ensure_registrations()
 

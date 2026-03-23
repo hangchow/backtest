@@ -12,9 +12,9 @@ from domain.rebalance import (
     compute_portfolio_value,
 )
 from .account_state import AccountRuntimeState, AccountStateStore
-from .config import TradeAccountConfig
+from .config import DEFAULT_MARKET, DEFAULT_SECURITY_TYPE, TradeAccountConfig
 from .models import OrderIntent, OrderSubmission, PortfolioRebalanceDecision
-from .trade_accounts.base import TradeAccountClient
+from .trade_account.base import TradeAccountClient
 
 
 @dataclass(frozen=True)
@@ -199,11 +199,11 @@ class MockExecutor(OrderExecutor):
         current_qty = int(state.shadow_positions.get(intent.code, 0))
         fee_total, fee_breakdown = compute_order_fees(
             fee_account=account.broker.fee_account,
-            market=account.broker.market,
+            market=DEFAULT_MARKET,
             side="sell",
             price=intent.limit_price,
             shares=intent.qty,
-            security_type=account.broker.security_type,
+            security_type=DEFAULT_SECURITY_TYPE,
         )
         state.shadow_cash = float(state.shadow_cash or 0.0) + intent.qty * intent.limit_price - fee_total
         state.shadow_positions[intent.code] = max(current_qty - intent.qty, 0)
@@ -243,8 +243,8 @@ class MockExecutor(OrderExecutor):
             price=intent.limit_price,
             desired_qty=intent.qty,
             fee_account=account.broker.fee_account,
-            market=account.broker.market,
-            security_type=account.broker.security_type,
+            market=DEFAULT_MARKET,
+            security_type=DEFAULT_SECURITY_TYPE,
         )
         if buy_qty <= 0:
             self._logger.warning(
@@ -413,8 +413,8 @@ class _BaseFutuSubmitExecutor(OrderExecutor):
             price=intent.limit_price,
             desired_qty=intent.qty,
             fee_account=account.broker.fee_account,
-            market=account.broker.market,
-            security_type=account.broker.security_type,
+            market=DEFAULT_MARKET,
+            security_type=DEFAULT_SECURITY_TYPE,
         )
         if buy_qty <= 0:
             self._logger.warning(
@@ -466,7 +466,7 @@ class _BaseFutuSubmitExecutor(OrderExecutor):
             intent.limit_price,
             intent.signal_time,
             account.execution.order_session,
-            account.execution.allow_extended_hours_trading,
+            account.execution.order_session != "RTH",
         )
         submission = self._client.submit_order(intent)
         if submission.accepted:
@@ -486,11 +486,6 @@ class FutuRealExecutor(_BaseFutuSubmitExecutor):
 
     executor_name = "futu_real"
     required_trade_env = "REAL"
-
-    def _validate_account_config(self, account: TradeAccountConfig) -> None:
-        super()._validate_account_config(account)
-        if not account.execution.enable_real_trading:
-            raise ValueError(f"account {account.account_id} futu_real executor requires enable_real_trading=true")
 
 
 def create_order_executor(
@@ -515,13 +510,7 @@ def create_order_executor(
 
 
 def _order_limit_violation(account: TradeAccountConfig, intent: OrderIntent) -> str | None:
-    """统一检查执行层的订单数量上限和名义金额上限。"""
-    max_order_qty = account.execution.max_order_qty
-    if max_order_qty is not None and intent.qty > max_order_qty:
-        return "max_order_qty_exceeded"
-    max_order_notional = account.execution.max_order_notional
-    if max_order_notional is not None and intent.limit_price * intent.qty > max_order_notional:
-        return "max_order_notional_exceeded"
+    """当前 live 执行路径不再在配置层维护订单尺寸上限。"""
     return None
 
 
@@ -529,7 +518,7 @@ def _build_place_order_command(account: TradeAccountConfig, intent: OrderIntent)
     return (
         f"place_order(price={intent.limit_price:.4f}, qty={intent.qty}, code='{intent.code}', "
         f"trd_side='{intent.side}', order_type='NORMAL', trd_env='{account.broker.trade_env}', "
-        f"acc_index={account.broker.account_index}, fill_outside_rth={account.execution.allow_extended_hours_trading}, "
+        f"acc_index={account.broker.account_index}, fill_outside_rth={account.execution.order_session != 'RTH'}, "
         f"session='{account.execution.order_session}')"
     )
 

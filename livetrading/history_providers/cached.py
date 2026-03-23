@@ -8,7 +8,7 @@ from urllib.error import HTTPError
 
 import pandas as pd
 
-from ..config import HistoryBrokerConfig
+from ..config import DEFAULT_MARKET, HistoryBrokerConfig
 from .common import CSV_COLUMNS, HISTORY_COLUMNS, _market_calendar
 from .local import LocalDataDailyHistoryProvider
 
@@ -191,7 +191,7 @@ class CachedRemoteDailyHistoryProvider(LocalDataDailyHistoryProvider):
             return None
         if daily_latest_trade_date >= expected_latest_trade_date:
             return 0
-        calendar = _market_calendar(self._config.market)
+        calendar = _market_calendar(DEFAULT_MARKET)
         if calendar is None:
             return None
         lag_sessions = calendar.sessions_in_range(

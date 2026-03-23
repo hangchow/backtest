@@ -7,7 +7,7 @@ from typing import Callable, Iterable, Mapping
 
 import pandas as pd
 
-from ..config import HistoryBrokerConfig
+from ..config import DEFAULT_MARKET, HistoryBrokerConfig
 from .base import DailyHistoryProvider
 from .common import CSV_COLUMNS, HISTORY_COLUMNS, _default_now_provider_for_market
 
@@ -29,7 +29,7 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
         if daily_data_root is not None:
             kline_day_root = daily_data_root
         self._kline_day_root = Path(kline_day_root)
-        self._now_provider = now_provider or _default_now_provider_for_market(config.market)
+        self._now_provider = now_provider or _default_now_provider_for_market(DEFAULT_MARKET)
 
     def fetch_daily_histories(
         self,
@@ -119,7 +119,7 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
     def _expected_latest_trade_date(self) -> date | None:
         from .common import _expected_latest_trade_date_for_market
 
-        return _expected_latest_trade_date_for_market(self._config.market, self._now_provider())
+        return _expected_latest_trade_date_for_market(DEFAULT_MARKET, self._now_provider())
 
     def _write_csv_payload(self, file_path: Path, payload: pd.DataFrame) -> str | None:
         existed = file_path.exists()

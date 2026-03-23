@@ -5,8 +5,8 @@
 文档边界：
 
 - 本文只负责“怎么运行 mock、怎么推 bar、怎么复现 BUY / SELL”
-- 如果你要看运行链路，见 [README_livetrading_sequence.md](/Users/sean/workspace/backtest-feature-livetrading-startup/docs/README_livetrading_sequence.md)
-- 如果你要看当前执行层怎么分成 `mock / futu_simulate / futu_real`，见 [README_livetrading_real_order_plan.md](/Users/sean/workspace/backtest-feature-livetrading-startup/docs/README_livetrading_real_order_plan.md)
+- 如果你要看运行链路，见 [README_livetrading_sequence.md](../docs/README_livetrading_sequence.md)
+- 如果你要看当前执行层怎么分成 `mock / futu_simulate / futu_real`，见 [README_livetrading_real_order_plan.md](../docs/README_livetrading_real_order_plan.md)
 
 适用场景：
 
@@ -34,9 +34,9 @@
 
 用仓库里的三份样例配置：
 
-- [config/livetrading.quote.mock.sample.json](/Users/sean/workspace/backtest-feature-livetrading-startup/config/livetrading.quote.mock.sample.json)
-- [config/livetrading.history.local.sample.json](/Users/sean/workspace/backtest-feature-livetrading-startup/config/livetrading.history.local.sample.json)
-- [config/livetrading.pool.sample.json](/Users/sean/workspace/backtest-feature-livetrading-startup/config/livetrading.pool.sample.json)
+- [config/livetrading.quote.mock.sample.json](../config/livetrading.quote.mock.sample.json)
+- [config/livetrading.history.local.sample.json](../config/livetrading.history.local.sample.json)
+- [config/livetrading.pool.sample.json](../config/livetrading.pool.sample.json)
 
 核心字段是：
 
@@ -45,9 +45,7 @@
   "realtime_broker": {
     "type": "mock",
     "host": "127.0.0.1",
-    "port": 19111,
-    "market": "US",
-    "extended_time": false
+    "port": 19111
   }
 }
 ```
@@ -71,7 +69,7 @@
 REBALANCE_SKIPPED ... reason=no_portfolio_value
 ```
 
-如果你用仓库里的 [config/livetrading.trade_accounts.mock.sample.json](/Users/sean/workspace/backtest-feature-livetrading-startup/config/livetrading.trade_accounts.mock.sample.json)，这些基线不是从 Futu 拉的，而是启动时直接用：
+如果你用仓库里的 [config/livetrading.trade_account.mock.sample.json](../config/livetrading.trade_account.mock.sample.json)，这些基线不是从 Futu 拉的，而是启动时直接用：
 
 - `broker.initial_cash`
 - `broker.initial_positions`
@@ -96,7 +94,7 @@ REBALANCE_SKIPPED ... reason=no_portfolio_value
   --quote-config config/livetrading.quote.mock.sample.json \
   --history-config config/livetrading.history.local.sample.json \
   --pool-config config/livetrading.pool.sample.json \
-  --trade-config config/livetrading.trade_accounts.mock.sample.json
+  --trade-config config/livetrading.trade_account.mock.sample.json
 ```
 
 如果你更习惯模块入口，也可以等价地运行 `./.venv/bin/python -m livetrading ...`；本文继续沿用根目录脚本写法。
@@ -353,7 +351,7 @@ INFO DRY_RUN_ORDER account_id=sim_primary action=BUY code=US.AAPL qty=69 price=1
 
 - `realtime_broker` 用 `mock` 解决实时订阅问题
 - `history_broker` 用 `local` 解决 warm-up 日线的外部依赖问题
-- `trade_accounts[].broker.type` 用 `mock` 解决账户基线的外部依赖问题
+- `trade_account.broker.type` 用 `mock` 解决账户基线的外部依赖问题
 
 也就是说：
 

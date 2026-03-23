@@ -7,7 +7,7 @@ import pandas as pd
 
 from domain.fees import compute_order_fees
 
-from .config import TradeAccountConfig
+from .config import DEFAULT_MARKET, DEFAULT_SECURITY_TYPE, TradeAccountConfig
 from .models import AccountSnapshot, FillEvent, OrderIntent, OrderSubmission, OrderUpdate, PositionSnapshot
 
 
@@ -439,11 +439,11 @@ class AccountStateStore:
     def _estimate_order_fee(account: TradeAccountConfig, *, side: str, price: float, qty: int) -> float:
         fee_total, _ = compute_order_fees(
             fee_account=account.broker.fee_account,
-            market=account.broker.market,
+            market=DEFAULT_MARKET,
             side="buy" if side.strip().upper() == "BUY" else "sell",
             price=price,
             shares=qty,
-            security_type=account.broker.security_type,
+            security_type=DEFAULT_SECURITY_TYPE,
         )
         return fee_total
 

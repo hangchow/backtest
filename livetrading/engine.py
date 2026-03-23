@@ -17,7 +17,7 @@ from .config import (
     load_history_config_from_text,
     load_pool_config_from_text,
     load_quote_config_from_text,
-    load_trade_accounts_config_from_text,
+    load_trade_account_config_from_text,
 )
 from .config_applier import RuntimeConfigApplier
 from .event_sinks import QuoteBrokerEventSinkAdapter, TradeAccountEventSinkAdapter
@@ -27,7 +27,7 @@ from .models import AccountSnapshot, FillEvent, OrderUpdate, PortfolioRebalanceD
 from .portfolio import PortfolioCoordinator
 from .quote_brokers.base import QuoteBrokerClient
 from .runtime_state import LiveTradingRuntimeState
-from .trade_accounts.base import TradeAccountClient
+from .trade_account.base import TradeAccountClient
 
 
 class ConfigFileWatcher:
@@ -130,7 +130,7 @@ class LiveTradingEngine:
     def run(self) -> None:
         """启动实盘引擎主循环，负责首次加载配置和后续热更新。"""
         quote_watcher = ConfigFileWatcher(self._quote_config_path, load_quote_config_from_text)
-        trade_watcher = ConfigFileWatcher(self._trade_config_path, load_trade_accounts_config_from_text)
+        trade_watcher = ConfigFileWatcher(self._trade_config_path, load_trade_account_config_from_text)
         history_watcher = (
             ConfigFileWatcher(self._history_config_path, load_history_config_from_text)
             if self._history_config_path is not None

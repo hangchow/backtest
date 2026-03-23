@@ -13,7 +13,7 @@ from .history_providers.base import DailyHistoryProvider
 from .pool_strategies import PoolLiveStrategy, build_pool_strategy
 from .quote_brokers.base import QuoteBrokerClient, QuoteBrokerEventSink
 from .runtime_state import LiveTradingRuntimeState
-from .trade_accounts.base import TradeAccountClient, TradeAccountEventSink
+from .trade_account.base import TradeAccountClient, TradeAccountEventSink
 
 
 @dataclass(frozen=True)
@@ -69,7 +69,7 @@ class RuntimeConfigApplier:
                 self._apply_realtime_config(config, refresh_plan)
                 self._apply_history_provider(config, refresh_plan)
                 warmup_histories, unavailable_codes = self._prepare_strategy_context(config, refresh_plan)
-                self._apply_trade_accounts_config(config)
+                self._apply_trade_account_config(config)
                 self._commit_strategy_context(config, refresh_plan, warmup_histories, unavailable_codes)
                 self._sync_shadow_state(config)
                 self._runtime_state.current_config = config
@@ -122,7 +122,7 @@ class RuntimeConfigApplier:
             realtime_reconnect=realtime_reconnect,
             history_refresh=history_refresh,
             strategy_refresh=strategy_refresh,
-            tracked_account_ids=tuple(config.trade_account_map()),
+            tracked_account_ids=(config.trade_account.account_id,),
             warmup_bars=warmup_bars,
             new_pool_strategy=new_pool_strategy,
         )
@@ -199,37 +199,33 @@ class RuntimeConfigApplier:
         self._runtime_state.history_warmup_pending = False
         self._runtime_state.warmup_unavailable_codes = ()
 
-    def _apply_trade_accounts_config(self, config: LiveTradingConfig) -> None:
+    def _apply_trade_account_config(self, config: LiveTradingConfig) -> None:
+        account = config.trade_account
         current_config = self._runtime_state.current_config
-        current_accounts = current_config.trade_account_map() if current_config is not None else {}
-        target_accounts = config.trade_account_map()
-
+        current_account = current_config.trade_account if current_config is not None else None
         for account_id, client in list(self._runtime_state.trade_account_clients.items()):
-            current_account = current_accounts.get(account_id)
-            target_account = target_accounts.get(account_id)
             if (
-                target_account is None
+                account_id != account.account_id
                 or current_account is None
-                or current_account.connection_signature() != target_account.connection_signature()
+                or current_account.account_id != account_id
+                or current_account.connection_signature() != account.connection_signature()
             ):
                 client.close()
                 del self._runtime_state.trade_account_clients[account_id]
 
-        for account in config.trade_accounts:
-            current_account = current_accounts.get(account.account_id)
-            reconnect = (
-                account.account_id not in self._runtime_state.trade_account_clients
-                or current_account is None
-                or current_account.connection_signature() != account.connection_signature()
-            )
-            if reconnect:
-                client = self._trade_account_factory(account, self._trade_event_sink, self._logger)
-                self._runtime_state.trade_account_clients[account.account_id] = client
-                client.connect()
+        reconnect = (
+            account.account_id not in self._runtime_state.trade_account_clients
+            or current_account is None
+            or current_account.connection_signature() != account.connection_signature()
+        )
+        if reconnect:
+            client = self._trade_account_factory(account, self._trade_event_sink, self._logger)
+            self._runtime_state.trade_account_clients[account.account_id] = client
+            client.connect()
 
     def _sync_shadow_state(self, config: LiveTradingConfig) -> None:
         active_codes = set(config.all_codes())
-        active_account_ids = set(config.trade_account_map())
+        active_account_ids = {config.trade_account.account_id}
         self._runtime_state.latest_quotes = {
             code: quote
             for code, quote in self._runtime_state.latest_quotes.items()
@@ -241,27 +237,25 @@ class RuntimeConfigApplier:
             if code in active_codes
         }
         self._account_state_store.prune(active_account_ids=active_account_ids, active_codes=active_codes)
-        for account in config.trade_accounts:
-            self._account_state_store.sync_active_codes(account.account_id, config.all_codes())
-            self._account_state_store.reconcile_from_actual(account.account_id, config.all_codes())
+        account = config.trade_account
+        self._account_state_store.sync_active_codes(account.account_id, config.all_codes())
+        self._account_state_store.reconcile_from_actual(account.account_id, config.all_codes())
 
     def _log_config_applied(self, config: LiveTradingConfig) -> None:
-        accounts_summary = ",".join(
-            (
-                f"{account.account_id}@mock/{account.execution.executor}"
-                if account.broker.type == "mock"
-                else (
-                    f"{account.account_id}@{account.broker.host}:{account.broker.port}/"
-                    f"{account.broker.trade_env}/{account.execution.executor}"
-                )
+        account = config.trade_account
+        account_summary = (
+            f"{account.account_id}@mock/{account.execution.executor}"
+            if account.broker.type == "mock"
+            else (
+                f"{account.account_id}@{account.broker.host}:{account.broker.port}/"
+                f"{account.broker.trade_env}/{account.execution.executor}"
             )
-            for account in config.trade_accounts
         )
         self._logger.info(
-            "CONFIG_APPLIED realtime=%s history=%s strategy=%s codes=%s trade_accounts=%s",
+            "CONFIG_APPLIED realtime=%s history=%s strategy=%s codes=%s trade_account=%s",
             config.realtime_broker.endpoint_summary(),
             config.history_broker.endpoint_summary(),
             config.stock_pool.strategy.name,
             ",".join(config.stock_pool.codes),
-            accounts_summary,
+            account_summary,
         )

@@ -33,13 +33,14 @@ from livetrading.broker import (
 from livetrading.config import (
     RealtimeQuoteBrokerConfig,
     load_history_config,
+    load_history_config_from_text,
     load_livetrading_config,
     load_pool_config,
     load_pool_config_from_text,
     load_quote_config,
     load_quote_config_from_text,
-    load_trade_accounts_config,
-    load_trade_accounts_config_from_text,
+    load_trade_account_config,
+    load_trade_account_config_from_text,
 )
 from livetrading.engine import LiveTradingEngine
 from livetrading.execution import AccountRebalancePlan, FutuSimulateExecutor, RebalancePlanner
@@ -57,10 +58,11 @@ from livetrading.pool_strategies import (
     unregister_pool_strategy,
 )
 from livetrading.quote_brokers.base import QuoteBrokerClient
+from livetrading.quote_brokers.futu import FutuRealtimeQuoteClient
 from livetrading.quote_brokers.mock import MockRealtimeQuoteClient
-from livetrading.trade_accounts.base import TradeAccountClient
-from livetrading.trade_accounts.futu import FutuTradeAccountClient
-from livetrading.trade_accounts.mock import MockTradeAccountClient
+from livetrading.trade_account.base import TradeAccountClient
+from livetrading.trade_account.futu import FutuTradeAccountClient
+from livetrading.trade_account.mock import MockTradeAccountClient
 from domain.fees import compute_order_fees
 
 
@@ -102,7 +104,6 @@ def build_quote_payload(
 ) -> dict[str, object]:
     history_broker: dict[str, object] = {
         "type": history_type,
-        "market": "US",
     }
     if history_type == "futu":
         history_broker["host"] = history_host
@@ -114,8 +115,6 @@ def build_quote_payload(
             "type": "futu",
             "host": realtime_host,
             "port": realtime_port,
-            "market": "US",
-            "extended_time": False,
         },
         "history_broker": history_broker,
         "runtime": {
@@ -146,8 +145,12 @@ def build_quote_payload(
     }
 
 
-def build_trade_payload(accounts: list[dict[str, object]]) -> dict[str, object]:
-    return {"trade_accounts": accounts}
+def build_trade_payload(account_or_legacy_array_shape: dict[str, object] | list[dict[str, object]]) -> dict[str, object]:
+    if isinstance(account_or_legacy_array_shape, list):
+        if len(account_or_legacy_array_shape) == 1:
+            return {"trade_account": account_or_legacy_array_shape[0]}
+        return {"trade_accounts": account_or_legacy_array_shape}
+    return {"trade_account": account_or_legacy_array_shape}
 
 
 def build_history_payload(
@@ -158,7 +161,6 @@ def build_history_payload(
 ) -> dict[str, object]:
     history_broker: dict[str, object] = {
         "type": history_type,
-        "market": "US",
     }
     if history_type == "futu":
         history_broker["host"] = history_host
@@ -212,7 +214,6 @@ def build_trade_account_payload(
             "type": broker_type,
             "host": host,
             "port": port,
-            "market": "US",
             "trade_env": "SIMULATE",
             "account_index": account_index,
         },
@@ -233,12 +234,9 @@ def build_mock_trade_account_payload(
         "account_id": account_id,
         "broker": {
             "type": "mock",
-            "market": "US",
-            "currency": "USD",
             "initial_cash": initial_cash,
             "initial_positions": initial_positions or {},
             "fee_account": "futu_alt",
-            "security_type": "stock",
         },
     }
     if execution is not None:
@@ -262,7 +260,7 @@ def build_trade_account_config(
     return load_livetrading_config_from_payloads(
         quote_payload,
         build_trade_payload([trade_account_payload]),
-    ).trade_accounts[0]
+    ).trade_account
 
 class FakeQuoteBroker(QuoteBrokerClient):
     instances: list["FakeQuoteBroker"] = []
@@ -424,9 +422,8 @@ class LiveTradingConfigTests(unittest.TestCase):
         self.assertEqual(config.stock_pool.codes, ("US.AAPL", "US.MSFT"))
         self.assertEqual(config.stock_pool.strategy.name, "dual_momentum")
         self.assertEqual(config.runtime.config_reload_interval_seconds, 3.0)
-        self.assertEqual(len(config.trade_accounts), 1)
-        self.assertEqual(config.trade_accounts[0].account_id, "sim_primary")
-        self.assertEqual(config.trade_accounts[0].broker.host, "127.0.0.9")
+        self.assertEqual(config.trade_account.account_id, "sim_primary")
+        self.assertEqual(config.trade_account.broker.host, "127.0.0.9")
 
     def test_load_history_config_supports_wrapped_payload(self) -> None:
         # 验证加载 历史配置 支持 包裹式 载荷这个场景的行为。
@@ -555,8 +552,6 @@ class LiveTradingConfigTests(unittest.TestCase):
                             "type": "futu",
                             "host": "127.0.0.1",
                             "port": 11111,
-                            "market": "US",
-                            "extended_time": True,
                         },
                         "stock_pool": {
                             "codes": ["US.AAPL", "US.MSFT"],
@@ -572,17 +567,66 @@ class LiveTradingConfigTests(unittest.TestCase):
         self.assertEqual(config.realtime_broker.type, "futu")
         self.assertEqual(config.realtime_broker.host, "127.0.0.1")
         self.assertEqual(config.realtime_broker.port, 11111)
-        self.assertTrue(config.realtime_broker.extended_time)
         self.assertEqual(config.history_broker.type, "futu")
         self.assertEqual(config.history_broker.host, "127.0.0.1")
         self.assertEqual(config.history_broker.port, 11111)
+
+    def test_load_quote_config_supports_shared_broker_history_endpoint_override(self) -> None:
+        # 验证加载 行情配置 支持 共享 broker 覆盖 history host/port 这个场景的行为。
+        config = load_quote_config_from_text(
+            json.dumps(
+                {
+                    "quote_broker": {
+                        "type": "futu",
+                        "host": "127.0.0.1",
+                        "port": 11111,
+                        "history_host": "127.0.0.2",
+                        "history_port": 22222,
+                    },
+                    "stock_pool": {
+                        "codes": ["US.AAPL", "US.MSFT"],
+                        "strategy": {"name": "dual_momentum"},
+                    },
+                }
+            )
+        )
+
+        self.assertEqual(config.realtime_broker.host, "127.0.0.1")
+        self.assertEqual(config.realtime_broker.port, 11111)
+        self.assertEqual(config.history_broker.host, "127.0.0.2")
+        self.assertEqual(config.history_broker.port, 22222)
+
+    def test_load_quote_config_supports_shared_broker_realtime_endpoint_override(self) -> None:
+        # 验证加载 行情配置 支持 共享 broker 覆盖 realtime host/port 这个场景的行为。
+        config = load_quote_config_from_text(
+            json.dumps(
+                {
+                    "quote_broker": {
+                        "type": "futu",
+                        "quote_host": "127.0.0.1",
+                        "quote_port": 11111,
+                        "host": "127.0.0.2",
+                        "port": 22222,
+                    },
+                    "stock_pool": {
+                        "codes": ["US.AAPL", "US.MSFT"],
+                        "strategy": {"name": "dual_momentum"},
+                    },
+                }
+            )
+        )
+
+        self.assertEqual(config.realtime_broker.host, "127.0.0.1")
+        self.assertEqual(config.realtime_broker.port, 11111)
+        self.assertEqual(config.history_broker.host, "127.0.0.2")
+        self.assertEqual(config.history_broker.port, 22222)
 
     def test_load_quote_config_rejects_trade_account_overlap(self) -> None:
         # 验证加载 行情配置 拒绝 交易账户 重叠这个场景的行为。
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "quote.json"
             payload = build_quote_payload()
-            payload["trade_accounts"] = build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.9")])["trade_accounts"]
+            payload["trade_account"] = build_trade_payload(build_trade_account_payload("sim_primary", "127.0.0.9"))["trade_account"]
             path.write_text(json.dumps(payload), encoding="utf-8")
 
             with self.assertRaises(ValueError):
@@ -597,8 +641,6 @@ class LiveTradingConfigTests(unittest.TestCase):
                 "type": "mock",
                 "host": "127.0.0.1",
                 "port": 19111,
-                "market": "US",
-                "extended_time": False,
             }
             path.write_text(json.dumps(payload), encoding="utf-8")
 
@@ -608,6 +650,19 @@ class LiveTradingConfigTests(unittest.TestCase):
         self.assertEqual(config.realtime_broker.host, "127.0.0.1")
         self.assertEqual(config.realtime_broker.port, 19111)
         self.assertEqual(config.history_broker.type, "futu")
+
+    def test_load_quote_config_supports_minimal_futu_realtime_config(self) -> None:
+        # 验证加载 行情配置 支持 最小 futu 实时配置这个场景的行为。
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "quote.json"
+            payload = build_quote_payload()
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            config = load_quote_config(path)
+
+        self.assertEqual(config.realtime_broker.type, "futu")
+        self.assertEqual(config.realtime_broker.host, "127.0.0.1")
+        self.assertEqual(config.realtime_broker.port, 11111)
 
     def test_load_quote_config_supports_polygon_history_broker_without_host_port(self) -> None:
         # 验证加载 行情配置 支持 Polygon 历史券商 不 host port这个场景的行为。
@@ -661,8 +716,31 @@ class LiveTradingConfigTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 load_quote_config(path)
 
-    def test_load_trade_accounts_config_supports_multiple_accounts(self) -> None:
-        # 验证加载 交易账户配置 支持 多个 账户这个场景的行为。
+    def test_load_quote_config_rejects_removed_realtime_broker_fields(self) -> None:
+        # 验证加载 行情配置 拒绝 已删除 的 realtime_broker 字段这个场景的行为。
+        payload = build_quote_payload()
+        payload["realtime_broker"]["extended_time"] = True
+        payload["realtime_broker"]["market"] = "US"
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "realtime_broker contains unsupported keys: extended_time, market",
+        ):
+            load_quote_config_from_text(json.dumps(payload))
+
+    def test_load_history_config_rejects_removed_market_field(self) -> None:
+        # 验证加载 历史配置 拒绝 已删除 的 market 字段这个场景的行为。
+        payload = build_history_payload(history_type="futu")
+        payload["history_broker"]["market"] = "US"
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "history_broker contains unsupported keys: market",
+        ):
+            load_history_config_from_text(json.dumps(payload))
+
+    def test_load_trade_account_config_rejects_legacy_array_shape(self) -> None:
+        # 验证加载 交易账户配置 拒绝 旧的 数组 形状这个场景的行为。
         payload = build_trade_payload(
             [
                 build_trade_account_payload("sim_primary", "127.0.0.9"),
@@ -673,14 +751,10 @@ class LiveTradingConfigTests(unittest.TestCase):
             path = Path(tmp) / "trade.json"
             path.write_text(json.dumps(payload), encoding="utf-8")
 
-            config = load_trade_accounts_config(path)
+            with self.assertRaisesRegex(ValueError, "trade account config contains unsupported top-level keys: trade_accounts"):
+                load_trade_account_config(path)
 
-        self.assertEqual([account.account_id for account in config.accounts], ["sim_primary", "sim_secondary"])
-        self.assertEqual(config.accounts[1].broker.host, "127.0.0.10")
-        self.assertEqual(config.accounts[1].broker.port, 31111)
-        self.assertEqual(config.accounts[1].broker.account_index, 1)
-
-    def test_load_trade_accounts_config_supports_mock_trade_broker(self) -> None:
+    def test_load_trade_account_config_supports_mock_trade_broker(self) -> None:
         # 验证加载 交易账户配置 支持 mock 交易券商这个场景的行为。
         payload = build_trade_payload(
             [
@@ -694,31 +768,113 @@ class LiveTradingConfigTests(unittest.TestCase):
             path = Path(tmp) / "trade.json"
             path.write_text(json.dumps(payload), encoding="utf-8")
 
-            config = load_trade_accounts_config(path)
+            config = load_trade_account_config(path)
 
-        self.assertEqual(config.accounts[0].broker.type, "mock")
-        self.assertEqual(config.accounts[0].broker.host, "mock")
-        self.assertEqual(config.accounts[0].broker.port, 1)
-        self.assertIsNone(config.accounts[0].broker.trade_env)
-        self.assertEqual(config.accounts[0].broker.initial_cash, 12345.0)
-        self.assertEqual(config.accounts[0].broker.initial_positions, (("US.MSFT", 7),))
+        self.assertEqual(config.broker.type, "mock")
+        self.assertEqual(config.broker.host, "mock")
+        self.assertEqual(config.broker.port, 1)
+        self.assertIsNone(config.broker.trade_env)
+        self.assertEqual(config.broker.initial_cash, 12345.0)
+        self.assertEqual(config.broker.initial_positions, (("US.MSFT", 7),))
 
-    def test_load_trade_accounts_config_defaults_executor_to_mock(self) -> None:
+    def test_load_trade_account_config_defaults_executor_to_mock(self) -> None:
         # 验证加载 交易账户配置 默认 执行器 到 mock这个场景的行为。
         payload = build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.9")])
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "trade.json"
             path.write_text(json.dumps(payload), encoding="utf-8")
-            config = load_trade_accounts_config(path)
+            config = load_trade_account_config(path)
 
-        self.assertEqual(config.accounts[0].execution.executor, "mock")
-        self.assertFalse(config.accounts[0].execution.enable_real_trading)
-        self.assertFalse(config.accounts[0].execution.allow_extended_hours_trading)
-        self.assertEqual(config.accounts[0].execution.order_session, "RTH")
+        self.assertEqual(config.execution.executor, "mock")
+        self.assertEqual(config.execution.order_session, "RTH")
 
-    def test_load_trade_accounts_config_parses_extended_hours_execution_fields(self) -> None:
-        # 验证加载 交易账户配置 解析 盘前盘后 execution 字段这个场景的行为。
+    def test_load_trade_account_config_defaults_us_futu_real_order_session_to_eth(self) -> None:
+        # 验证加载 交易账户配置 默认 对 美股 futu_real 使用 ETH 会话这个场景的行为。
+        payload = build_trade_payload(
+            [
+                build_trade_account_payload(
+                    "real_primary",
+                    "127.0.0.9",
+                    execution={
+                        "executor": "futu_real",
+                    },
+                )
+            ]
+        )
+        payload["trade_account"]["broker"]["trade_env"] = "REAL"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "trade.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            config = load_trade_account_config(path)
+
+        self.assertEqual(config.execution.order_session, "ETH")
+
+    def test_build_livetrading_config_derives_rth_quote_subscription(self) -> None:
+        # 验证构建 实盘配置 会从唯一账户派生 RTH quote 订阅这个场景的行为。
+        config = load_livetrading_config_from_payloads(
+            build_quote_payload(),
+            build_trade_payload(
+                [
+                    build_trade_account_payload(
+                        "sim_primary",
+                        "127.0.0.9",
+                        execution={
+                            "executor": "futu_simulate",
+                            "order_session": "RTH",
+                        },
+                    )
+                ]
+            ),
+        )
+
+        self.assertFalse(config.realtime_broker.subscribe_extended_time)
+
+    def test_build_livetrading_config_derives_extended_quote_subscription(self) -> None:
+        # 验证构建 实盘配置 会从唯一账户派生 扩展时段 quote 订阅这个场景的行为。
+        trade_payload = build_trade_payload(
+            [
+                build_trade_account_payload(
+                    "real_primary",
+                    "127.0.0.9",
+                    execution={
+                        "executor": "futu_real",
+                        "order_session": "ETH",
+                    },
+                )
+            ]
+        )
+        trade_payload["trade_account"]["broker"]["trade_env"] = "REAL"
+        config = load_livetrading_config_from_payloads(build_quote_payload(), trade_payload)
+
+        self.assertTrue(config.realtime_broker.subscribe_extended_time)
+
+    def test_load_trade_account_config_allows_us_futu_real_to_use_rth(self) -> None:
+        # 验证加载 交易账户配置 允许 美股 futu_real 显式 使用 RTH 会话这个场景的行为。
+        payload = build_trade_payload(
+            [
+                build_trade_account_payload(
+                    "real_primary",
+                    "127.0.0.9",
+                    execution={
+                        "executor": "futu_real",
+                        "order_session": "RTH",
+                    },
+                )
+            ]
+        )
+        payload["trade_account"]["broker"]["trade_env"] = "REAL"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "trade.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            config = load_trade_account_config(path)
+
+        self.assertEqual(config.execution.order_session, "RTH")
+
+    def test_load_trade_account_config_parses_non_rth_order_session(self) -> None:
+        # 验证加载 交易账户配置 解析 非 RTH order_session 这个场景的行为。
         payload = build_trade_payload(
             [
                 build_trade_account_payload(
@@ -726,7 +882,6 @@ class LiveTradingConfigTests(unittest.TestCase):
                     "127.0.0.9",
                     execution={
                         "executor": "futu_simulate",
-                        "allow_extended_hours_trading": True,
                         "order_session": "ETH",
                     },
                 )
@@ -736,13 +891,12 @@ class LiveTradingConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "trade.json"
             path.write_text(json.dumps(payload), encoding="utf-8")
-            config = load_trade_accounts_config(path)
+            config = load_trade_account_config(path)
 
-        self.assertTrue(config.accounts[0].execution.allow_extended_hours_trading)
-        self.assertEqual(config.accounts[0].execution.order_session, "ETH")
+        self.assertEqual(config.execution.order_session, "ETH")
 
-    def test_load_trade_accounts_config_defaults_extended_hours_session_to_eth_when_enabled(self) -> None:
-        # 验证加载 交易账户配置 默认 盘前盘后 会话 到 eth 当 启用时这个场景的行为。
+    def test_load_trade_account_config_defaults_futu_simulate_order_session_to_rth(self) -> None:
+        # 验证加载 交易账户配置 默认 futu_simulate 会话 到 RTH 这个场景的行为。
         payload = build_trade_payload(
             [
                 build_trade_account_payload(
@@ -750,7 +904,6 @@ class LiveTradingConfigTests(unittest.TestCase):
                     "127.0.0.9",
                     execution={
                         "executor": "futu_simulate",
-                        "allow_extended_hours_trading": True,
                     },
                 )
             ]
@@ -759,12 +912,12 @@ class LiveTradingConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "trade.json"
             path.write_text(json.dumps(payload), encoding="utf-8")
-            config = load_trade_accounts_config(path)
+            config = load_trade_account_config(path)
 
-        self.assertEqual(config.accounts[0].execution.order_session, "ETH")
+        self.assertEqual(config.execution.order_session, "RTH")
 
-    def test_load_trade_accounts_config_rejects_extended_hours_session_without_flag(self) -> None:
-        # 验证加载 交易账户配置 拒绝 盘前盘后 会话 不 开关这个场景的行为。
+    def test_load_trade_account_config_allows_non_rth_order_session(self) -> None:
+        # 验证加载 交易账户配置 允许 直接使用 非 RTH 会话这个场景的行为。
         payload = build_trade_payload(
             [
                 build_trade_account_payload(
@@ -773,6 +926,28 @@ class LiveTradingConfigTests(unittest.TestCase):
                     execution={
                         "executor": "futu_simulate",
                         "order_session": "ETH",
+                    },
+                )
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "trade.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            config = load_trade_account_config(path)
+
+        self.assertEqual(config.execution.order_session, "ETH")
+
+    def test_load_trade_account_config_rejects_overnight_order_session(self) -> None:
+        # 验证加载 交易账户配置 拒绝 OVERNIGHT order_session 这个场景的行为。
+        payload = build_trade_payload(
+            [
+                build_trade_account_payload(
+                    "sim_primary",
+                    "127.0.0.9",
+                    execution={
+                        "executor": "futu_simulate",
+                        "order_session": "OVERNIGHT",
                     },
                 )
             ]
@@ -783,9 +958,9 @@ class LiveTradingConfigTests(unittest.TestCase):
             path.write_text(json.dumps(payload), encoding="utf-8")
 
             with self.assertRaises(ValueError):
-                load_trade_accounts_config(path)
+                load_trade_account_config(path)
 
-    def test_load_trade_accounts_config_rejects_unrelated_top_level_keys(self) -> None:
+    def test_load_trade_account_config_rejects_unrelated_top_level_keys(self) -> None:
         # 验证加载 交易账户配置 拒绝 无关 顶部 层级 键这个场景的行为。
         payload = build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.9")])
         payload["history_broker"] = build_history_payload(history_type="local")["history_broker"]
@@ -795,7 +970,46 @@ class LiveTradingConfigTests(unittest.TestCase):
             path.write_text(json.dumps(payload), encoding="utf-8")
 
             with self.assertRaises(ValueError):
-                load_trade_accounts_config(path)
+                load_trade_account_config(path)
+
+    def test_load_trade_account_config_rejects_removed_trade_broker_fields(self) -> None:
+        # 验证加载 交易账户配置 拒绝 已删除 的 broker 字段这个场景的行为。
+        payload = build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.9")])
+        payload["trade_account"]["broker"]["market"] = "US"
+        payload["trade_account"]["broker"]["currency"] = "USD"
+        payload["trade_account"]["broker"]["security_type"] = "stock"
+
+        with self.assertRaisesRegex(
+            ValueError,
+            r"trade_account\.broker contains unsupported keys: currency, market, security_type",
+        ):
+            load_trade_account_config_from_text(json.dumps(payload))
+
+    def test_load_trade_account_config_rejects_removed_execution_fields(self) -> None:
+        # 验证加载 交易账户配置 拒绝 已删除 的 execution 字段这个场景的行为。
+        payload = build_trade_payload(
+            [
+                build_trade_account_payload(
+                    "real_primary",
+                    "127.0.0.9",
+                    execution={
+                        "executor": "futu_real",
+                        "order_session": "ETH",
+                        "allow_extended_hours_trading": True,
+                        "enable_real_trading": True,
+                        "max_order_notional": 50000,
+                        "max_order_qty": 500,
+                    },
+                )
+            ]
+        )
+        payload["trade_account"]["broker"]["trade_env"] = "REAL"
+
+        with self.assertRaisesRegex(
+            ValueError,
+            r"trade_account\.execution contains unsupported keys: allow_extended_hours_trading, enable_real_trading, max_order_notional, max_order_qty",
+        ):
+            load_trade_account_config_from_text(json.dumps(payload))
 
     def test_build_livetrading_config_rejects_futu_simulate_executor_with_real_trade_env(self) -> None:
         # 验证构建 实盘配置 拒绝 Futu 模拟执行器 带有 真实交易环境这个场景的行为。
@@ -828,7 +1042,6 @@ class LiveTradingConfigTests(unittest.TestCase):
             "127.0.0.9",
             execution={
                 "executor": "mock",
-                "allow_extended_hours_trading": True,
                 "order_session": "ETH",
             },
         )
@@ -1335,18 +1548,19 @@ class AccountStateStoreTests(unittest.TestCase):
         self.assertIn("US.AAPL", state.expected_positions)
         self.assertIn("US.AAPL", state.shadow_positions)
 
-    def test_build_livetrading_config_rejects_futu_real_without_real_enabled(self) -> None:
-        # 验证构建 实盘配置 拒绝 Futu 实盘 不 真实 启用时这个场景的行为。
+    def test_build_livetrading_config_allows_futu_real_without_extra_enable_flag(self) -> None:
+        # 验证构建 实盘配置 允许 futu_real 不带额外 enable flag 这个场景的行为。
         quote_payload = build_quote_payload()
         trade_account = build_trade_account_payload(
             "real_primary",
             "127.0.0.9",
-            execution={"executor": "futu_real", "enable_real_trading": False},
+            execution={"executor": "futu_real"},
         )
         trade_account["broker"]["trade_env"] = "REAL"
 
-        with self.assertRaises(ValueError):
-            load_livetrading_config_from_payloads(quote_payload, build_trade_payload([trade_account]))
+        config = load_livetrading_config_from_payloads(quote_payload, build_trade_payload([trade_account]))
+
+        self.assertEqual(config.trade_account.execution.executor, "futu_real")
 
 
 class OrderExecutorTests(unittest.TestCase):
@@ -1420,19 +1634,19 @@ class OrderExecutorTests(unittest.TestCase):
 
         sell_fee, _ = compute_order_fees(
             fee_account=account.broker.fee_account,
-            market=account.broker.market,
+            market="US",
             side="sell",
             price=100.0,
             shares=1,
-            security_type=account.broker.security_type,
+            security_type="stock",
         )
         buy_fee, _ = compute_order_fees(
             fee_account=account.broker.fee_account,
-            market=account.broker.market,
+            market="US",
             side="buy",
             price=96.0,
             shares=1,
-            security_type=account.broker.security_type,
+            security_type="stock",
         )
 
         self.assertEqual([(intent.side, intent.code, intent.qty) for intent in client.submitted_intents], [("SELL", "US.AAPL", 1), ("BUY", "US.MSFT", 1)])
@@ -1547,8 +1761,6 @@ class MockRealtimeQuoteClientTests(unittest.TestCase):
                 type="mock",
                 host="127.0.0.1",
                 port=19111,
-                market="US",
-                extended_time=False,
             ),
             sink,
             logging.getLogger("test.mock_quote"),
@@ -1573,6 +1785,76 @@ class MockRealtimeQuoteClientTests(unittest.TestCase):
         self.assertEqual(sink.quotes[0].source, "mock")
 
 
+class FutuRealtimeQuoteClientTests(unittest.TestCase):
+    def test_futu_quote_client_subscribe_uses_configured_extended_time_flag(self) -> None:
+        # 验证 Futu 行情客户端 会透传 派生后的 extended_time 订阅参数这个场景的行为。
+        class FakeQuoteContext:
+            def __init__(self, host: str, port: int) -> None:
+                self.host = host
+                self.port = port
+                self.subscribe_calls: list[dict[str, object]] = []
+
+            def set_handler(self, handler) -> None:
+                return None
+
+            def start(self) -> None:
+                return None
+
+            def subscribe(self, codes, sub_types, **kwargs):
+                self.subscribe_calls.append(
+                    {
+                        "codes": list(codes),
+                        "sub_types": list(sub_types),
+                        **kwargs,
+                    }
+                )
+                return 0, "ok"
+
+            def unsubscribe(self, codes, sub_types):
+                return 0, "ok"
+
+            def close(self) -> None:
+                return None
+
+        class FakeHandlerBase:
+            def on_recv_rsp(self, rsp_pb):
+                return 0, rsp_pb
+
+        fake_contexts: list[FakeQuoteContext] = []
+
+        def build_quote_context(host: str, port: int) -> FakeQuoteContext:
+            context = FakeQuoteContext(host, port)
+            fake_contexts.append(context)
+            return context
+
+        fake_futu = {
+            "OpenQuoteContext": build_quote_context,
+            "StockQuoteHandlerBase": FakeHandlerBase,
+            "CurKlineHandlerBase": FakeHandlerBase,
+            "SubType": type("FakeSubType", (), {"QUOTE": "QUOTE", "K_1M": "K_1M"}),
+            "RET_OK": 0,
+        }
+        sink = RecordingQuoteSink()
+        client = FutuRealtimeQuoteClient(
+            RealtimeQuoteBrokerConfig(
+                type="futu",
+                host="127.0.0.1",
+                port=11111,
+                subscribe_extended_time=False,
+            ),
+            sink,
+            logging.getLogger("test.futu_quote"),
+        )
+
+        with patch("livetrading.quote_brokers.futu._load_futu_api", return_value=fake_futu):
+            client.connect(["US.AAPL"])
+            client.close()
+
+        self.assertEqual(len(fake_contexts), 1)
+        self.assertEqual(fake_contexts[0].subscribe_calls[0]["codes"], ["US.AAPL"])
+        self.assertFalse(fake_contexts[0].subscribe_calls[0]["extended_time"])
+
+
 class MockTradeAccountClientTests(unittest.TestCase):
     def test_mock_trade_account_client_pushes_local_baseline_on_connect(self) -> None:
         # 验证mock 交易账户客户端 推送 本地 baseline on 连接这个场景的行为。
@@ -1586,16 +1868,16 @@ class MockTradeAccountClientTests(unittest.TestCase):
                     )
                 ]
             ),
-        ).trade_accounts[0]
+        ).trade_account
 
         class RecordingSink:
             def __init__(self) -> None:
-                self.accounts: list[tuple[str, AccountSnapshot]] = []
+                self.account_snapshots: list[tuple[str, AccountSnapshot]] = []
                 self.positions: list[tuple[str, dict[str, PositionSnapshot]]] = []
                 self.messages: list[tuple[int, str]] = []
 
             def on_account(self, account_id: str, snapshot: AccountSnapshot) -> None:
-                self.accounts.append((account_id, snapshot))
+                self.account_snapshots.append((account_id, snapshot))
 
             def on_positions(self, account_id: str, positions: dict[str, PositionSnapshot]) -> None:
                 self.positions.append((account_id, positions))
@@ -1614,9 +1896,9 @@ class MockTradeAccountClientTests(unittest.TestCase):
 
         client.connect()
 
-        self.assertEqual(len(sink.accounts), 1)
-        self.assertEqual(sink.accounts[0][0], "mock_primary")
-        self.assertEqual(sink.accounts[0][1].available_funds, 12345.0)
+        self.assertEqual(len(sink.account_snapshots), 1)
+        self.assertEqual(sink.account_snapshots[0][0], "mock_primary")
+        self.assertEqual(sink.account_snapshots[0][1].available_funds, 12345.0)
         self.assertEqual(len(sink.positions), 1)
         self.assertEqual(sink.positions[0][1]["US.MSFT"].qty, 3)
         self.assertTrue(any("mock account connected" in message for _, message in sink.messages))
@@ -1626,7 +1908,7 @@ class MockTradeAccountClientTests(unittest.TestCase):
         account = load_livetrading_config_from_payloads(
             build_quote_payload(history_type="local"),
             build_trade_payload([build_mock_trade_account_payload()]),
-        ).trade_accounts[0]
+        ).trade_account
 
         class Sink:
             def on_account(self, account_id: str, snapshot: AccountSnapshot) -> None:
@@ -1702,7 +1984,6 @@ class FactoryRegistryTests(unittest.TestCase):
             "type": "custom_history",
             "host": "127.0.0.2",
             "port": 22222,
-            "market": "US",
         }
 
         config = load_quote_config_from_text(json.dumps(payload))
@@ -1757,9 +2038,9 @@ class FactoryRegistryTests(unittest.TestCase):
             [build_trade_account_payload("custom_primary", "127.0.0.9", broker_type="custom_trade")]
         )
 
-        config = load_trade_accounts_config_from_text(json.dumps(payload))
+        config = load_trade_account_config_from_text(json.dumps(payload))
         client = create_trade_account_client(
-            config.accounts[0],
+            config,
             Sink(),
             logging.getLogger("test.custom_trade.factory"),
         )
@@ -2030,7 +2311,7 @@ class FutuTradeAccountClientTests(unittest.TestCase):
         config = load_livetrading_config_from_payloads(
             build_quote_payload(),
             build_trade_payload([build_trade_account_payload("acct", "127.0.0.1")]),
-        ).trade_accounts[0]
+        ).trade_account
         client = FutuTradeAccountClient(config, object(), logging.getLogger("test.futu_trade_account.disconnected"))
 
         submission = client.submit_order(
@@ -2056,7 +2337,7 @@ class FutuTradeAccountClientTests(unittest.TestCase):
         config = load_livetrading_config_from_payloads(
             build_quote_payload(),
             build_trade_payload([build_trade_account_payload("acct", "127.0.0.1")]),
-        ).trade_accounts[0]
+        ).trade_account
 
         class RecordingSink:
             def __init__(self) -> None:
@@ -2113,7 +2394,7 @@ class FutuTradeAccountClientTests(unittest.TestCase):
         config = load_livetrading_config_from_payloads(
             build_quote_payload(),
             build_trade_payload([build_trade_account_payload("acct", "127.0.0.1")]),
-        ).trade_accounts[0]
+        ).trade_account
 
         class RecordingSink:
             def on_account(self, account_id: str, snapshot: AccountSnapshot) -> None:
@@ -2225,8 +2506,8 @@ class FutuTradeAccountClientTests(unittest.TestCase):
         client._trade_ctx = existing_trade_ctx
         client._futu = {"TrdEnv": object()}
 
-        with patch("livetrading.trade_accounts.futu._load_futu_api", return_value=fake_futu), patch(
-            "livetrading.trade_accounts.futu.threading.Thread",
+        with patch("livetrading.trade_account.futu._load_futu_api", return_value=fake_futu), patch(
+            "livetrading.trade_account.futu.threading.Thread",
             PollThreadStub,
         ):
             client.connect()
@@ -2252,7 +2533,7 @@ class FutuTradeAccountClientTests(unittest.TestCase):
                     )
                 ]
             ),
-        ).trade_accounts[0]
+        ).trade_account
 
         class RecordingSink:
             def on_account(self, account_id: str, snapshot: AccountSnapshot) -> None:
@@ -2336,13 +2617,12 @@ class FutuTradeAccountClientTests(unittest.TestCase):
                         "127.0.0.1",
                         execution={
                             "executor": "futu_simulate",
-                            "allow_extended_hours_trading": True,
                             "order_session": "ETH",
                         },
                     )
                 ]
             ),
-        ).trade_accounts[0]
+        ).trade_account
 
         class RecordingSink:
             def on_account(self, account_id: str, snapshot: AccountSnapshot) -> None:
@@ -2414,7 +2694,7 @@ class FutuTradeAccountClientTests(unittest.TestCase):
         config = load_livetrading_config_from_payloads(
             build_quote_payload(),
             build_trade_payload([build_trade_account_payload("acct", "127.0.0.1")]),
-        ).trade_accounts[0]
+        ).trade_account
 
         class RecordingSink:
             def __init__(self) -> None:
@@ -3001,11 +3281,11 @@ class LiveTradingEngineTests(unittest.TestCase):
                     build_trade_account_payload(
                         "sim_primary",
                         "127.0.0.9",
-                        execution={"executor": "futu_real", "enable_real_trading": False},
+                        execution={"executor": "futu_real"},
                     )
                 ]
             )
-            invalid_trade_payload["trade_accounts"][0]["broker"]["trade_env"] = "REAL"
+            invalid_trade_payload["trade_account"]["broker"]["trade_env"] = "SIMULATE"
             trade_path.write_text(json.dumps(invalid_trade_payload), encoding="utf-8")
 
             time.sleep(0.2)
@@ -3233,8 +3513,8 @@ class LiveTradingEngineTests(unittest.TestCase):
         self.assertEqual(FakeTradeAccountClient.instances[0].connect_calls, 1)
         self.assertEqual(FakeTradeAccountClient.instances[1].connect_calls, 1)
 
-    def test_engine_updates_shadow_position_after_rebalance_signal_for_multiple_accounts(self) -> None:
-        # 验证engine 更新 shadow position 在...之后 rebalance 信号 用于 多个 账户这个场景的行为。
+    def test_engine_rejects_legacy_multi_account_array_shape(self) -> None:
+        # 验证engine 拒绝 单进程 多个 交易账户这个场景的行为。
         with tempfile.TemporaryDirectory() as tmp:
             quote_path = Path(tmp) / "quote.json"
             trade_path = Path(tmp) / "trade.json"
@@ -3250,65 +3530,8 @@ class LiveTradingEngineTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            config = load_livetrading_config(quote_path, trade_path)
-
-            engine = LiveTradingEngine(
-                quote_path,
-                trade_path,
-                quote_broker_factory=FakeQuoteBroker,
-                history_provider_factory=FakeHistoryProvider,
-                trade_account_factory=FakeTradeAccountClient,
-            )
-            engine.apply_config(config)
-            engine.on_account(
-                "sim_primary",
-                AccountSnapshot(
-                    timestamp=pd.Timestamp("2026-03-13 09:30:00"),
-                    total_assets=10000.0,
-                    cash=10000.0,
-                    available_funds=10000.0,
-                    buying_power=10000.0,
-                    currency="USD",
-                ),
-            )
-            engine.on_positions("sim_primary", {})
-            engine.on_account(
-                "sim_secondary",
-                AccountSnapshot(
-                    timestamp=pd.Timestamp("2026-03-13 09:30:00"),
-                    total_assets=20000.0,
-                    cash=20000.0,
-                    available_funds=20000.0,
-                    buying_power=20000.0,
-                    currency="USD",
-                ),
-            )
-            engine.on_positions("sim_secondary", {})
-            engine.on_quote(
-                QuoteUpdate(
-                    code="US.AAPL",
-                    timestamp=pd.Timestamp("2026-03-13 09:29:00"),
-                    last_price=104.0,
-                )
-            )
-            engine.on_quote(
-                QuoteUpdate(
-                    code="US.MSFT",
-                    timestamp=pd.Timestamp("2026-03-13 09:29:00"),
-                    last_price=121.0,
-                )
-            )
-            engine.on_bar("US.AAPL", build_minute_bar("US.AAPL", "2026-03-13 09:30:00", 104.0))
-            engine.stop()
-
-        state_primary = engine._account_states["sim_primary"]
-        state_secondary = engine._account_states["sim_secondary"]
-        self.assertEqual(state_primary.shadow_positions["US.AAPL"], 0)
-        self.assertGreater(state_primary.shadow_positions["US.MSFT"], 0)
-        self.assertLess(state_primary.shadow_cash or 0.0, 10000.0)
-        self.assertEqual(state_secondary.shadow_positions["US.AAPL"], 0)
-        self.assertGreater(state_secondary.shadow_positions["US.MSFT"], 0)
-        self.assertLess(state_secondary.shadow_cash or 0.0, 20000.0)
+            with self.assertRaisesRegex(ValueError, "trade account config contains unsupported top-level keys: trade_accounts"):
+                load_livetrading_config(quote_path, trade_path)
 
     def test_engine_marks_pending_order_and_expected_state_for_futu_simulate_executor(self) -> None:
         # 验证engine 标记 挂单 and 预期 状态 用于 Futu 模拟执行器这个场景的行为。
@@ -3376,8 +3599,8 @@ class LiveTradingEngineTests(unittest.TestCase):
         self.assertGreater(state.expected_positions["US.MSFT"], 0)
         self.assertLess(state.expected_cash or 0.0, 10000.0)
 
-    def test_engine_continues_other_accounts_when_live_account_not_ready(self) -> None:
-        # 验证engine 继续 其他 账户 当 live account 不 就绪这个场景的行为。
+    def test_engine_skips_submit_account_when_live_account_not_ready(self) -> None:
+        # 验证engine 在 live account 未就绪时 跳过 提单这个场景的行为。
         with tempfile.TemporaryDirectory() as tmp:
             quote_path = Path(tmp) / "quote.json"
             trade_path = Path(tmp) / "trade.json"
@@ -3390,11 +3613,6 @@ class LiveTradingEngineTests(unittest.TestCase):
                                 "sim_submit",
                                 "127.0.0.9",
                                 execution={"executor": "futu_simulate"},
-                            ),
-                            build_trade_account_payload(
-                                "sim_mock",
-                                "127.0.0.10",
-                                execution={"executor": "mock"},
                             ),
                         ]
                     )
@@ -3411,18 +3629,6 @@ class LiveTradingEngineTests(unittest.TestCase):
                 trade_account_factory=FakeTradeAccountClient,
             )
             engine.apply_config(config)
-            engine.on_account(
-                "sim_mock",
-                AccountSnapshot(
-                    timestamp=pd.Timestamp("2026-03-13 09:30:00"),
-                    total_assets=10000.0,
-                    cash=10000.0,
-                    available_funds=10000.0,
-                    buying_power=10000.0,
-                    currency="USD",
-                ),
-            )
-            engine.on_positions("sim_mock", {})
             engine.on_quote(
                 QuoteUpdate(
                     code="US.AAPL",
@@ -3441,9 +3647,7 @@ class LiveTradingEngineTests(unittest.TestCase):
             engine.on_bar("US.AAPL", build_minute_bar("US.AAPL", "2026-03-13 09:30:00", 104.0))
             engine.stop()
 
-        mock_state = engine._account_states["sim_mock"]
         submit_state = engine._account_states["sim_submit"]
-        self.assertGreater(mock_state.shadow_positions["US.MSFT"], 0)
         self.assertEqual(submit_state.pending_orders, {})
         self.assertEqual(FakeTradeAccountClient.instances[0].submitted_intents, [])
 
