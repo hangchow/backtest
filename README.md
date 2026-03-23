@@ -123,15 +123,16 @@ source .venv/bin/active
 
 ## 配置文件
 
-现在运行 `livetrading.py` 时，推荐拆成 4 份 JSON。
+现在运行实盘时，推荐拆成 4 份 JSON，并统一使用安装后的包入口。
 
-等价的模块入口也可用：
+安装开发环境后可以使用两种等价入口：
 
 ```bash
-./.venv/bin/python -m livetrading --quote-config ... --trade-config ...
+livetrading --quote-config ... --trade-config ...
+python -m livetrading --quote-config ... --trade-config ...
 ```
 
-下面的示例继续沿用根目录 `livetrading.py` 写法：
+根目录 `livetrading.py` 保留为兼容 shim，建议优先使用上面的包入口。
 
 - `config/livetrading.quote.futu.sample.json`
   - 实时行情配置样例。
@@ -215,12 +216,12 @@ source .venv/bin/active
 
 ## 运行
 
-下面三组命令继续使用根目录 `livetrading.py` 作为兼容入口；如果你更偏好模块方式，可以把 `livetrading.py` 等价替换成 `-m livetrading`。
+下面三组命令统一使用安装后的 `livetrading` 包入口（等价于 `python -m livetrading`）。
 
 Futu行情订阅、Futu历史数据、Futu真实环境下单：
 
 ```bash
-./.venv/bin/python livetrading.py \
+livetrading \
   --quote-config config/livetrading.quote.futu.sample.json \
   --history-config config/livetrading.history.futu.sample.json \
   --pool-config config/livetrading.pool.sample.json \
@@ -239,7 +240,7 @@ Futu行情订阅、polygon历史数据、Futu模拟环境下单：
 
 ```bash
 export POLYGON_API_KEY=your_api_key
-./.venv/bin/python livetrading.py \
+livetrading \
   --quote-config config/livetrading.quote.futu.sample.json \
   --history-config config/livetrading.history.polygon.sample.json \
   --pool-config config/livetrading.pool.sample.json \
@@ -249,7 +250,7 @@ export POLYGON_API_KEY=your_api_key
 Mock行情订阅、本地历史数据、Mock账户、Mock下单：
 
 ```bash
-./.venv/bin/python livetrading.py \
+livetrading \
   --quote-config config/livetrading.quote.mock.sample.json \
   --history-config config/livetrading.history.local.sample.json \
   --pool-config config/livetrading.pool.sample.json \

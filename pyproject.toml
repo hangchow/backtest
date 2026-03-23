@@ -16,5 +16,8 @@ dependencies = [
     "exchange-calendars",
 ]
 
+[project.scripts]
+livetrading = "livetrading.cli:main"
+
 [tool.setuptools.packages.find]
 include = ["backtest*", "livetrading*", "strategy*", "trading_domain*"]

@@ -1,17 +1,18 @@
-# `livetrading.py` 实盘链路时序图
+# `livetrading` 实盘链路时序图
 
 这份文档针对 `livetrading` 的实盘链路，主要整理关键代码文件之间的时序关系。
 
 下面的启动命令只是为了给时序图提供一个具体入口示例，不代表本文只讨论 `mock` 行情模式。
 
-等价的包入口 `./.venv/bin/python -m livetrading ...` 也可用；本文继续沿用根目录 `livetrading.py` 写法，方便和现有脚本命令保持一致。
+推荐使用安装后的包入口 `livetrading ...`（等价于 `python -m livetrading ...`）。
+根目录 `livetrading.py` 目前保留为兼容 shim。
 
 如果你要看执行器设计、`mock / futu_simulate / futu_real` 三种模式的差异，见 [README_livetrading_real_order_plan.md](/Users/sean/workspace/backtest-feature-livetrading-startup/docs/README_livetrading_real_order_plan.md)。
 
 示例命令：
 
 ```bash
-./.venv/bin/python livetrading.py \
+livetrading \
   --quote-config config/livetrading.quote.mock.sample.json \
   --history-config config/livetrading.history.local.sample.json \
   --pool-config config/livetrading.pool.sample.json \
@@ -68,7 +69,7 @@
 ```mermaid
 sequenceDiagram
     actor U as User
-    participant CLI as livetrading.py
+    participant CLI as livetrading
     participant ENG as livetrading/engine.py
     participant CFG as livetrading/config.py
     participant REG as broker_registry.py
@@ -81,7 +82,7 @@ sequenceDiagram
     participant TB as trade_accounts/futu.py\nFutuTradeAccountClient
     participant TM as trade_accounts/mock.py\nMockTradeAccountClient
 
-    U->>CLI: python livetrading.py --quote-config ... --history-config ... --pool-config ... --trade-config ...
+    U->>CLI: livetrading --quote-config ... --history-config ... --pool-config ... --trade-config ...
     CLI->>ENG: main()<br/>初始化日志并启动实盘主流程
     ENG->>CFG: load_quote_config_from_text()<br/>把实时行情配置 JSON 文本解析成 QuoteConfig
     ENG->>CFG: load_history_config_from_text()<br/>把历史 warm-up 配置 JSON 文本解析成 HistoryBrokerConfig
