@@ -1,0 +1,15 @@
+{
+  "trade_account": {
+    "account_id": "sim_primary",
+    "broker": {
+      "type": "futu",
+      "host": "127.0.0.1",
+      "port": 11111,
+      "trade_env": "SIMULATE"
+    },
+    "execution": {
+      "executor": "futu_simulate",
+      "order_session": "RTH"
+    }
+  }
+}

@@ -1,6 +1,5 @@
 {
   "history_broker": {
-    "type": "polygon",
-    "market": "US"
+    "type": "polygon"
   }
 }

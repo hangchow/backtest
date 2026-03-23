@@ -1,0 +1,11 @@
+{
+  "trade_account": {
+    "account_id": "mock_primary",
+    "broker": {
+      "type": "mock",
+      "initial_cash": 100000.0,
+      "initial_positions": {}
+    },
+    "execution": {}
+  }
+}

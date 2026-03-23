@@ -8,7 +8,7 @@ from .history_providers.base import DailyHistoryProvider
 from .models import QuoteUpdate
 from .pool_strategies import PoolLiveStrategy
 from .quote_brokers.base import QuoteBrokerClient
-from .trade_accounts.base import TradeAccountClient
+from .trade_account.base import TradeAccountClient
 
 
 @dataclass

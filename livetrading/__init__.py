@@ -10,12 +10,11 @@ from .config import (
     StockPoolConfig,
     StrategyConfig,
     TradeAccountConfig,
-    TradeAccountsConfig,
     TradeBrokerConfig,
     build_livetrading_config,
     load_livetrading_config,
     load_quote_config,
-    load_trade_accounts_config,
+    load_trade_account_config,
 )
 from .engine import LiveTradingEngine
 
@@ -29,11 +28,10 @@ __all__ = [
     "StockPoolConfig",
     "StrategyConfig",
     "TradeAccountConfig",
-    "TradeAccountsConfig",
     "TradeBrokerConfig",
     "build_livetrading_config",
     "ExecutionConfig",
     "load_livetrading_config",
     "load_quote_config",
-    "load_trade_accounts_config",
+    "load_trade_account_config",
 ]

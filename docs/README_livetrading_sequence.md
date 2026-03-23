@@ -6,7 +6,7 @@
 
 等价的包入口 `./.venv/bin/python -m livetrading ...` 也可用；本文继续沿用根目录 `livetrading.py` 写法，方便和现有脚本命令保持一致。
 
-如果你要看执行器设计、`mock / futu_simulate / futu_real` 三种模式的差异，见 [README_livetrading_real_order_plan.md](/Users/sean/workspace/backtest-feature-livetrading-startup/docs/README_livetrading_real_order_plan.md)。
+如果你要看执行器设计、`mock / futu_simulate / futu_real` 三种模式的差异，见 [README_livetrading_real_order_plan.md](../docs/README_livetrading_real_order_plan.md)。
 
 示例命令：
 
@@ -15,41 +15,41 @@
   --quote-config config/livetrading.quote.mock.sample.json \
   --history-config config/livetrading.history.local.sample.json \
   --pool-config config/livetrading.pool.sample.json \
-  --trade-config config/livetrading.trade_accounts.mock.sample.json
+  --trade-config config/livetrading.trade_account.mock.sample.json
 ```
 
 下面的时序图主要聚焦这些文件之间的交互：
 
-- [livetrading.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading.py)
-- [livetrading/engine.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/engine.py)
-- [livetrading/runtime_state.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/runtime_state.py)
-- [livetrading/config_applier.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/config_applier.py)
-- [livetrading/event_sinks.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/event_sinks.py)
-- [livetrading/portfolio.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/portfolio.py)
-- [livetrading/pool_strategy_registry.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/pool_strategy_registry.py)
-- [livetrading/config.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/config.py)
-- [livetrading/broker_registry.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/broker_registry.py)
-- [livetrading/broker.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/broker.py)
-- [livetrading/execution.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/execution.py)
-- [livetrading/futu/adapters.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/futu/adapters.py)
-- [livetrading/futu/runtime.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/futu/runtime.py)
-- [livetrading/history_providers/base.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/history_providers/base.py)
-- [livetrading/history_providers/common.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/history_providers/common.py)
-- [livetrading/history_providers/local.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/history_providers/local.py)
-- [livetrading/history_providers/cached.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/history_providers/cached.py)
-- [livetrading/history_providers/polygon.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/history_providers/polygon.py)
-- [livetrading/history_providers/futu.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/history_providers/futu.py)
-- [livetrading/quote_brokers/base.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/quote_brokers/base.py)
-- [livetrading/quote_brokers/mock.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/quote_brokers/mock.py)
-- [livetrading/quote_brokers/futu.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/quote_brokers/futu.py)
-- [livetrading/trade_accounts/base.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/trade_accounts/base.py)
-- [livetrading/trade_accounts/futu.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/trade_accounts/futu.py)
-- [livetrading/trade_accounts/mock.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/trade_accounts/mock.py)
-- [livetrading/pool_strategies.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/pool_strategies.py)
-- [strategy/dual_momentum_state.py](/Users/sean/workspace/backtest-feature-livetrading-startup/strategy/dual_momentum_state.py)
-- [strategy/dual_momentum.py](/Users/sean/workspace/backtest-feature-livetrading-startup/strategy/dual_momentum.py)
-- [domain/rebalance.py](/Users/sean/workspace/backtest-feature-livetrading-startup/domain/rebalance.py)
-- [domain/fees.py](/Users/sean/workspace/backtest-feature-livetrading-startup/domain/fees.py)
+- [livetrading.py](../livetrading.py)
+- [livetrading/engine.py](../livetrading/engine.py)
+- [livetrading/runtime_state.py](../livetrading/runtime_state.py)
+- [livetrading/config_applier.py](../livetrading/config_applier.py)
+- [livetrading/event_sinks.py](../livetrading/event_sinks.py)
+- [livetrading/portfolio.py](../livetrading/portfolio.py)
+- [livetrading/pool_strategy_registry.py](../livetrading/pool_strategy_registry.py)
+- [livetrading/config.py](../livetrading/config.py)
+- [livetrading/broker_registry.py](../livetrading/broker_registry.py)
+- [livetrading/broker.py](../livetrading/broker.py)
+- [livetrading/execution.py](../livetrading/execution.py)
+- [livetrading/futu/adapters.py](../livetrading/futu/adapters.py)
+- [livetrading/futu/runtime.py](../livetrading/futu/runtime.py)
+- [livetrading/history_providers/base.py](../livetrading/history_providers/base.py)
+- [livetrading/history_providers/common.py](../livetrading/history_providers/common.py)
+- [livetrading/history_providers/local.py](../livetrading/history_providers/local.py)
+- [livetrading/history_providers/cached.py](../livetrading/history_providers/cached.py)
+- [livetrading/history_providers/polygon.py](../livetrading/history_providers/polygon.py)
+- [livetrading/history_providers/futu.py](../livetrading/history_providers/futu.py)
+- [livetrading/quote_brokers/base.py](../livetrading/quote_brokers/base.py)
+- [livetrading/quote_brokers/mock.py](../livetrading/quote_brokers/mock.py)
+- [livetrading/quote_brokers/futu.py](../livetrading/quote_brokers/futu.py)
+- [livetrading/trade_account/base.py](../livetrading/trade_account/base.py)
+- [livetrading/trade_account/futu.py](../livetrading/trade_account/futu.py)
+- [livetrading/trade_account/mock.py](../livetrading/trade_account/mock.py)
+- [livetrading/pool_strategies.py](../livetrading/pool_strategies.py)
+- [strategy/dual_momentum_state.py](../strategy/dual_momentum_state.py)
+- [strategy/dual_momentum.py](../strategy/dual_momentum.py)
+- [domain/rebalance.py](../domain/rebalance.py)
+- [domain/fees.py](../domain/fees.py)
 
 下面 Mermaid 里的方法说明，和代码里对应方法的中文注释保持一致，方便你对着图直接跳代码。
 
@@ -82,17 +82,17 @@ sequenceDiagram
     participant MQ as quote_brokers/mock.py\nMockRealtimeQuoteClient
     participant FQ as quote_brokers/futu.py\nFutuRealtimeQuoteClient
     participant TAF as broker.py\ncreate_trade_account_client
-    participant TB as trade_accounts/futu.py\nFutuTradeAccountClient
-    participant TM as trade_accounts/mock.py\nMockTradeAccountClient
+    participant TB as trade_account/futu.py\nFutuTradeAccountClient
+    participant TM as trade_account/mock.py\nMockTradeAccountClient
 
     U->>CLI: python livetrading.py --quote-config ... --history-config ... --pool-config ... --trade-config ...
     CLI->>ENG: main()<br/>初始化日志并启动实盘主流程
     ENG->>CFG: load_quote_config_from_text()<br/>把实时行情配置 JSON 文本解析成 QuoteConfig
     ENG->>CFG: load_history_config_from_text()<br/>把历史 warm-up 配置 JSON 文本解析成 HistoryBrokerConfig
     ENG->>CFG: load_pool_config_from_text()<br/>把股票池配置 JSON 文本解析成 StockPoolConfig
-    ENG->>CFG: load_trade_accounts_config_from_text()<br/>把交易账户配置 JSON 文本解析成 TradeAccountsConfig
-    CFG-->>ENG: QuoteConfig + HistoryBrokerConfig + StockPoolConfig + TradeAccountsConfig
-    ENG->>CFG: build_livetrading_config()<br/>合并 quote/history/pool/trade 配置并校验 market
+    ENG->>CFG: load_trade_account_config_from_text()<br/>把交易账户配置 JSON 文本解析成 TradeAccountConfig
+    CFG-->>ENG: QuoteConfig + HistoryBrokerConfig + StockPoolConfig + TradeAccountConfig
+    ENG->>CFG: build_livetrading_config()<br/>合并 quote/history/pool/trade 配置并校验执行组合
     CFG-->>ENG: LiveTradingConfig
 
     ENG->>AP: apply_config()<br/>把 LiveTradingConfig 应用到运行时资源
@@ -110,17 +110,17 @@ sequenceDiagram
         FQ->>FQ: OpenQuoteContext.start()
     end
 
-    AP->>AP: _apply_trade_accounts_config()<br/>按配置增删或重连 trade account client
+    AP->>AP: _apply_trade_account_config()<br/>按配置增删或重连 trade account client
     AP->>TAF: create_trade_account_client()<br/>按注册表解析交易账户 client 实现
     TAF->>REG: resolve_trade_account_client_factory()
-    alt trade_accounts[].broker.type == "mock"
+    alt trade_account.broker.type == "mock"
         TAF->>TM: instantiate MockTradeAccountClient
         AP->>TM: connect()<br/>直接把本地 initial_cash / initial_positions 推给事件接收方
         TM-->>TS: on_account()<br/>初始化账户现金基线
         TS->>STORE: upsert_actual_account() + sync_active_codes() + reconcile_from_actual()
         TM-->>TS: on_positions()<br/>初始化本地持仓基线
         TS->>STORE: upsert_actual_positions() + sync_active_codes() + reconcile_from_actual()
-    else trade_accounts[].broker.type == "futu"
+    else trade_account.broker.type == "futu"
         TAF->>TB: instantiate FutuTradeAccountClient
         AP->>TB: connect()<br/>连接 Futu 交易上下文并立即同步账户/持仓
     end
@@ -139,8 +139,8 @@ sequenceDiagram
 这一步的关键点：
 
 - `quote_brokers/base.py` 只定义 `QuoteBrokerClient` / `QuoteBrokerEventSink` 抽象
-- [livetrading/engine.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/engine.py) 通过这个抽象持有 realtime quote client
-- 当前示例命令走的是 `mock` 分支，但工厂同时也能返回 [livetrading/quote_brokers/futu.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/quote_brokers/futu.py) 里的 `FutuRealtimeQuoteClient`
+- [livetrading/engine.py](../livetrading/engine.py) 通过这个抽象持有 realtime quote client
+- 当前示例命令走的是 `mock` 分支，但工厂同时也能返回 [livetrading/quote_brokers/futu.py](../livetrading/quote_brokers/futu.py) 里的 `FutuRealtimeQuoteClient`
 - 配置文件读取、broker 初始化、trade account 连接都在这一段完成
 - warm-up 本身单独放到下一张图看
 
@@ -184,18 +184,18 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant TM as trade_accounts/mock.py\nMockTradeAccountClient
-    participant TB as trade_accounts/futu.py\nFutuTradeAccountClient
+    participant TM as trade_account/mock.py\nMockTradeAccountClient
+    participant TB as trade_account/futu.py\nFutuTradeAccountClient
     participant TS as event_sinks.py\nTradeAccountEventSinkAdapter
     participant STORE as account_state.py\nAccountStateStore
 
-    alt trade_accounts[].broker.type == "mock"
+    alt trade_account.broker.type == "mock"
         TM->>TM: connect()<br/>读取 initial_cash / initial_positions
         TM-->>TS: on_account()<br/>推送本地账户现金基线
         TS->>STORE: upsert_actual_account() + sync_active_codes() + reconcile_from_actual()
         TM-->>TS: on_positions()<br/>推送本地持仓基线
         TS->>STORE: upsert_actual_positions() + sync_active_codes() + reconcile_from_actual()
-    else trade_accounts[].broker.type == "futu"
+    else trade_account.broker.type == "futu"
         loop polling
             TB->>TB: _poll_account()<br/>拉取账户资金快照并回调给事件接收方
             TB-->>TS: on_account()<br/>同步账户资金快照并初始化 shadow_cash
@@ -314,7 +314,7 @@ sequenceDiagram
     participant STORE as account_state.py\nAccountStateStore
     participant PLAN as execution.py\nRebalancePlanner
     participant EXE as execution.py\nMockExecutor / FutuSimulateExecutor / FutuRealExecutor
-    participant TAC as trade_accounts/futu.py\nFutuTradeAccountClient
+    participant TAC as trade_account/futu.py\nFutuTradeAccountClient
     participant TS as event_sinks.py\nTradeAccountEventSinkAdapter
     participant RB as domain/rebalance.py
     participant FEE as domain/fees.py
@@ -358,84 +358,84 @@ sequenceDiagram
 
 ## 7. 文件职责对照
 
-- [livetrading.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading.py)
+- [livetrading.py](../livetrading.py)
   - CLI 入口，只负责启动和停止 engine
-- [livetrading/config.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/config.py)
+- [livetrading/config.py](../livetrading/config.py)
   - 解析 quote / history / pool / trade 四份配置，拼成 `LiveTradingConfig`
-- [livetrading/runtime_state.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/runtime_state.py)
+- [livetrading/runtime_state.py](../livetrading/runtime_state.py)
   - 统一存放当前配置快照、quote broker、history provider、trade account clients、pool strategy 和最新价格缓存
-- [livetrading/config_applier.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/config_applier.py)
+- [livetrading/config_applier.py](../livetrading/config_applier.py)
   - 把 `LiveTradingConfig` 应用成具体运行时资源
   - 负责配置 diff、连接重建、history warm-up、strategy bootstrap、trade account client 增删重连和 shadow state 同步
-- [livetrading/event_sinks.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/event_sinks.py)
+- [livetrading/event_sinks.py](../livetrading/event_sinks.py)
   - 行情和账户事件接收层
   - `QuoteBrokerEventSinkAdapter` 负责更新最新价格并驱动策略 / 调仓协调器
   - `TradeAccountEventSinkAdapter` 负责把账户、持仓、订单、成交事件收口到 `AccountStateStore`
-- [livetrading/portfolio.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/portfolio.py)
+- [livetrading/portfolio.py](../livetrading/portfolio.py)
   - 组合级调仓协调层
   - 把一次 `PortfolioRebalanceDecision` 展开成多个账户计划，并把账户计划交给执行器
-- [livetrading/pool_strategy_registry.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/pool_strategy_registry.py)
+- [livetrading/pool_strategy_registry.py](../livetrading/pool_strategy_registry.py)
   - live pool strategy 的注册表边界
   - 配置解析和 `build_pool_strategy()` 都通过它查当前支持的策略名
-- [livetrading/broker_registry.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/broker_registry.py)
+- [livetrading/broker_registry.py](../livetrading/broker_registry.py)
   - quote broker / history provider / trade account client 的注册表边界
   - 内建类型由各自基础设施子包注册，配置校验也从这里读支持类型
-- [livetrading/broker.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/broker.py)
+- [livetrading/broker.py](../livetrading/broker.py)
   - facade / factory 层
   - 提供：
     - quote broker factory
     - history provider factory
     - trade account client factory
-- [livetrading/execution.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/execution.py)
+- [livetrading/execution.py](../livetrading/execution.py)
   - 调仓规划和执行器选择层
   - 提供 `RebalancePlanner`、`MockExecutor`、`FutuSimulateExecutor`、`FutuRealExecutor`
-- [livetrading/account_state.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/account_state.py)
+- [livetrading/account_state.py](../livetrading/account_state.py)
   - 账户运行态存储层
   - 提供 `AccountRuntimeState`、`PendingOrder`、`AccountStateStore`
-- [livetrading/futu/runtime.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/futu/runtime.py)
+- [livetrading/futu/runtime.py](../livetrading/futu/runtime.py)
   - 提供共享的 Futu SDK 装载逻辑
   - 负责 `.futu_runtime` 的运行时环境准备
-- [livetrading/futu/adapters.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/futu/adapters.py)
+- [livetrading/futu/adapters.py](../livetrading/futu/adapters.py)
   - 负责把 Futu DataFrame 转成 `QuoteUpdate` 和标准化分钟 `bar`
-- [livetrading/history_providers/base.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/history_providers/base.py)
+- [livetrading/history_providers/base.py](../livetrading/history_providers/base.py)
   - 定义 `DailyHistoryProvider` 抽象
-- [livetrading/history_providers/common.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/history_providers/common.py)
+- [livetrading/history_providers/common.py](../livetrading/history_providers/common.py)
   - 提供市场日历、交易日判断、共享常量等 history 共用逻辑
-- [livetrading/history_providers/local.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/history_providers/local.py)
+- [livetrading/history_providers/local.py](../livetrading/history_providers/local.py)
   - 本地日线 warm-up 实现
-- [livetrading/history_providers/cached.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/history_providers/cached.py)
+- [livetrading/history_providers/cached.py](../livetrading/history_providers/cached.py)
   - “本地缓存 + 远端回源” 的 warm-up 基类
-- [livetrading/history_providers/polygon.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/history_providers/polygon.py)
+- [livetrading/history_providers/polygon.py](../livetrading/history_providers/polygon.py)
   - Polygon 日线 warm-up 实现
-- [livetrading/history_providers/futu.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/history_providers/futu.py)
+- [livetrading/history_providers/futu.py](../livetrading/history_providers/futu.py)
   - Futu 日线 warm-up 实现
-- [livetrading/quote_brokers/base.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/quote_brokers/base.py)
+- [livetrading/quote_brokers/base.py](../livetrading/quote_brokers/base.py)
   - 定义 realtime quote 抽象边界：
     - `QuoteBrokerClient`
     - `QuoteBrokerEventSink`
-- [livetrading/quote_brokers/mock.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/quote_brokers/mock.py)
+- [livetrading/quote_brokers/mock.py](../livetrading/quote_brokers/mock.py)
   - mock 实时行情入口
   - 负责 `/health` / `/push`、bar 归一化、合成 quote、再推 bar
-- [livetrading/quote_brokers/futu.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/quote_brokers/futu.py)
+- [livetrading/quote_brokers/futu.py](../livetrading/quote_brokers/futu.py)
   - Futu 实时行情实现
   - 负责 `OpenQuoteContext`、订阅管理、handler 挂接
-- [livetrading/trade_accounts/base.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/trade_accounts/base.py)
+- [livetrading/trade_account/base.py](../livetrading/trade_account/base.py)
   - 定义 `TradeAccountClient` / `TradeAccountEventSink` 抽象
-- [livetrading/trade_accounts/futu.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/trade_accounts/futu.py)
+- [livetrading/trade_account/futu.py](../livetrading/trade_account/futu.py)
   - Futu 交易账户实现
   - 负责账户轮询、持仓轮询、`ORDER_PUSH` / `DEAL_PUSH`
-- [livetrading/engine.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/engine.py)
+- [livetrading/engine.py](../livetrading/engine.py)
   - 实盘主控器，只负责主循环、配置文件 watcher、首次加载和兼容代理方法
-- [livetrading/pool_strategies.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/pool_strategies.py)
+- [livetrading/pool_strategies.py](../livetrading/pool_strategies.py)
   - live 侧股票池策略适配层
   - 定义 `PoolLiveStrategy` 抽象，并注册内建 `dual_momentum`
-- [strategy/dual_momentum_state.py](/Users/sean/workspace/backtest-feature-livetrading-startup/strategy/dual_momentum_state.py)
+- [strategy/dual_momentum_state.py](../strategy/dual_momentum_state.py)
   - 把分钟 bar 增量聚合成“已完成日线窗口”
-- [strategy/dual_momentum.py](/Users/sean/workspace/backtest-feature-livetrading-startup/strategy/dual_momentum.py)
+- [strategy/dual_momentum.py](../strategy/dual_momentum.py)
   - 纯信号逻辑，输出 `target_weights`
-- [domain/rebalance.py](/Users/sean/workspace/backtest-feature-livetrading-startup/domain/rebalance.py)
+- [domain/rebalance.py](../domain/rebalance.py)
   - 共享的目标股数、可买数量、调仓带计算
-- [domain/fees.py](/Users/sean/workspace/backtest-feature-livetrading-startup/domain/fees.py)
+- [domain/fees.py](../domain/fees.py)
   - 共享的手续费计算
 
 ## 8. 一句话总结
@@ -457,5 +457,5 @@ quote client / trade account client / history provider
 
 ## 9. 相关文档
 
-- 如果你要看怎么启动 mock 并复现 `BUY -> SELL -> BUY`，见 [README_livetrading_mock_signal.md](/Users/sean/workspace/backtest-feature-livetrading-startup/docs/README_livetrading_mock_signal.md)
-- 如果你要看当前执行层结构和配置规则，见 [README_livetrading_real_order_plan.md](/Users/sean/workspace/backtest-feature-livetrading-startup/docs/README_livetrading_real_order_plan.md)
+- 如果你要看怎么启动 mock 并复现 `BUY -> SELL -> BUY`，见 [README_livetrading_mock_signal.md](../docs/README_livetrading_mock_signal.md)
+- 如果你要看当前执行层结构和配置规则，见 [README_livetrading_real_order_plan.md](../docs/README_livetrading_real_order_plan.md)

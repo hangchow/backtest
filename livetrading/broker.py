@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from .config import HistoryBrokerConfig, RealtimeQuoteBrokerConfig, TradeAccountConfig
     from .history_providers.base import DailyHistoryProvider
     from .quote_brokers.base import QuoteBrokerClient, QuoteBrokerEventSink
-    from .trade_accounts.base import TradeAccountClient, TradeAccountEventSink
+    from .trade_account.base import TradeAccountClient, TradeAccountEventSink
 
 
 def create_quote_broker_client(

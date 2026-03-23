@@ -17,7 +17,6 @@
 - `FutuRealExecutor`
   - 调用 Futu `place_order(...)`
   - 要求 `broker.trade_env = REAL`
-  - 还要求 `execution.enable_real_trading = true`
 
 也就是说，现在不是“只有 dry-run”，而是同一个策略信号会按账户配置走 3 选 1。
 
@@ -43,51 +42,50 @@
 3. `execution.executor = futu_real`
    - 必须配 `broker.type = futu`
    - 必须配 `broker.trade_env = REAL`
-   - 必须配 `execution.enable_real_trading = true`
 4. `broker.type = mock`
    - 只能配 `execution.executor = mock`
 
 样例文件入口：
 
 - `mock` 全本地联调：
-  - [config/livetrading.quote.mock.sample.json](/Users/sean/workspace/backtest-feature-livetrading-startup/config/livetrading.quote.mock.sample.json)
-  - [config/livetrading.history.local.sample.json](/Users/sean/workspace/backtest-feature-livetrading-startup/config/livetrading.history.local.sample.json)
-  - [config/livetrading.pool.sample.json](/Users/sean/workspace/backtest-feature-livetrading-startup/config/livetrading.pool.sample.json)
-  - [config/livetrading.trade_accounts.mock.sample.json](/Users/sean/workspace/backtest-feature-livetrading-startup/config/livetrading.trade_accounts.mock.sample.json)
+  - [config/livetrading.quote.mock.sample.json](../config/livetrading.quote.mock.sample.json)
+  - [config/livetrading.history.local.sample.json](../config/livetrading.history.local.sample.json)
+  - [config/livetrading.pool.sample.json](../config/livetrading.pool.sample.json)
+  - [config/livetrading.trade_account.mock.sample.json](../config/livetrading.trade_account.mock.sample.json)
 - Futu 行情 + Futu 模拟提单：
-  - [config/livetrading.quote.futu.sample.json](/Users/sean/workspace/backtest-feature-livetrading-startup/config/livetrading.quote.futu.sample.json)
-  - [config/livetrading.history.polygon.sample.json](/Users/sean/workspace/backtest-feature-livetrading-startup/config/livetrading.history.polygon.sample.json)
-  - [config/livetrading.pool.sample.json](/Users/sean/workspace/backtest-feature-livetrading-startup/config/livetrading.pool.sample.json)
-  - [config/livetrading.trade_accounts.simulate.sample.json](/Users/sean/workspace/backtest-feature-livetrading-startup/config/livetrading.trade_accounts.simulate.sample.json)
+  - [config/livetrading.quote.futu.sample.json](../config/livetrading.quote.futu.sample.json)
+  - [config/livetrading.history.polygon.sample.json](../config/livetrading.history.polygon.sample.json)
+  - [config/livetrading.pool.sample.json](../config/livetrading.pool.sample.json)
+  - [config/livetrading.trade_account.simulate.sample.json](../config/livetrading.trade_account.simulate.sample.json)
 - Futu 行情 + Futu 真实环境提单：
-  - [config/livetrading.quote.futu.sample.json](/Users/sean/workspace/backtest-feature-livetrading-startup/config/livetrading.quote.futu.sample.json)
-  - [config/livetrading.history.futu.sample.json](/Users/sean/workspace/backtest-feature-livetrading-startup/config/livetrading.history.futu.sample.json)
-  - [config/livetrading.pool.sample.json](/Users/sean/workspace/backtest-feature-livetrading-startup/config/livetrading.pool.sample.json)
-  - [config/livetrading.trade_accounts.futu.sample.json](/Users/sean/workspace/backtest-feature-livetrading-startup/config/livetrading.trade_accounts.futu.sample.json)
+  - [config/livetrading.quote.futu.sample.json](../config/livetrading.quote.futu.sample.json)
+  - [config/livetrading.history.futu.sample.json](../config/livetrading.history.futu.sample.json)
+  - [config/livetrading.pool.sample.json](../config/livetrading.pool.sample.json)
+  - [config/livetrading.trade_account.futu.sample.json](../config/livetrading.trade_account.futu.sample.json)
 
 ## 3. 代码分层
 
 当前代码里，执行链路主要是这几个文件：
 
-- [livetrading/execution.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/execution.py)
+- [livetrading/execution.py](../livetrading/execution.py)
   - `RebalancePlanner`
   - `OrderExecutor`
   - `MockExecutor`
   - `FutuSimulateExecutor`
   - `FutuRealExecutor`
-- [livetrading/account_state.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/account_state.py)
+- [livetrading/account_state.py](../livetrading/account_state.py)
   - `AccountStateStore`
   - `PendingOrder`
   - `AccountRuntimeState`
-- [livetrading/trade_accounts/futu.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/trade_accounts/futu.py)
+- [livetrading/trade_account/futu.py](../livetrading/trade_account/futu.py)
   - Futu 账户同步、下单、订单回报、成交回报
-- [livetrading/trade_accounts/mock.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/trade_accounts/mock.py)
+- [livetrading/trade_account/mock.py](../livetrading/trade_account/mock.py)
   - 本地账户基线，不访问 Futu
-- [livetrading/engine.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/engine.py)
+- [livetrading/engine.py](../livetrading/engine.py)
   - 负责整体装配和主循环
-- [livetrading/portfolio.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/portfolio.py)
+- [livetrading/portfolio.py](../livetrading/portfolio.py)
   - `PortfolioCoordinator` 负责把组合决策拆成账户计划并分发给执行器
-- [livetrading/event_sinks.py](/Users/sean/workspace/backtest-feature-livetrading-startup/livetrading/event_sinks.py)
+- [livetrading/event_sinks.py](../livetrading/event_sinks.py)
   - 负责承接行情与账户事件，并把状态推进收口到对应协作者
 
 职责边界是：
@@ -231,8 +229,8 @@ sequenceDiagram
 ## 7. 该看哪份文档
 
 - 如果你要看整个运行时序：
-  - [README_livetrading_sequence.md](/Users/sean/workspace/backtest-feature-livetrading-startup/docs/README_livetrading_sequence.md)
+  - [README_livetrading_sequence.md](../docs/README_livetrading_sequence.md)
 - 如果你要看 mock 怎么启动和推行情：
-  - [README_livetrading_mock_signal.md](/Users/sean/workspace/backtest-feature-livetrading-startup/docs/README_livetrading_mock_signal.md)
+  - [README_livetrading_mock_signal.md](../docs/README_livetrading_mock_signal.md)
 - 如果你只想启动：
-  - [README.md](/Users/sean/workspace/backtest-feature-livetrading-startup/README.md)
+  - [README.md](../README.md)

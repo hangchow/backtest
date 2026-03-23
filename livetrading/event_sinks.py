@@ -78,7 +78,7 @@ class TradeAccountEventSinkAdapter:
     def on_account(self, account_id: str, snapshot: AccountSnapshot) -> None:
         with self._lock:
             config = self._runtime_state.callback_config()
-            if config is None or account_id not in config.trade_account_map():
+            if config is None or account_id != config.trade_account.account_id:
                 return
             self._account_state_store.upsert_actual_account(account_id, snapshot)
             self._account_state_store.sync_active_codes(account_id, config.all_codes())
@@ -101,7 +101,7 @@ class TradeAccountEventSinkAdapter:
     def on_positions(self, account_id: str, positions: dict[str, PositionSnapshot]) -> None:
         with self._lock:
             config = self._runtime_state.callback_config()
-            if config is None or account_id not in config.trade_account_map():
+            if config is None or account_id != config.trade_account.account_id:
                 return
             active_codes = config.all_codes()
             state = self._account_state_store.upsert_actual_positions(account_id, positions)
@@ -124,9 +124,9 @@ class TradeAccountEventSinkAdapter:
             config = self._runtime_state.callback_config()
             if config is None:
                 return
-            account = config.trade_account_map().get(account_id)
-            if account is None:
+            if account_id != config.trade_account.account_id:
                 return
+            account = config.trade_account
             self._account_state_store.apply_order_update(account, update)
         self._logger.info(
             "ORDER_UPDATE account_id=%s broker_order_id=%s code=%s status=%s dealt_qty=%s avg_price=%s side=%s",
@@ -144,9 +144,9 @@ class TradeAccountEventSinkAdapter:
             config = self._runtime_state.callback_config()
             if config is None:
                 return
-            account = config.trade_account_map().get(account_id)
-            if account is None:
+            if account_id != config.trade_account.account_id:
                 return
+            account = config.trade_account
             self._account_state_store.apply_fill(account, fill)
         self._logger.info(
             "FILL account_id=%s broker_order_id=%s code=%s qty=%s price=%s side=%s",

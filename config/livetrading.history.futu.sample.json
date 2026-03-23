@@ -2,7 +2,6 @@
   "history_broker": {
     "type": "futu",
     "host": "127.0.0.1",
-    "port": 11111,
-    "market": "US"
+    "port": 11111
   }
 }

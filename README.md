@@ -37,7 +37,7 @@ source .venv/bin/active
   - 实时行情配置：`realtime_broker + runtime`
   - 历史 warm-up 配置：`history_broker`
   - 股票池配置：`stock_pool`
-  - 交易账户配置：`trade_accounts[]`
+  - 交易账户配置：`trade_account`
 - `livetrading/pool_strategy_registry.py`
   - 维护 live pool strategy 的注册表。
   - 当前内建策略由 `livetrading/pool_strategies.py` 注册，配置校验也从这里读取支持的策略名。
@@ -71,7 +71,7 @@ source .venv/bin/active
   - `local`
   - 只从 `.kline_day/` 读取本地日线，不访问外部服务。
   - `kline_day/` 与 `kline_minute/` 仅保留给回测和离线研究使用，不参与实盘 warm-up。
-- `trade_accounts`
+- `trade_account`
   - 支持 `futu` 和 `mock` 两种账户 client。
   - `futu` 负责查询资金、持仓、订单回报和成交回报。
   - `mock` 直接把配置里的 `initial_cash / initial_positions` 推进 engine，不访问 Futu。
@@ -91,7 +91,7 @@ source .venv/bin/active
 
 - 行情订阅和交易账户完全解耦：
   - 只需要一个开通对应行情权限的账号负责订阅。
-  - 交易账户配置文件可以定义一个或多个账户，未来扩成多实盘用户时不用改行情文件。
+  - 交易账户配置文件当前只允许 1 个账户，单进程只服务这个账户。
 - 配置现在拆成 4 份 JSON：
   - `realtime_broker`
   - 负责价格变更通知和分钟 K 输入。
@@ -99,16 +99,16 @@ source .venv/bin/active
   - 负责策略 warm-up 用的历史日线获取。
   - `stock_pool`
   - 负责股票池代码列表和组合策略参数。
-  - `trade_accounts`
+  - `trade_account`
   - 负责账户同步和执行器选择。
-- `realtime_broker` 支持 `futu` 和 `mock`；`history_broker` 支持 `polygon`、`futu` 和 `local`；`trade_accounts[].broker.type` 支持 `futu` 和 `mock`。
+- `realtime_broker` 支持 `futu` 和 `mock`；`history_broker` 支持 `polygon`、`futu` 和 `local`；`trade_account.broker.type` 支持 `futu` 和 `mock`。
 - `stock_pool.strategy.name` 的支持列表来自 `livetrading/pool_strategy_registry.py` 的当前注册表。
 - 这些支持类型不是写死在 `config.py` 里，而是来自 `livetrading/broker_registry.py` 的当前注册表。
 - 如果你要扩一个新 broker/provider/account/strategy 类型，需要先在启动阶段 import 你的扩展模块并调用对应 `register_*`，再去加载配置文件。
 - 如果你只想做完全本地的 mock 联调，可以用：
   - `realtime_broker.type=mock`
   - `history_broker.type=local`
-  - `trade_accounts[].broker.type=mock`
+  - `trade_account.broker.type=mock`
 - 如果当前 OpenD 账号没有开通美股实时订阅，但仍希望 warm-up 走远端日线，可以只把 `realtime_broker` 切到 `mock`，同时保留 `history_broker=polygon` 或 `futu`。
 - `dual_momentum` 用日线维度计算，在收到“新交易日第一根分钟 bar”时，使用上一交易日的已完成日线数据生成调仓信号。
 - `futu` 账户的资金、持仓目前先用“定时查询 + 差异日志”实现成统一事件流；`mock` 账户则在启动时直接注入本地基线。后续切到其他券商时可替换成原生 push。
@@ -133,6 +133,8 @@ source .venv/bin/active
 
 下面的示例继续沿用根目录 `livetrading.py` 写法：
 
+完整字段说明见 [docs/README_livetrading_config.md](docs/README_livetrading_config.md)。
+
 - `config/livetrading.quote.futu.sample.json`
   - 实时行情配置样例。
 - `config/livetrading.quote.mock.sample.json`
@@ -145,13 +147,13 @@ source .venv/bin/active
   - 本地 `.kline_day` warm-up 日线配置样例。
 - `config/livetrading.pool.sample.json`
   - 股票池和组合策略样例。
-- `config/livetrading.trade_accounts.mock.sample.json`
+- `config/livetrading.trade_account.mock.sample.json`
   - mock 执行账户样例。
   - 适合“mock 行情 + 本地日线 warm-up + mock 账户 + mock 执行”的联调场景。
-- `config/livetrading.trade_accounts.futu.sample.json`
+- `config/livetrading.trade_account.futu.sample.json`
   - Futu 真实环境下单样例。
   - 会走 `execution.executor = futu_real`，只适合确认好 OpenD 和真实账户后使用。
-- `config/livetrading.trade_accounts.simulate.sample.json`
+- `config/livetrading.trade_account.simulate.sample.json`
   - Futu 模拟环境下单样例。
   - 适合“Futu 实时行情订阅 + Futu 模拟交易环境提单”。
 
@@ -163,8 +165,6 @@ source .venv/bin/active
   - `realtime_broker.host` / `realtime_broker.port`
   - `futu` 模式下是 OpenD 地址。
   - `mock` 模式下是本地 HTTP 推送服务监听地址。
-  - `realtime_broker.extended_time`
-  - 仅 `futu` 模式生效，决定是否订阅扩展时段分钟行情。
   - `runtime.config_reload_interval_seconds`
   - 多久轮询一次 4 份配置文件的变更。
 - 历史 warm-up 配置
@@ -181,37 +181,33 @@ source .venv/bin/active
   - `stock_pool.strategy`
   - 当前内建支持 `dual_momentum`。
 - 实盘交易配置
-  - `trade_accounts[].account_id`
-  - 本地账户标识，用于日志和后续多用户隔离。
-  - `trade_accounts[].broker.type`
+  - `trade_account.account_id`
+  - 本地账户标识，用于日志和账户侧状态跟踪。
+  - `trade_account.broker.type`
   - 支持 `futu` 和 `mock`。
-  - `trade_accounts[].broker.host` / `trade_accounts[].broker.port`
+  - `trade_account.broker.host` / `trade_account.broker.port`
   - 仅 `futu` 模式生效，对应账户自己的 OpenD 地址。
-  - `trade_accounts[].broker.trade_env`
+  - `trade_account.broker.trade_env`
   - 仅 `futu` 模式有意义。
   - `SIMULATE` 或 `REAL`。
-  - `trade_accounts[].broker.account_index`
+  - `trade_account.broker.account_index`
   - 仅 `futu` 模式生效，表示 Futu 交易账户索引。
-  - `trade_accounts[].broker.initial_cash`
+  - `trade_account.broker.initial_cash`
   - 仅 `mock` 模式生效，表示本地账户初始现金。
-  - `trade_accounts[].broker.initial_positions`
+  - `trade_account.broker.initial_positions`
   - 仅 `mock` 模式生效，表示本地账户初始持仓。
-  - `trade_accounts[].execution.executor`
+  - `trade_account.execution.executor`
   - 支持：
     - `mock`
     - `futu_simulate`
     - `futu_real`
-  - `trade_accounts[].execution.enable_real_trading`
-  - 只有 `futu_real` 时才允许设成 `true`
-  - `trade_accounts[].execution.allow_extended_hours_trading`
-  - 是否允许订单进入美股盘前盘后时段。
-  - `trade_accounts[].execution.order_session`
-  - 支持 `RTH`、`ETH`、`ALL`、`OVERNIGHT`。
-  - 只有 `allow_extended_hours_trading=true` 时才允许用非 `RTH`。
-  - `trade_accounts[].execution.max_order_notional`
-  - 单笔订单最大名义金额
-  - `trade_accounts[].execution.max_order_qty`
-  - 单笔订单最大股数
+  - `trade_account.execution.order_session`
+  - 支持 `RTH`、`ETH`、`ALL`。
+  - `executor=futu_real` 且 `broker.trade_env=REAL` 时，默认会落到 `ETH`。
+  - `futu_simulate` 和 `mock` 默认走 `RTH`。
+  - quote 侧是否订阅扩展时段，也会从这个唯一账户的 `order_session` 派生：
+  - `RTH` 只订阅常规时段 bar。
+  - `ETH` / `ALL` 会订阅扩展时段 bar。
 
 ## 运行
 
@@ -224,16 +220,19 @@ Futu行情订阅、Futu历史数据、Futu真实环境下单：
   --quote-config config/livetrading.quote.futu.sample.json \
   --history-config config/livetrading.history.futu.sample.json \
   --pool-config config/livetrading.pool.sample.json \
-  --trade-config config/livetrading.trade_accounts.futu.sample.json
+  --trade-config config/livetrading.trade_account.futu.sample.json
 ```
 
-这条命令会走 Futu `REAL` 环境真实提单，样例里的 `execution.enable_real_trading = true` 也是为此准备的。
+这条命令会走 Futu `REAL` 环境真实提单。
 
-如果要支持美股盘前盘后交易，需要同时满足两件事：
+对美股实盘交易，仓库现在默认就支持盘前盘后：
 
-- 行情侧把 `realtime_broker.extended_time` 设成 `true`
-- 下单侧把 `trade_accounts[].execution.allow_extended_hours_trading` 设成 `true`
-  - 常见配置是 `order_session = ETH`
+- 实盘账户样例 [config/livetrading.trade_account.futu.sample.json](config/livetrading.trade_account.futu.sample.json) 默认使用：
+  - `trade_account.execution.order_session = ETH`
+
+如果你只想做常规时段交易，再显式改回：
+
+- `trade_account.execution.order_session = RTH`
 
 Futu行情订阅、polygon历史数据、Futu模拟环境下单：
 
@@ -243,29 +242,36 @@ export POLYGON_API_KEY=your_api_key
   --quote-config config/livetrading.quote.futu.sample.json \
   --history-config config/livetrading.history.polygon.sample.json \
   --pool-config config/livetrading.pool.sample.json \
-  --trade-config config/livetrading.trade_accounts.simulate.sample.json
+  --trade-config config/livetrading.trade_account.simulate.sample.json
 ```
 
-Mock行情订阅、本地历史数据、Mock账户、Mock下单：
+Mock行情订阅、polygon历史数据、Mock下单：
 
 ```bash
 ./.venv/bin/python livetrading.py \
   --quote-config config/livetrading.quote.mock.sample.json \
   --history-config config/livetrading.history.local.sample.json \
   --pool-config config/livetrading.pool.sample.json \
-  --trade-config config/livetrading.trade_accounts.mock.sample.json
+  --trade-config config/livetrading.trade_account.mock.sample.json
 ```
 
-这份样例不依赖 `Futu OpenD` 和 `Polygon`。
+Mock行情订阅、本地历史数据、Mock下单：
 
-- 分钟行情来自本地 `mock /push`
-- warm-up 日线来自本地 `.kline_day`
-- 账户资金和持仓基线来自 `trade_accounts.mock.sample.json` 里的 `initial_cash / initial_positions`
-- 如果 `.kline_day` 里没有对应股票的日线，warm-up 会缺数据，策略信号也就不稳定
+```bash
+./.venv/bin/python livetrading.py \
+  --quote-config config/livetrading.quote.mock.sample.json \
+  --history-config config/livetrading.history.local.sample.json \
+  --pool-config config/livetrading.pool.sample.json \
+  --trade-config config/livetrading.trade_account.mock.sample.json
+```
+
+- warm-up 日线来自本地 `.kline_day`，如果 `.kline_day` 里没有对应股票的日线，warm-up 会缺数据，策略信号也就不稳定
+- 账户资金和持仓基线来自 `livetrading.trade_account.mock.sample.json` 里的 `initial_cash / initial_positions`
 
 
 
-如果你要看 `mock` 行情入口的推送格式、健康检查，以及怎么稳定复现 `BUY / SELL` 信号，统一看 [docs/README_livetrading_mock_signal.md](/Users/sean/workspace/backtest-feature-livetrading-startup/docs/README_livetrading_mock_signal.md)。
+
+如果你要看 `mock` 行情入口的推送格式、健康检查，以及怎么稳定复现 `BUY / SELL` 信号，统一看 [docs/README_livetrading_mock_signal.md](docs/README_livetrading_mock_signal.md)。
 
 ## 日志输出
 
@@ -290,6 +296,6 @@ FILL account_id=... broker_order_id=...
 
 ## 更多文档
 
-- 运行时序： [docs/README_livetrading_sequence.md](/Users/sean/workspace/backtest-feature-livetrading-startup/docs/README_livetrading_sequence.md)
-- 执行层说明： [docs/README_livetrading_real_order_plan.md](/Users/sean/workspace/backtest-feature-livetrading-startup/docs/README_livetrading_real_order_plan.md)
-- mock 联调说明： [docs/README_livetrading_mock_signal.md](/Users/sean/workspace/backtest-feature-livetrading-startup/docs/README_livetrading_mock_signal.md)
+- 运行时序： [docs/README_livetrading_sequence.md](docs/README_livetrading_sequence.md)
+- 执行层说明： [docs/README_livetrading_real_order_plan.md](docs/README_livetrading_real_order_plan.md)
+- mock 联调说明： [docs/README_livetrading_mock_signal.md](docs/README_livetrading_mock_signal.md)

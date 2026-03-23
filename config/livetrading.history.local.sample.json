@@ -1,7 +1,6 @@
 {
   "history_broker": {
     "type": "local",
-    "market": "US",
     "data_root": ".kline_day"
   }
 }

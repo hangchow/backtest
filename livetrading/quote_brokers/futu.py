@@ -49,7 +49,7 @@ class FutuRealtimeQuoteClient(QuoteBrokerClient):
                     [self._futu["SubType"].QUOTE, self._futu["SubType"].K_1M],
                     is_first_push=False,
                     subscribe_push=True,
-                    extended_time=self._config.extended_time,
+                    extended_time=self._config.subscribe_extended_time,
                 )
                 if ret != self._futu["RET_OK"]:
                     raise RuntimeError(f"quote subscribe failed: {data}")

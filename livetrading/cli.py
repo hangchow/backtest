@@ -14,7 +14,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--quote-config", required=True, help="Path to the quote-subscription JSON config file.")
     parser.add_argument("--history-config", help="Optional path to the history-broker JSON config file.")
     parser.add_argument("--pool-config", help="Optional path to the stock-pool JSON config file.")
-    parser.add_argument("--trade-config", required=True, help="Path to the trade-accounts JSON config file.")
+    parser.add_argument("--trade-config", required=True, help="Path to the trade-account JSON config file.")
     return parser.parse_args()
 
 

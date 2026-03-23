@@ -305,7 +305,7 @@ class FutuTradeAccountClient(TradeAccountClient):
 
     def _resolve_fill_outside_rth(self) -> bool:
         """扩展时段订单需要显式打开 fill_outside_rth。"""
-        return bool(self._config.execution.allow_extended_hours_trading)
+        return self._config.execution.order_session != "RTH"
 
     def _resolve_order_session(self, futu):
         """把 execution.order_session 映射成 Futu SDK 的时段枚举。"""

@@ -4,7 +4,7 @@ import logging
 
 import pandas as pd
 
-from ..config import TradeAccountConfig
+from ..config import DEFAULT_CURRENCY, TradeAccountConfig
 from ..models import AccountSnapshot, OrderIntent, OrderSubmission, PositionSnapshot
 from .base import TradeAccountClient, TradeAccountEventSink
 
@@ -27,7 +27,7 @@ class MockTradeAccountClient(TradeAccountClient):
             cash=self._config.broker.initial_cash,
             available_funds=self._config.broker.initial_cash,
             buying_power=self._config.broker.initial_cash,
-            currency=self._config.broker.currency,
+            currency=DEFAULT_CURRENCY,
             raw={"source": "mock"},
         )
         positions = {
@@ -39,7 +39,7 @@ class MockTradeAccountClient(TradeAccountClient):
                 market_val=None,
                 unrealized_pl=None,
                 realized_pl=None,
-                currency=self._config.broker.currency,
+                currency=DEFAULT_CURRENCY,
                 raw={"source": "mock"},
             )
             for code, qty in self._config.broker.initial_positions
