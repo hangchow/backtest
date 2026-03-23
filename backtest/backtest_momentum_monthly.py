@@ -27,7 +27,7 @@ from backtest.backtest_common import (
     validate_market_for_symbols,
 )
 from backtest.backtest_dual_momentum import load_daily_data, run_backtest as run_baseline
-from trading_domain.rebalance import (
+from domain.rebalance import (
     RebalancePolicy,
     build_desired_shares,
     compute_affordable_qty_with_fee,
