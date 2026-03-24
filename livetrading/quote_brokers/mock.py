@@ -8,7 +8,8 @@ from typing import Any, Iterable, Mapping
 
 import pandas as pd
 
-from ..config import RealtimeQuoteBrokerConfig
+from ..config import DEFAULT_MARKET, RealtimeQuoteBrokerConfig
+from ..market_hours import is_realtime_bar_allowed_for_market, normalize_market_timestamp
 from ..models import QuoteUpdate
 from .base import QuoteBrokerClient, QuoteBrokerEventSink
 
@@ -71,6 +72,7 @@ class MockRealtimeQuoteClient(QuoteBrokerClient):
         code = str(bar["code"])
         with self._lock:
             subscribed_codes = tuple(self._codes)
+        # mock 入口只接受当前股票池里订阅过的代码，避免联调时混入无关 push。
         if not subscribed_codes or code not in subscribed_codes:
             self._event_sink.on_broker_message(
                 logging.WARNING,
@@ -79,6 +81,25 @@ class MockRealtimeQuoteClient(QuoteBrokerClient):
             return False
 
         timestamp = pd.Timestamp(bar["time_key"])
+        # mock 也按当前市场时区和 quote 订阅时段判断 bar 是否允许进入系统，
+        # 尽量和真实 futu 行情订阅的准入行为保持一致。
+        if not is_realtime_bar_allowed_for_market(
+            timestamp,
+            market=DEFAULT_MARKET,
+            subscribe_extended_time=self._config.subscribe_extended_time,
+        ):
+            self._event_sink.on_broker_message(
+                logging.WARNING,
+                (
+                    "mock realtime quote broker ignored out-of-session push "
+                    f"code={code} time={timestamp} market={DEFAULT_MARKET} "
+                    f"subscribe_extended_time={self._config.subscribe_extended_time}"
+                ),
+            )
+            return False
+
+        # 先把这根 bar 反映成最新 quote/最新参考价，再把 bar 送进策略。
+        # 这样同一次 push 触发出来的 rebalance 计划可以直接复用刚收到的价格。
         self._event_sink.on_quote(
             QuoteUpdate(
                 code=code,
@@ -103,6 +124,7 @@ class MockRealtimeQuoteClient(QuoteBrokerClient):
 
     def push_bars(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         """处理单条或批量 bar payload，并统计 accepted/ignored。"""
+        # README 的 4.1 会走 bars[] 批量模式，一次请求把 AAPL/MSFT 的参考价都补齐。
         items_raw = payload.get("bars", payload)
         if isinstance(items_raw, Mapping):
             items = [items_raw]
@@ -195,9 +217,8 @@ class MockRealtimeQuoteClient(QuoteBrokerClient):
         if raw_time_key is None:
             raise ValueError("bar.time_key must not be empty")
 
-        timestamp = pd.Timestamp(raw_time_key)
-        if timestamp.tzinfo is not None:
-            timestamp = timestamp.tz_localize(None)
+        # 外部如果传入带时区时间，先换算到市场本地时间，再落成仓库内部统一的“市场本地 naive 时间”。
+        timestamp = normalize_market_timestamp(raw_time_key, DEFAULT_MARKET).tz_localize(None)
 
         close = float(payload.get("close"))
         open_price = float(payload.get("open", close))

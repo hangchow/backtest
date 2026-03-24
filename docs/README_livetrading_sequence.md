@@ -18,6 +18,8 @@
   --trade-config config/livetrading.trade_account.mock.sample.json
 ```
 
+当前仓库里的 `config/livetrading.trade_account.mock.sample.json` 已把 `order_session` 设成 `ETH`。所以如果 quote 侧也走 mock，美股示例下 `04:00` 的盘前分钟 bar 可以通过实时行情入口并触发换日；如果改回 `RTH`，同样的 `04:00 /push` 会在 quote broker 入口被忽略。
+
 下面的时序图主要聚焦这些文件之间的交互：
 
 - [livetrading.py](../livetrading.py)
@@ -35,6 +37,7 @@
 - [livetrading/futu/runtime.py](../livetrading/futu/runtime.py)
 - [livetrading/history_providers/base.py](../livetrading/history_providers/base.py)
 - [livetrading/history_providers/common.py](../livetrading/history_providers/common.py)
+- [livetrading/market_hours.py](../livetrading/market_hours.py)
 - [livetrading/history_providers/local.py](../livetrading/history_providers/local.py)
 - [livetrading/history_providers/cached.py](../livetrading/history_providers/cached.py)
 - [livetrading/history_providers/polygon.py](../livetrading/history_providers/polygon.py)
@@ -240,13 +243,21 @@ sequenceDiagram
 
     C->>QB: POST /push {code,time_key,open,close,high,low,volume}
     QB->>QB: _normalize_bar_payload()<br/>把外部 push 的 bar 归一化成内部统一字段
-    Note over QS,QBASE: mock / futu quote client 都通过 QuoteBrokerEventSinkAdapter 推事件
-    QB-->>QS: on_quote()<br/>先推一条合成 QuoteUpdate 作为参考价
-    QS->>RST: latest_quotes[code] = update
+    QB->>QB: normalize_market_timestamp()<br/>按市场时区归一化成 market-local 时间
+    QB->>QB: is_realtime_bar_allowed_for_market()<br/>按 RTH / extended 判断这根 bar 是否允许进入系统
+    alt 命中当前订阅 session
+        Note over QS,QBASE: mock / futu quote client 都通过 QuoteBrokerEventSinkAdapter 推事件
+        QB-->>QS: on_quote()<br/>先推一条合成 QuoteUpdate 作为参考价
+        QS->>RST: latest_quotes[code] = update
 
-    QB-->>QS: on_bar()<br/>再推分钟 bar 给策略引擎
-    QS->>RST: latest_bar_prices[code] = bar.close
+        QB-->>QS: on_bar()<br/>再推分钟 bar 给策略引擎
+        QS->>RST: latest_bar_prices[code] = bar.close
+    else 非当前订阅 session
+        QB-->>QBASE: on_broker_message()<br/>记录 ignored out-of-session push
+    end
 ```
+
+当前这份 mock 样例配置是 `ETH`，所以美股 `2026-03-13 04:00:00` 这类盘前 bar 会通过这里的准入检查；如果你把 `order_session` 改成 `RTH`，同样的 push 会在这一步被拦下，不会再进入 `on_bar(...)`。
 
 ### 4.2 futu 订阅实盘股价并把推送送进实时事件入口
 
@@ -262,7 +273,7 @@ sequenceDiagram
     QB->>QCTX: OpenQuoteContext(host, port)
     QB->>QCTX: set_handler(QuoteHandler / KlineHandler)
     QB->>QCTX: start()
-    QB->>QCTX: subscribe(codes, [QUOTE, K_1M], subscribe_push=True)
+    QB->>QCTX: subscribe(codes, [QUOTE, K_1M], subscribe_push=True, extended_time=config.subscribe_extended_time)
 
     loop Futu push
         QCTX-->>QB: QuoteHandler.on_recv_rsp(frame)<br/>收到实时报价 DataFrame
@@ -290,13 +301,13 @@ sequenceDiagram
     participant PC as portfolio.py\nPortfolioCoordinator
 
     QS->>PLS: on_bar()<br/>把分钟 bar 交给股票池策略
-    PLS->>STATE: on_bar()<br/>消费一根分钟 bar 并尝试吐出已完成日线窗口
+    PLS->>STATE: on_bar()<br/>消费一根分钟 bar，按市场本地时间聚合并尝试吐出已完成日线窗口
 
-    alt 还在同一个交易日
+    alt market-local trade_date 未变化
         STATE-->>PLS: None
         PLS-->>QS: None
         QS-->>QS: 不触发调仓
-    else 新交易日第一根 bar
+    else 命中新 trade_date 的第一根准入 bar
         STATE-->>PLS: CompletedDailyFrames<br/>已完成日线窗口：prices / volumes / signal_time
         PLS->>SIG: build_dual_momentum_signal()<br/>基于已完成日线窗口计算 dual momentum 目标权重
         SIG-->>PLS: DualMomentumSignal<br/>策略信号结果：target_weights / target_codes / risk_on
@@ -304,6 +315,8 @@ sequenceDiagram
         QS->>PC: execute_portfolio_rebalance()<br/>把组合决策交给账户级执行协调器
     end
 ```
+
+这里的 `trade_date` 不是直接取输入 `time_key.date()`。`DualMomentumDailyState` 会先把 bar 归一化到市场本地时区，再通过 `market_trade_date_for_timestamp(...)` 判断这根 bar 属于哪个交易日。这样像 `2026-03-13 00:30:00+00:00` 这种时间，在美股场景下会先换算成纽约时间 `2026-03-12 19:30:00`，不会被误判成 `2026-03-13` 的新交易日。
 
 ## 6. 账户级执行协调器按账户选择执行器并执行调仓
 
@@ -350,8 +363,8 @@ sequenceDiagram
 
 这里最重要的时序关系是：
 
-1. 实时行情入口按 `realtime_broker.type` 二选一：要么是 `mock /push`，要么是 Futu `QUOTE + K_1M subscribe push`；两者最终都会通过 `QuoteBrokerEventSinkAdapter.on_quote` / `on_bar` 进入运行时链路。
-2. 策略层只有在“新交易日第一根分钟 bar”到来时，才会从 `DualMomentumDailyState` 吐出已完成日线窗口。
+1. 实时行情入口按 `realtime_broker.type` 二选一：要么是 `mock /push`，要么是 Futu `QUOTE + K_1M subscribe push`；两者在进入 `QuoteBrokerEventSinkAdapter` 之前都有“bar 准入”这一步。`mock` 用 [livetrading/market_hours.py](../livetrading/market_hours.py) 在本地按市场时区和 `RTH / extended` 过滤，Futu 则通过 `subscribe(..., extended_time=...)` 把准入语义交给 SDK。
+2. 策略层只有在“market-local trade_date 变化后的第一根准入分钟 bar”到来时，才会从 `DualMomentumDailyState` 吐出已完成日线窗口。当前这份美股 mock 样例是 `ETH`，所以 `04:00` 的首根盘前 bar 就可以触发；如果配置成 `RTH`，则要等到 `09:30` 之后的首根 bar。
 3. `build_dual_momentum_signal(...)` 用这份已完成日线窗口生成目标权重。
 4. `QuoteBrokerEventSinkAdapter` 拿到 `PortfolioRebalanceDecision` 后，会调用 `PortfolioCoordinator`，再按账户读取 `execution.executor`，选择 `mock / futu_simulate / futu_real` 三种执行路径之一。
 5. `mock` 会继续维护 `shadow_cash / shadow_positions` 并输出 `DRY_RUN_*` 日志；`futu_simulate / futu_real` 会在提交买单前先按 `expected_cash` 和手续费把数量收缩到可买范围，再走真实 `place_order(...)`，随后通过 `ORDER_PUSH / DEAL_PUSH` 按最终成交数量、均价和手续费估算纠偏，并等待真实账户快照把 `pending_orders` 清掉。
@@ -400,7 +413,11 @@ sequenceDiagram
 - [livetrading/history_providers/base.py](../livetrading/history_providers/base.py)
   - 定义 `DailyHistoryProvider` 抽象
 - [livetrading/history_providers/common.py](../livetrading/history_providers/common.py)
-  - 提供市场日历、交易日判断、共享常量等 history 共用逻辑
+  - history provider 的共享兼容层
+  - 复用并转发 `market_hours.py` 里的市场日历、交易日和常量定义
+- [livetrading/market_hours.py](../livetrading/market_hours.py)
+  - 统一的市场时区 / 交易日 / RTH vs extended 准入逻辑
+  - 被 history provider、mock quote broker、strategy state 共用
 - [livetrading/history_providers/local.py](../livetrading/history_providers/local.py)
   - 本地日线 warm-up 实现
 - [livetrading/history_providers/cached.py](../livetrading/history_providers/cached.py)
@@ -415,10 +432,10 @@ sequenceDiagram
     - `QuoteBrokerEventSink`
 - [livetrading/quote_brokers/mock.py](../livetrading/quote_brokers/mock.py)
   - mock 实时行情入口
-  - 负责 `/health` / `/push`、bar 归一化、合成 quote、再推 bar
+  - 负责 `/health` / `/push`、bar 归一化、按 session 过滤、合成 quote、再推 bar
 - [livetrading/quote_brokers/futu.py](../livetrading/quote_brokers/futu.py)
   - Futu 实时行情实现
-  - 负责 `OpenQuoteContext`、订阅管理、handler 挂接
+  - 负责 `OpenQuoteContext`、订阅管理、`extended_time` 透传、handler 挂接
 - [livetrading/trade_account/base.py](../livetrading/trade_account/base.py)
   - 定义 `TradeAccountClient` / `TradeAccountEventSink` 抽象
 - [livetrading/trade_account/futu.py](../livetrading/trade_account/futu.py)
@@ -431,6 +448,7 @@ sequenceDiagram
   - 定义 `PoolLiveStrategy` 抽象，并注册内建 `dual_momentum`
 - [strategy/dual_momentum_state.py](../strategy/dual_momentum_state.py)
   - 把分钟 bar 增量聚合成“已完成日线窗口”
+  - `trade_date` 按市场本地时间计算，并在换日第一根准入 bar 吐出 completed window
 - [strategy/dual_momentum.py](../strategy/dual_momentum.py)
   - 纯信号逻辑，输出 `target_weights`
 - [domain/rebalance.py](../domain/rebalance.py)

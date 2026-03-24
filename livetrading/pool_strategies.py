@@ -64,6 +64,7 @@ class DualMomentumPoolStrategy(PoolLiveStrategy):
         completed = self._state.on_bar(code, bar)
         if completed is None:
             return None
+        # 只要状态机判定“已经进入新交易日”，就用上一交易日刚刚完成的窗口算一次组合信号。
         return self._build_rebalance_decision(
             signal_time=completed.signal_time,
             current_trade_date=completed.current_trade_date,
@@ -80,6 +81,8 @@ class DualMomentumPoolStrategy(PoolLiveStrategy):
         volumes: pd.DataFrame,
     ) -> PortfolioRebalanceDecision | None:
         """用已完成日线窗口计算信号，并封装成组合调仓决策。"""
+        # 注意 signal_time 是“新交易日第一根分钟 bar 的时间”，
+        # 但 prices / volumes 只包含上一交易日及更早的已完成日线。
         signal = build_dual_momentum_signal(
             prices,
             volumes,

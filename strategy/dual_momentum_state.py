@@ -6,6 +6,9 @@ from typing import Any
 
 import pandas as pd
 
+from livetrading.config import DEFAULT_MARKET
+from livetrading.market_hours import market_trade_date_for_timestamp, normalize_market_timestamp
+
 
 @dataclass(frozen=True)
 class CompletedDailyFrames:
@@ -25,7 +28,9 @@ def normalize_daily_history(frame: pd.DataFrame, code: str) -> pd.DataFrame:
     if "time_key" not in result.columns:
         raise ValueError(f"daily history for {code} must include time_key")
     result["time_key"] = pd.to_datetime(result["time_key"])
-    result["trade_date"] = result["time_key"].dt.date
+    result["time_key"] = result["time_key"].map(lambda value: normalize_market_timestamp(value, DEFAULT_MARKET).tz_localize(None))
+    # trade_date 统一按市场本地时区计算，避免带时区的时间戳直接取 .date() 时跨天错位。
+    result["trade_date"] = result["time_key"].map(lambda value: market_trade_date_for_timestamp(value, DEFAULT_MARKET))
     result["close"] = pd.to_numeric(result["close"], errors="coerce")
     result["volume"] = pd.to_numeric(result.get("volume", 0.0), errors="coerce").fillna(0.0)
     result["last_bar_time"] = result["time_key"]
@@ -57,6 +62,7 @@ class DualMomentumDailyState:
             trade_date = history.iloc[-1]["trade_date"]
             if max_date is None or trade_date > max_date:
                 max_date = trade_date
+        # warm-up 最后一日就是状态机眼里的“当前交易日”基线。
         self._current_trade_date = max_date
         self._last_emitted_trade_date = None
 
@@ -66,9 +72,15 @@ class DualMomentumDailyState:
             return None
 
         row = pd.Series(bar)
-        timestamp = pd.Timestamp(row["time_key"])
-        trade_date = timestamp.date()
+        # 状态机内部统一使用“市场本地 naive 时间”，和 mock quote broker 的归一化口径保持一致。
+        timestamp = normalize_market_timestamp(row["time_key"], DEFAULT_MARKET).tz_localize(None)
+        trade_date = market_trade_date_for_timestamp(timestamp, DEFAULT_MARKET)
         completed = None
+        # 关键顺序：
+        # 1. 先判断是否换日，并吐出“上一交易日已完成窗口”
+        # 2. 再把当前 bar 合并到当天日线
+        # trade_date 先按市场本地时区归属到正确交易日，再做换日判断。
+        # 这样 2026-03-13 00:30:00+00:00 这类跨时区输入，不会被误判成 2026-03-13 的新交易日。
         if self._current_trade_date is not None and trade_date > self._current_trade_date:
             completed = self._emit_completed_frames(signal_time=timestamp, current_trade_date=trade_date)
         self._current_trade_date = trade_date
@@ -82,6 +94,7 @@ class DualMomentumDailyState:
         current_trade_date: date,
     ) -> CompletedDailyFrames | None:
         """在进入新交易日时，输出上一交易日前的完整价格/成交量窗口。"""
+        # 同一个 current_trade_date 只允许发一次，避免同一天多只股票的首根 bar 重复触发调仓。
         if self._last_emitted_trade_date == current_trade_date:
             return None
         prices, volumes = self._build_completed_frames(current_trade_date=current_trade_date)
@@ -96,7 +109,7 @@ class DualMomentumDailyState:
     def _update_daily_bar(self, code: str, timestamp: pd.Timestamp, close: float, volume: float) -> None:
         """把分钟 bar 合并到对应交易日的日频聚合状态。"""
         history = self._daily_histories[code]
-        trade_date = timestamp.date()
+        trade_date = market_trade_date_for_timestamp(timestamp, DEFAULT_MARKET)
         if history.empty or trade_date > history.iloc[-1]["trade_date"]:
             next_row = pd.DataFrame(
                 [
@@ -126,6 +139,8 @@ class DualMomentumDailyState:
             else:
                 row_index = idx[-1]
                 last_bar_time = history.at[row_index, "last_bar_time"]
+                # 同一天里，close 始终覆盖成“最新一分钟的 close”；
+                # volume 则持续累加。这样文档里 15:59 的那次 push 就能改写当天最终收盘结构。
                 history.at[row_index, "close"] = close
                 if pd.isna(last_bar_time) or pd.Timestamp(last_bar_time) < timestamp:
                     history.at[row_index, "volume"] = float(history.at[row_index, "volume"]) + max(0.0, volume)
@@ -137,6 +152,7 @@ class DualMomentumDailyState:
         price_map: dict[str, pd.Series] = {}
         volume_map: dict[str, pd.Series] = {}
         for code, history in self._daily_histories.items():
+            # 这里明确排除 current_trade_date，只把“已经收完盘的日线”交给策略层。
             completed = history[history["trade_date"] < current_trade_date]
             if completed.empty:
                 continue

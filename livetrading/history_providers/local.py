@@ -41,6 +41,7 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
         histories: dict[str, pd.DataFrame] = {}
 
         for code in normalized_codes:
+            # 每个 code 独立读取 warm-up；缺谁就只把谁标成空，让上层决定是否阻断策略启动。
             bars = min(max(int(daily_warmup_bars.get(code, 1)), 1), 1000)
             daily_history = self._load_daily_from_kline_day(code, bars)
             if daily_history is None or daily_history.empty:
@@ -59,6 +60,8 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
         daily = self._load_local_csv_history(code_dir, code, frame_type="daily", dedupe_error=True)
         if daily is None:
             return None
+        # 只保留策略要求的最近 N 根日线。
+        # mock_signal 文档里看到的 “warm-up loaded from kline_day rows=3” 就来自这里。
         result = daily.tail(bars).reset_index(drop=True)
         self._logger.info("warm-up loaded from kline_day code=%s rows=%d dir=%s", code, len(result), code_dir)
         return result
@@ -84,6 +87,7 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
 
         if not frames:
             return None
+        # 允许一个 code 的历史日线分散在多个 csv 文件中，启动时统一按 time_key 合并。
         merged = pd.concat(frames, ignore_index=True)
         merged = merged.sort_values("time_key").reset_index(drop=True)
         duplicated_mask = merged.duplicated(subset=["time_key"], keep="last")

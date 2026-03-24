@@ -21,7 +21,9 @@ HISTORY_CONFIG_ALLOWED_TOP_LEVEL_KEYS = frozenset(
 POOL_CONFIG_ALLOWED_TOP_LEVEL_KEYS = frozenset({"stock_pool", "pool", "codes", "strategy"})
 TRADE_CONFIG_ALLOWED_TOP_LEVEL_KEYS = frozenset({"trade_account"})
 REALTIME_BROKER_ALLOWED_KEYS = frozenset({"type", "host", "port", "quote_host", "quote_port"})
-REALTIME_BROKER_SHARED_ALLOWED_KEYS = REALTIME_BROKER_ALLOWED_KEYS | frozenset({"history_host", "history_port"})
+REALTIME_BROKER_SHARED_ALLOWED_KEYS = REALTIME_BROKER_ALLOWED_KEYS | frozenset(
+    {"history_host", "history_port", "data_root", "kline_day_root"}
+)
 HISTORY_BROKER_ALLOWED_KEYS = frozenset({"type", "host", "port", "data_root", "history_host", "history_port", "kline_day_root"})
 HISTORY_BROKER_SHARED_ALLOWED_KEYS = HISTORY_BROKER_ALLOWED_KEYS | frozenset({"quote_host", "quote_port"})
 TRADE_ACCOUNT_ALLOWED_KEYS = frozenset({"account_id", "broker", "execution"})
@@ -186,27 +188,32 @@ class HistoryBrokerConfig:
     port: int | None = None
     data_root: str | None = None
 
+    def effective_data_root(self) -> str:
+        return self.data_root or ".kline_day"
+
     def connection_signature(self) -> tuple[object, ...]:
         if self.type == "polygon":
             return (
                 self.type,
+                self.effective_data_root(),
             )
         if self.type == "local":
             return (
                 self.type,
-                self.data_root,
+                self.effective_data_root(),
             )
         return (
             self.type,
             self.host,
             self.port,
+            self.effective_data_root(),
         )
 
     def endpoint_summary(self) -> str:
         if self.type == "polygon":
             return "polygon"
         if self.type == "local":
-            return self.data_root or ".kline_day"
+            return self.effective_data_root()
         return f"{self.host}:{self.port}"
 
 
@@ -359,6 +366,7 @@ def _parse_history_broker_config(
         default="futu",
         supported_types=supported_daily_history_provider_types(),
     )
+    data_root = str(raw.get("data_root", raw.get("kline_day_root", ".kline_day"))).strip() or ".kline_day"
     if broker_type == "polygon":
         host_raw = raw.get("history_host", raw.get("host"))
         port_raw = raw.get("history_port", raw.get("port"))
@@ -368,9 +376,9 @@ def _parse_history_broker_config(
             type=broker_type,
             host=host,
             port=port,
+            data_root=data_root,
         )
     if broker_type == "local":
-        data_root = str(raw.get("data_root", raw.get("kline_day_root", ".kline_day"))).strip() or ".kline_day"
         return HistoryBrokerConfig(
             type=broker_type,
             data_root=data_root,
@@ -384,6 +392,7 @@ def _parse_history_broker_config(
         type=broker_type,
         host=host,
         port=port,
+        data_root=data_root,
     )
 
 
@@ -508,10 +517,8 @@ def _parse_execution_config(
         default=default_order_session,
     )
     if order_session != "RTH" and broker is not None:
-        if broker.type != "futu":
+        if executor != "mock" and broker.type != "futu":
             raise ValueError(f"{label}.order_session only supports broker.type=futu")
-        if executor == "mock":
-            raise ValueError(f"{label}.order_session requires a futu submit executor")
     return ExecutionConfig(
         executor=executor,
         order_session=order_session,
@@ -699,13 +706,9 @@ def build_livetrading_config(
         raise ValueError("stock pool config must be provided either inline in quote config or via --pool-config")
     sole_account = trade_account_config
     if sole_account.execution.order_session != "RTH":
-        if sole_account.broker.type != "futu":
+        if sole_account.execution.executor != "mock" and sole_account.broker.type != "futu":
             raise ValueError(
                 f"trade account {sole_account.account_id} order_session only supports broker.type=futu"
-            )
-        if sole_account.execution.executor == "mock":
-            raise ValueError(
-                f"trade account {sole_account.account_id} order_session requires a futu submit executor"
             )
     if sole_account.execution.executor == "futu_simulate" and sole_account.broker.trade_env != "SIMULATE":
         raise ValueError(

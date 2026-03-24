@@ -91,6 +91,8 @@ class RebalancePlanner:
             current_qty = int(current_positions.get(code, 0))
             desired_qty = int(desired_shares.get(code, current_qty))
             price = prices.get(code)
+            # 没有执行层参考价时，无法把目标权重落成具体股数，所以本轮直接跳过这个 code。
+            # 这也是 mock_signal 文档要求先推一次参考价的直接原因。
             if price is None:
                 continue
             if current_qty > desired_qty:
@@ -149,6 +151,8 @@ class MockExecutor(OrderExecutor):
         这里不会调用任何 broker，只会把 planner 算出的 intent 逐条落到本地影子状态，
         用于 dry-run、联调和策略行为验证。
         """
+        # mock 模式下，第二天是否能正确产生 SELL + BUY，
+        # 完全依赖这里维护的 shadow_cash / shadow_positions 是否被前一天的 BUY 正确推进。
         account = plan.account
         decision = plan.decision
         self._logger.info(

@@ -46,11 +46,14 @@ class QuoteBrokerEventSinkAdapter:
     def on_bar(self, code: str, bar: pd.Series | dict[str, Any]) -> None:
         bar_row = pd.Series(bar)
         with self._lock:
+            # 这里记录的是执行层参考价，供 planner 把目标权重换算成股数。
+            # 它和策略内部用来出信号的 completed daily window 是两套概念。
             self._runtime_state.latest_bar_prices[code] = float(bar_row["close"])
             pool_strategy = self._runtime_state.pool_strategy
         if pool_strategy is None:
             return
 
+        # 任意一只股票的新分钟 bar 都可能推动整个股票池策略出一次组合决策。
         decision = pool_strategy.on_bar(code, bar_row)
         if decision is not None:
             self._portfolio_coordinator.execute_portfolio_rebalance(decision)

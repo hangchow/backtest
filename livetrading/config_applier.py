@@ -161,6 +161,8 @@ class RuntimeConfigApplier:
             return {}, ()
         if self._runtime_state.history_provider is None:
             self._runtime_state.history_provider = self._history_provider_factory(config.history_broker, self._logger)
+        # 这里把 warm-up 日线一次性读进来。
+        # mock_signal 样例里读到的就是 config/livetrading_mock_signal_kline_day 下那组受控夹具。
         warmup_histories = self._runtime_state.history_provider.fetch_daily_histories(
             config.stock_pool.codes,
             refresh_plan.warmup_bars,
@@ -194,6 +196,9 @@ class RuntimeConfigApplier:
             return
 
         assert refresh_plan.new_pool_strategy is not None
+        # bootstrap 后，状态机会把“warm-up 最后一根日线的 trade_date”记成当前交易日基线。
+        # 对 mock_signal 样例来说，这个基线就是 2026-03-12，所以后面一旦收到 2026-03-13 09:30 bar
+        # 就会被识别成换日，并吐出截至 2026-03-12 的已完成日线窗口。
         refresh_plan.new_pool_strategy.bootstrap(warmup_histories)
         self._runtime_state.pool_strategy = refresh_plan.new_pool_strategy
         self._runtime_state.history_warmup_pending = False

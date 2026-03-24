@@ -38,6 +38,8 @@ class PortfolioCoordinator:
             if config is None:
                 return
 
+            # 这里拿到的是执行层参考价，而不是策略 warm-up 日线。
+            # 如果目标股票从未被 push 过最新价格，planner 就无法把目标权重换算成目标股数。
             prices = self._runtime_state.active_prices_for_codes(config.all_codes())
             pool_codes = config.stock_pool.codes
             account = config.trade_account

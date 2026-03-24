@@ -1,6 +1,6 @@
 {
   "history_broker": {
     "type": "local",
-    "data_root": "docs/livetrading_mock_signal_kline_day"
+    "data_root": "config/livetrading_mock_signal_kline_day"
   }
 }

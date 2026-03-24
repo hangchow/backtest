@@ -278,8 +278,11 @@ def build_dual_momentum_signal(
     # 相对成交量按列分别计算，每个标的只和自己的近期成交量基线比较。
     relative_volume = volumes.apply(lambda column: compute_relative_volume(column, resolved.volume_window))
     idx = len(prices.index) - 1
+    # idx 指向“最后一个已完成交易日”。
+    # mock_signal 样例里，2026-03-13 09:30 触发 rebalance 时，这里看的最后一行就是 2026-03-12。
 
     # dual momentum 的第一层是相对强弱：短周期为主，长周期作为辅助权重。
+    # 当 lookback_days=1 时，短周期动量等价于“最近一个已完成交易日相对前一日的涨跌幅”。
     short_momentum = prices.iloc[idx] / prices.iloc[idx - resolved.lookback_days] - 1
     long_momentum = pd.Series(0.0, index=prices.columns, dtype=float)
     if idx >= resolved.long_lookback_days:
@@ -297,6 +300,7 @@ def build_dual_momentum_signal(
         window=resolved.market_filter_window,
         min_periods=resolved.market_filter_window,
     ).mean()
+    # 因此 mock_signal 里的 market_filter_window=2，等价于拿股票池最近两天均值和两日均线做比较。
     market_is_risk_on = bool(pd.notna(pool_ma.iloc[idx]) and pool_close.iloc[idx] >= pool_ma.iloc[idx])
     target_codes = candidate_codes if market_is_risk_on else ()
 
