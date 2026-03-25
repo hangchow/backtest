@@ -1,15 +1,14 @@
-# 实时行情 Mock 稳定复现 `DRY_RUN_ORDER`
+# 不接真实行情，也能稳定看到一轮“先买、再卖、再买”的模拟下单日志
 
-这份文档只解决一件事：在不依赖外部实时行情和真实交易账户的情况下，稳定复现 `BUY -> SELL -> BUY` 的 `DRY_RUN_ORDER` 日志。
+这份文档只做一件事：不用外部实时行情和真实交易账户，也能按固定步骤稳定看到一轮“先买、再卖、再买”的模拟下单日志。
 
-先说最重要的一句：
+这里先把名词说清楚：
 
-- 直接使用 [config/livetrading.pool.sample.json](../config/livetrading.pool.sample.json) 和现有 `.kline_day/`，只能保证程序能启动。
-- 它**不能**保证一定打出 `DRY_RUN_ORDER`。
-- 如果你只是从文档里复制命令想立刻复现买卖单，请使用本文下面这组**专用样例配置和专用本地日线夹具**。
+- `DRY_RUN_ORDER` = 模拟下单日志
+- 意思是：程序判断“这里应该买/卖”，并把结果打印出来
+- 它不会真的向券商发单，也不会动真实账户
 
-如果你要看运行链路，见 [README_livetrading_sequence.md](../docs/README_livetrading_sequence.md)。
-如果你要看当前执行层怎么分成 `mock / futu_simulate / futu_real`，见 [README_livetrading_real_order_plan.md](../docs/README_livetrading_real_order_plan.md)。
+
 
 ## 1. 这次要用哪几份配置
 
@@ -46,10 +45,22 @@
 - `warm-up loaded from kline_day code=US.MSFT rows=3`
 - `account=mock_primary mock account connected cash=100000.0 positions={}`
 
+不同日志开关下，中间还可能额外看到：
+
+- `ACCOUNT ...`
+- `POSITIONS ...`
+- `CONFIG_APPLIED ...`
+
 健康检查：
 
 ```bash
 curl http://127.0.0.1:19111/health
+```
+
+正常会返回：
+
+```json
+{"status": "ok", "codes": ["US.AAPL", "US.MSFT"]}
 ```
 
 ## 3. 为什么这组样例一定能出单
@@ -71,7 +82,13 @@ curl http://127.0.0.1:19111/health
 - `AAPL=130`
 - `MSFT=110`
 
-那么到了 `2026-03-14` 的第一根分钟 bar，策略就会把目标从 `US.MSFT` 切到 `US.AAPL`。
+那么到了下一个交易日 `2026-03-16` 的第一根分钟 bar，策略就会把目标从 `US.MSFT` 切到 `US.AAPL`。
+
+这里特地写明一下：
+
+- `2026-03-13` 是 Friday
+- `2026-03-14` / `2026-03-15` 是周末，不是交易日
+- 所以第二次换日触发必须推到 `2026-03-16`
 
 ## 4. 逐步推送顺序
 
@@ -83,9 +100,10 @@ curl http://127.0.0.1:19111/health
 补充一条当前实现细节：
 
 - `mock` 行情入口现在也会按市场时区和 quote 订阅时段过滤 bar
-- 本文这组 `mock` 配置显式设置成 `ETH`
-- 所以像 `2026-03-13 04:00:00` 这样的盘前 push 会被接收
-- `2026-03-13 04:00:00` 就可以作为当天第一根进入策略的分钟 bar
+- 本文这组样例通过 `trade_account.execution.order_session=ETH` 派生出 extended-time 订阅
+- 所以像 `2026-03-13 04:00:00` 和 `2026-03-16 04:00:00` 这样的盘前 push 会被接收
+- 它们都可以作为各自交易日第一根进入策略的分钟 bar
+- 但周末时间例如 `2026-03-14 04:00:00` 会在 `mock` broker 入口先被拒绝
 
 因此必须按下面顺序推送。
 
@@ -144,14 +162,14 @@ curl -X POST http://127.0.0.1:19111/push \
 - `AAPL` 当天 close 仍然是 `130.0`
 - `MSFT` 当天 close 变成 `110.0`
 
-### 4.4 再推下一交易日第一根 bar，触发 SELL + BUY
+### 4.4 再推下一个交易日第一根 bar，触发 SELL + BUY
 
 ```bash
 curl -X POST http://127.0.0.1:19111/push \
   -H 'Content-Type: application/json' \
   -d '{
     "code": "US.AAPL",
-    "time_key": "2026-03-14 04:00:00",
+    "time_key": "2026-03-16 04:00:00",
     "close": 131.0,
     "volume": 6000
   }'
@@ -160,59 +178,17 @@ curl -X POST http://127.0.0.1:19111/push \
 此时应该出现：
 
 ```text
-INFO DRY_RUN_REBALANCE account_id=mock_primary signal_time=2026-03-14 04:00:00 reason=dual_momentum rebalance using completed daily data through 2026-03-13 (targets=US.AAPL) target_weights={'US.AAPL': 1.0}
+INFO DRY_RUN_REBALANCE account_id=mock_primary signal_time=2026-03-16 04:00:00 reason=dual_momentum rebalance using completed daily data through 2026-03-13 (targets=US.AAPL) target_weights={'US.AAPL': 1.0}
 INFO DRY_RUN_ORDER account_id=mock_primary action=SELL code=US.MSFT ...
 INFO DRY_RUN_ORDER account_id=mock_primary action=BUY code=US.AAPL ...
 ```
 
-## 5. 如果你改回默认样例配置，为什么结果会不一样
 
-如果你改回下面这组文件：
+## 5. 背后代码调用链详细解读
 
-- [config/livetrading.history.local.sample.json](../config/livetrading.history.local.sample.json)
-- [config/livetrading.pool.sample.json](../config/livetrading.pool.sample.json)
+这一节专门解释：你照着本文第4章节推送股票报价时，程序内部到底经过了哪些代码。
 
-那么日志很可能和本文不同，这是预期行为，不是程序坏了。
-
-原因有三点：
-
-- 默认 `pool.sample` 使用 5 只股票和更长的参数窗口，不是本文这组可控的双股票短窗口。
-- 默认 `history.local.sample` 会读取你当前工作区里的 `.kline_day/`，不会自动生成本文假设的受控日线。
-- dual momentum 还有市场过滤；即使有候选股票，只要市场过滤变成 risk-off，结果也会是 `target_weights={}`，日志里表现为 `(targets=CASH)`。
-
-也就是说：
-
-- `sample` 配置适合验证“程序是否能启动、mock 链路是否通”
-- `mock_signal` 专用配置适合验证“是否能稳定打出 dry-run 买卖单”
-
-## 6. 常见问题
-
-- 现象：只有 `DRY_RUN_REBALANCE`，没有 `DRY_RUN_ORDER`
-  - 先确认你用的是本文这组 `mock_signal` 专用配置，而不是默认 `pool.sample`
-  - 再确认你是否先执行了“4.1 先给目标股票补参考价”
-- 现象：同一天推很多 bar，只有第一次触发调仓
-  - 这是正常行为；策略只在新的交易日第一次进入时触发一次
-- 现象：日志里出现 `(targets=CASH)` 和 `target_weights={}`
-  - 这表示策略最终切到了现金，常见原因是你没有使用本文的受控历史数据，或者你切回了默认样例配置
-
-## 7. 最重要的一句
-
-如果你的目标是“从文档直接复制命令，然后稳定看到 `DRY_RUN_ORDER`”，请不要使用默认的 `pool.sample` 和默认 `.kline_day/`。
-
-请直接使用本文这组：
-
-- [config/livetrading.quote.mock.sample.json](../config/livetrading.quote.mock.sample.json)
-- [config/livetrading.history.local.mock_signal.sample.json](../config/livetrading.history.local.mock_signal.sample.json)
-- [config/livetrading.pool.mock_signal.sample.json](../config/livetrading.pool.mock_signal.sample.json)
-- [config/livetrading.trade_account.mock.sample.json](../config/livetrading.trade_account.mock.sample.json)
-
-这组配置和仓库内置的受控日线夹具是配套的，目的就是让本文的推送顺序可以直接复现出买卖单日志。
-
-## 8. 背后代码调用链详细解读
-
-这一节专门解释：你照着本文 `curl /push` 时，程序内部到底经过了哪些代码。
-
-### 8.1 启动阶段：四份配置如何变成运行中的 mock 系统
+### 5.1 启动阶段：四份配置如何变成运行中的 mock 系统
 
 入口很短：
 
@@ -229,14 +205,17 @@ INFO DRY_RUN_ORDER account_id=mock_primary action=BUY code=US.AAPL ...
 1. `LiveTradingEngine.run()` 读取四份 JSON 配置。
 2. `RuntimeConfigApplier._apply_realtime_config()` 创建 [livetrading/quote_brokers/mock.py](../livetrading/quote_brokers/mock.py) 里的 `MockRealtimeQuoteClient`，所以你会看到：
    - `mock realtime quote broker listening at http://127.0.0.1:19111/push`
-3. `RuntimeConfigApplier._prepare_strategy_context()` 创建 [livetrading/history_providers/local.py](../livetrading/history_providers/local.py) 里的 `LocalDataDailyHistoryProvider`，从：
+3. `RuntimeConfigApplier._apply_history_provider()` 创建 [livetrading/history_providers/local.py](../livetrading/history_providers/local.py) 里的 `LocalDataDailyHistoryProvider`。
+4. `RuntimeConfigApplier._prepare_strategy_context()` 调用这个 provider，从：
    - [config/livetrading.history.local.mock_signal.sample.json](../config/livetrading.history.local.mock_signal.sample.json)
    - [config/livetrading_mock_signal_kline_day](../config/livetrading_mock_signal_kline_day)
    读取 warm-up 日线。
-4. `RuntimeConfigApplier._commit_strategy_context()` 调用 [livetrading/pool_strategies.py](../livetrading/pool_strategies.py) 里的 `DualMomentumPoolStrategy.bootstrap()`。
-5. `DualMomentumPoolStrategy.bootstrap()` 再把 warm-up 日线喂给 [strategy/dual_momentum_state.py](../strategy/dual_momentum_state.py) 里的 `DualMomentumDailyState.bootstrap()`。
-6. `MockTradeAccountClient.connect()` 把 [config/livetrading.trade_account.mock.sample.json](../config/livetrading.trade_account.mock.sample.json) 里的初始现金和初始持仓推给引擎，所以你会看到：
+5. `RuntimeConfigApplier._apply_trade_account_config()` 创建 `MockTradeAccountClient` 并调用 `connect()`，把 [config/livetrading.trade_account.mock.sample.json](../config/livetrading.trade_account.mock.sample.json) 里的初始现金和初始持仓推给引擎，所以你会看到：
+   - `ACCOUNT ...`
+   - `POSITIONS ...`
    - `account=mock_primary mock account connected cash=100000.0 positions={}`
+6. `RuntimeConfigApplier._commit_strategy_context()` 调用 [livetrading/pool_strategies.py](../livetrading/pool_strategies.py) 里的 `DualMomentumPoolStrategy.bootstrap()`。
+7. `DualMomentumPoolStrategy.bootstrap()` 再把 warm-up 日线喂给 [strategy/dual_momentum_state.py](../strategy/dual_momentum_state.py) 里的 `DualMomentumDailyState.bootstrap()`。
 
 这个阶段最关键的状态是：
 
@@ -244,7 +223,7 @@ INFO DRY_RUN_ORDER account_id=mock_primary action=BUY code=US.AAPL ...
 - 对本文样例，这个基线就是 `2026-03-12`
 - 所以后面第一次收到 `2026-03-13 04:00:00` 时，状态机会认定“换日了”
 
-### 8.2 你执行 `curl /push` 时，代码如何流动
+### 5.2 你执行 `curl /push` 时，代码如何流动
 
 `/push` 的 HTTP 入口在：
 
@@ -252,23 +231,25 @@ INFO DRY_RUN_ORDER account_id=mock_primary action=BUY code=US.AAPL ...
 
 实际调用顺序是：
 
-1. `MockRealtimeQuoteClient._build_server()` 接住 `POST /push`
+1. `MockRealtimeQuoteClient._build_server()` 里构建出来的 HTTP handler 接住 `POST /push`
 2. `push_bars()` 解析单条或批量 `bars`
 3. `push_bar()` 先把 payload 归一化成统一 bar 结构
-4. `push_bar()` 先回调 `on_quote(...)`
-5. `push_bar()` 再回调 `on_bar(...)`
-6. `QuoteBrokerEventSinkAdapter.on_bar()` 把 `close` 写进运行时参考价缓存
+4. `push_bar()` 先回调 `QuoteBrokerEventSinkAdapter.on_quote(...)`，把最新行情写进 `latest_quotes`
+5. `push_bar()` 再回调 `QuoteBrokerEventSinkAdapter.on_bar(...)`
+6. `QuoteBrokerEventSinkAdapter.on_bar()` 把 `close` 写进运行时参考价缓存 `latest_bar_prices`
 7. `QuoteBrokerEventSinkAdapter.on_bar()` 调用 `pool_strategy.on_bar(...)`
 8. `DualMomentumPoolStrategy.on_bar()` 把分钟 bar 继续交给 `DualMomentumDailyState.on_bar(...)`
+9. 如果 `pool_strategy.on_bar(...)` 产出了 `PortfolioRebalanceDecision`，`QuoteBrokerEventSinkAdapter.on_bar()` 会继续调用 `PortfolioCoordinator.execute_portfolio_rebalance(...)`
+10. `PortfolioCoordinator.execute_portfolio_rebalance(...)` 会先从 `LiveTradingRuntimeState` 收集运行时参考价，再把组合目标交给 `RebalancePlanner` 和对应执行器，最终决定是否打印 `DRY_RUN_ORDER`
 
 这里有一个很容易忽略的点：
 
-- `on_quote()` / `latest_bar_prices` 服务的是“执行层参考价”
+- 执行层会通过 `LiveTradingRuntimeState.resolve_reference_price()` 优先读 `latest_quotes`，缺失时再回退到 `latest_bar_prices`
 - `DualMomentumDailyState` 维护的是“策略层已完成日线窗口”
 - 这两套状态都会被同一次 `push` 更新，但用途不同
 - 但在进入这两套状态之前，`mock` broker 还会先按市场时区和 session 规则做一次准入判断
 
-### 8.3 为什么 `2026-03-12 15:59` 不出单，而 `2026-03-13 04:00` 会出单
+### 5.3 为什么 `2026-03-12 15:59` 不出单，而 `2026-03-13 04:00` 会出单
 
 关键逻辑在：
 
@@ -280,7 +261,7 @@ INFO DRY_RUN_ORDER account_id=mock_primary action=BUY code=US.AAPL ...
 
 第一层是 `mock` 行情入口的 session 准入：
 
-- 当前这组样例配置派生出来的是 `ETH` 订阅
+- 当前这组样例配置派生出来的是 extended-time 订阅
 - 所以 `04:00` 盘前 bar 会进入引擎
 - 它就是这一天第一根会被接收的 bar
 
@@ -317,7 +298,7 @@ INFO DRY_RUN_ORDER account_id=mock_primary action=BUY code=US.AAPL ...
 - 使用“上一交易日及更早的已完成日线”
 - 计算一次调仓
 
-### 8.4 `mock_signal` 这组参数在本例中是什么意思
+### 5.4 `mock_signal` 这组参数在本例中是什么意思
 
 策略配置在：
 
@@ -350,7 +331,7 @@ INFO DRY_RUN_ORDER account_id=mock_primary action=BUY code=US.AAPL ...
 - `AAPL` 从 `100 -> 100`
 - 因而选出 `US.MSFT`
 
-### 8.5 为什么 4.1 必须先给 `AAPL/MSFT` 补参考价
+### 5.5 为什么 4.1 必须先给 `AAPL/MSFT` 补参考价
 
 这一点不是策略层要求的，而是执行层要求的。
 
@@ -383,7 +364,7 @@ INFO DRY_RUN_ORDER account_id=mock_primary action=BUY code=US.AAPL ...
 
 两只股票的参考价都补上。
 
-### 8.6 为什么第二天会出现 `SELL MSFT + BUY AAPL`
+### 5.6 为什么第二天会出现 `SELL MSFT + BUY AAPL`
 
 相关代码路径是：
 
@@ -404,9 +385,9 @@ INFO DRY_RUN_ORDER account_id=mock_primary action=BUY code=US.AAPL ...
 
 如果你不再给 `AAPL` 推新的当日 bar，那么状态机里 `AAPL` 这一天的最终 `close` 就还是 `130`
 
-到了 4.4 再推 `2026-03-14 04:00` 时：
+到了 4.4 再推 `2026-03-16 04:00` 时：
 
-1. 状态机发现进入 `2026-03-14`
+1. 状态机发现进入 `2026-03-16`
 2. 吐出截至 `2026-03-13` 的已完成日线窗口
 3. `build_dual_momentum_signal()` 用 `2026-03-12 -> 2026-03-13` 的变化重新排名
 4. 现在 `AAPL=130`，`MSFT=110`，最强标的切到 `US.AAPL`
@@ -418,7 +399,7 @@ INFO DRY_RUN_ORDER account_id=mock_primary action=BUY code=US.AAPL ...
 8. `MockExecutor.execute_plan()` 按“先卖后买”的顺序推进本地 `shadow_cash / shadow_positions`
 9. 最终打印两条 `DRY_RUN_ORDER`
 
-### 8.7 如果你要直接跟代码一起读，建议按这个顺序打开文件
+### 5.7 如果你要直接跟代码一起读，建议按这个顺序打开文件
 
 1. [docs/README_livetrading_mock_signal.md](../docs/README_livetrading_mock_signal.md)
 2. [livetrading/quote_brokers/mock.py](../livetrading/quote_brokers/mock.py)
