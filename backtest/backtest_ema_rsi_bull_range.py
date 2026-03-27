@@ -198,6 +198,7 @@ def main() -> int:
     print(f"Fee account: {summary['fee_account']}")
     print(f"Market/Security: {summary['market']} / {summary['security_type']}")
     print(f"Trades: {summary['trade_count']} (BUY {summary['buy_count']}, SELL {summary['sell_count']})")
+    print(f"Total fees: {summary['total_fees']:.2f}")
     print(f"Ending cash: {summary['ending_cash']:.2f}")
     if "ending_shares" in summary:
         print(f"Ending shares: {summary['ending_shares']}")

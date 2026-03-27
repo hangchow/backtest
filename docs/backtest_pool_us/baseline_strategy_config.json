@@ -1,0 +1,58 @@
+{
+  "dual_momentum": {
+    "long_lookback_days": 120,
+    "long_lookback_weight": 0.25,
+    "lookback_days": 40,
+    "market_filter_window": 60,
+    "max_gross_exposure": 1.2,
+    "min_volume_ratio": 1.0,
+    "rebalance_band_pct": 0.05,
+    "target_annual_vol": 0.6,
+    "top_n": 1,
+    "volatility_window": 20,
+    "volume_window": 20
+  },
+  "ema_cross": {
+    "fast_span": 30,
+    "flat_at_close": false,
+    "max_open_positions": 1,
+    "min_volume_ratio": 0.6,
+    "position_ratio": 0.15,
+    "slow_span": 120,
+    "volume_window": 5
+  },
+  "ema_rsi_bull_range": {
+    "buy_threshold": 35.0,
+    "fast_span": 20,
+    "flat_at_close": false,
+    "max_open_positions": 1,
+    "min_volume_ratio": 1.2,
+    "position_ratio": 1.0,
+    "rsi_period": 6,
+    "sell_threshold": 60.0,
+    "slow_span": 240,
+    "volume_window": 20
+  },
+  "ema_rsi_combo": {
+    "buy_threshold": 35.0,
+    "fast_span": 20,
+    "flat_at_close": false,
+    "max_open_positions": 1,
+    "min_volume_ratio": 1.2,
+    "position_ratio": 1.0,
+    "rsi_period": 6,
+    "sell_threshold": 60.0,
+    "slow_span": 240,
+    "volume_window": 20
+  },
+  "rsi_reversion": {
+    "buy_threshold": 30.0,
+    "flat_at_close": false,
+    "max_open_positions": -1,
+    "min_volume_ratio": 0.6,
+    "position_ratio": 1.0,
+    "rsi_period": 6,
+    "sell_threshold": 70.0,
+    "volume_window": 5
+  }
+}

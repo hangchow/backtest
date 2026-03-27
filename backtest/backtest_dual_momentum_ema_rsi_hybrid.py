@@ -16,6 +16,7 @@ from backtest.backtest_common import (
     normalize_market,
     parse_eval_end,
     parse_eval_start,
+    sum_trade_fees,
     validate_market_for_symbols,
 )
 from backtest.backtest_rsi_reversion import compute_rsi
@@ -334,6 +335,7 @@ def run_backtest(
         "trade_count": len(trades),
         "buy_count": sum(1 for trade in trades if trade["action"] == "BUY"),
         "sell_count": sum(1 for trade in trades if trade["action"] == "SELL"),
+        "total_fees": sum_trade_fees(trades),
         "final_value": cash,
         "total_return_pct": (cash / initial_cash - 1) * 100,
         "max_drawdown_pct": max_drawdown_pct,
@@ -385,6 +387,7 @@ def main() -> int:
     )
     print(f"Eval range: {summary['start_time']} -> {summary['end_time']}")
     print(f"Trades: {summary['trade_count']} (BUY {summary['buy_count']}, SELL {summary['sell_count']})")
+    print(f"Total fees: {summary['total_fees']:.2f}")
     print(f"Final value: {summary['final_value']:.2f}")
     print(f"Total return: {summary['total_return_pct']:.2f}%")
     print(f"Max drawdown: {summary['max_drawdown_pct']:.2f}%")

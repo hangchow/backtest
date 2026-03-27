@@ -24,6 +24,7 @@ from backtest.backtest_common import (
     parse_eval_start,
     resolve_codes,
     resolve_eval_window,
+    sum_trade_fees,
     validate_market_for_symbols,
 )
 from backtest.backtest_dual_momentum import load_daily_data, run_backtest as run_baseline
@@ -176,6 +177,9 @@ def run_monthly_momentum(
         "lookback_days": lookback_days,
         "top_n": top_n,
         "trade_count": len(trades),
+        "buy_count": sum(1 for trade in trades if trade["action"] == "BUY"),
+        "sell_count": sum(1 for trade in trades if trade["action"] == "SELL"),
+        "total_fees": sum_trade_fees(trades),
         "final_value": final_value,
         "total_return_pct": (final_value / initial_cash - 1) * 100,
         "max_drawdown_pct": float(equity_curve["drawdown_pct"].min()),
@@ -207,7 +211,7 @@ def main() -> int:
     print("Monthly momentum result")
     print(
         f"Return: {summary['total_return_pct']:.2f}% | "
-        f"MDD: {summary['max_drawdown_pct']:.2f}% | Trades: {summary['trade_count']}"
+        f"MDD: {summary['max_drawdown_pct']:.2f}% | Trades: {summary['trade_count']} | Fees: {summary['total_fees']:.2f}"
     )
 
     if args.compare_baseline == 1:

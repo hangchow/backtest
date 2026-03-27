@@ -49,6 +49,7 @@ from backtest.backtest_common import (
     parse_eval_start,
     resolve_eval_window,
     resolve_codes,
+    sum_trade_fees,
     validate_market_for_symbols,
 )
 from strategy.dual_momentum import (
@@ -63,7 +64,7 @@ from strategy.dual_momentum import (
     DEFAULT_VOLATILITY_WINDOW,
     DEFAULT_VOLUME_WINDOW,
     DualMomentumParams,
-    build_dual_momentum_signal,
+    build_dual_momentum_signal_history,
     compute_volume_boost,
 )
 from domain.rebalance import (
@@ -243,6 +244,7 @@ def run_backtest(
     equity_points: list[dict] = []
     target_weights: dict[str, float] = {}
     last_prices: dict[str, float] = {}
+    precomputed_signals = build_dual_momentum_signal_history(prices, volumes, params=strategy_params)
 
     for index, (trade_date, close_row) in enumerate(prices.iterrows()):
         # 某些股票当天可能停牌或缺数据，所以这里只拿当日可交易的 code。
@@ -252,11 +254,7 @@ def run_backtest(
             last_prices[code] = float(price)
 
         # 策略信号总是基于“截至当前交易日收盘前已知的全部历史”来算。
-        signal = build_dual_momentum_signal(
-            prices.iloc[: index + 1],
-            volumes.iloc[: index + 1],
-            params=strategy_params,
-        )
+        signal = precomputed_signals.iloc[index]
         target_weights = signal.target_weights if signal is not None else {}
         if trade_date < eval_start_date or trade_date > eval_end_date:
             continue
@@ -379,6 +377,7 @@ def run_backtest(
         "trade_count": len(trades),
         "buy_count": sum(1 for trade in trades if trade["action"] == "BUY"),
         "sell_count": sum(1 for trade in trades if trade["action"] == "SELL"),
+        "total_fees": sum_trade_fees(trades),
         "ending_cash": cash,
         "ending_positions": {code: qty for code, qty in shares.items() if qty > 0},
         "final_value": final_value,
@@ -437,6 +436,7 @@ def main() -> int:
         print(f"Market/Security: {summary['market']} / {summary['security_type']}")
     print(f"Stock pool: {', '.join(summary['codes'])}")
     print(f"Trades: {summary['trade_count']} (BUY {summary['buy_count']}, SELL {summary['sell_count']})")
+    print(f"Total fees: {summary['total_fees']:.2f}")
     print(f"Ending cash: {summary['ending_cash']:.2f}")
     print(f"Ending positions: {summary['ending_positions']}")
     print(f"Final value: {summary['final_value']:.2f}")

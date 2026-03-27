@@ -45,6 +45,7 @@ from backtest.backtest_common import (
     resolve_codes,
     resolve_data_dir,
     resolve_eval_window,
+    sum_trade_fees,
     validate_market_for_symbol,
     validate_market_for_symbols,
     validate_volume_filter,
@@ -239,6 +240,7 @@ def run_backtest(
         "trade_count": len(trades),
         "buy_count": sum(1 for trade in trades if trade["action"] == "BUY"),
         "sell_count": sum(1 for trade in trades if trade["action"] == "SELL"),
+        "total_fees": sum_trade_fees(trades),
         "ending_cash": cash,
         "ending_shares": shares,
         "last_price": last_price,
@@ -403,6 +405,7 @@ def run_portfolio_backtest(
         "trade_count": len(trades),
         "buy_count": sum(1 for trade in trades if trade["action"] == "BUY"),
         "sell_count": sum(1 for trade in trades if trade["action"] == "SELL"),
+        "total_fees": sum_trade_fees(trades),
         "ending_cash": cash,
         "ending_positions": {code: qty for code, qty in positions.items() if qty > 0},
         "final_value": final_value,
@@ -479,6 +482,7 @@ def main() -> int:
     print(f"Fee account: {summary['fee_account']}")
     print(f"Market/Security: {summary['market']} / {summary['security_type']}")
     print(f"Trades: {summary['trade_count']} (BUY {summary['buy_count']}, SELL {summary['sell_count']})")
+    print(f"Total fees: {summary['total_fees']:.2f}")
     print(f"Ending cash: {summary['ending_cash']:.2f}")
     if "ending_shares" in summary:
         print(f"Ending shares: {summary['ending_shares']}")

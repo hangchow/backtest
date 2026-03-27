@@ -7,6 +7,7 @@ from typing import Callable, Iterable, Mapping
 
 import pandas as pd
 
+from marketdata.local_kline_cache import LocalKlineDataCache
 from ..config import DEFAULT_MARKET, HistoryBrokerConfig
 from .base import DailyHistoryProvider
 from .common import CSV_COLUMNS, HISTORY_COLUMNS, _default_now_provider_for_market
@@ -23,6 +24,7 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
         kline_day_root: Path | str = "kline_day",
         daily_data_root: Path | str | None = None,
         now_provider: Callable[[], datetime] | None = None,
+        local_cache: LocalKlineDataCache | None = None,
     ) -> None:
         self._config = config
         self._logger = logger
@@ -30,6 +32,10 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
             kline_day_root = daily_data_root
         self._kline_day_root = Path(kline_day_root)
         self._now_provider = now_provider or _default_now_provider_for_market(DEFAULT_MARKET)
+        self._local_cache = local_cache or LocalKlineDataCache(
+            kline_day_root=self._kline_day_root,
+            logger=logger,
+        )
 
     def fetch_daily_histories(
         self,
@@ -57,8 +63,9 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
 
     def _load_daily_from_kline_day(self, code: str, bars: int) -> pd.DataFrame | None:
         code_dir = self._kline_day_root / code
-        daily = self._load_local_csv_history(code_dir, code, frame_type="daily", dedupe_error=True)
-        if daily is None:
+        try:
+            daily = self._local_cache.get_daily_history_frame(code)
+        except FileNotFoundError:
             return None
         # 只保留策略要求的最近 N 根日线。
         # mock_signal 文档里看到的 “warm-up loaded from kline_day rows=3” 就来自这里。
@@ -67,50 +74,14 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
         return result
 
     def _load_local_csv_history(self, code_dir: Path, code: str, *, frame_type: str, dedupe_error: bool = False) -> pd.DataFrame | None:
-        if not code_dir.is_dir():
+        try:
+            if frame_type == "daily":
+                return self._local_cache.get_daily_history_frame(code)
+            if frame_type == "minute":
+                return self._local_cache.get_minute_history_frame(code)
+        except FileNotFoundError:
             return None
-        csv_files = sorted(code_dir.glob("*.csv"))
-        if not csv_files:
-            return None
-
-        frames: list[pd.DataFrame] = []
-        required_columns = {"time_key", "open", "close", "high", "low", "volume"}
-        for path in csv_files:
-            frame = pd.read_csv(path)
-            if not required_columns.issubset(set(frame.columns)):
-                self._logger.warning("local %s warm-up file missing columns code=%s path=%s", frame_type, code, path)
-                continue
-            frame = frame.copy()
-            frame["time_key"] = pd.to_datetime(frame["time_key"])
-            frame["code"] = code
-            frames.append(frame[HISTORY_COLUMNS])
-
-        if not frames:
-            return None
-        # 允许一个 code 的历史日线分散在多个 csv 文件中，启动时统一按 time_key 合并。
-        merged = pd.concat(frames, ignore_index=True)
-        merged = merged.sort_values("time_key").reset_index(drop=True)
-        duplicated_mask = merged.duplicated(subset=["time_key"], keep="last")
-        duplicated_count = int(duplicated_mask.sum())
-        if duplicated_count > 0:
-            if dedupe_error:
-                self._logger.error(
-                    "duplicate %s time_key detected and deduplicated code=%s dir=%s duplicated_rows=%d",
-                    frame_type,
-                    code,
-                    code_dir,
-                    duplicated_count,
-                )
-            else:
-                self._logger.warning(
-                    "duplicate %s time_key detected and deduplicated code=%s dir=%s duplicated_rows=%d",
-                    frame_type,
-                    code,
-                    code_dir,
-                    duplicated_count,
-                )
-            merged = merged.drop_duplicates(subset=["time_key"], keep="last").reset_index(drop=True)
-        return merged
+        raise ValueError(f"unsupported frame type: {frame_type}")
 
     def _latest_trade_date(self, history: pd.DataFrame | None) -> date | None:
         if history is None or history.empty or "time_key" not in history.columns:

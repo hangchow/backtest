@@ -132,8 +132,9 @@ class CachedRemoteDailyHistoryProvider(LocalDataDailyHistoryProvider):
 
     def _load_full_daily_from_kline_day(self, code: str) -> pd.DataFrame | None:
         code_dir = self._kline_day_root / code
-        daily = self._load_local_csv_history(code_dir, code, frame_type="daily", dedupe_error=True)
-        if daily is None:
+        try:
+            daily = self._local_cache.get_daily_history_frame(code)
+        except FileNotFoundError:
             return None
         self._logger.info("warm-up loaded from kline_day code=%s rows=%d dir=%s", code, len(daily), code_dir)
         return daily
@@ -159,6 +160,7 @@ class CachedRemoteDailyHistoryProvider(LocalDataDailyHistoryProvider):
         code_dir = self._kline_day_root / code
         code_dir.mkdir(parents=True, exist_ok=True)
         self._rewrite_weekly_csv_exact(code_dir, code, daily)
+        self._local_cache.set_history_frame("day", code, daily)
 
     def _should_refresh_remote_daily(self, daily_history: pd.DataFrame | None, bars: int) -> bool:
         expected_latest_trade_date = self._expected_latest_trade_date()

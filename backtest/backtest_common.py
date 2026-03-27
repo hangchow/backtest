@@ -263,3 +263,10 @@ def compute_buy_quantity_with_fees(
             return qty, fee_total, breakdown
         qty -= 1
     return 0, 0.0, {}
+
+
+def sum_trade_fees(trades: list[dict[str, Any]]) -> float:
+    total = 0.0
+    for trade in trades:
+        total += float(trade.get("fee", trade.get("fee_total", 0.0)) or 0.0)
+    return round(total, 2)

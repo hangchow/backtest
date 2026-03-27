@@ -28,7 +28,7 @@ from backtest.backtest_rsi_reversion import (
     DEFAULT_MAX_OPEN_POSITIONS as RSI_REVERSION_DEFAULT_MAX_OPEN_POSITIONS,
     run_portfolio_backtest,
 )
-from strategy.dual_momentum import DualMomentumParams, build_dual_momentum_signal
+from strategy.dual_momentum import DualMomentumParams, build_dual_momentum_signal, build_dual_momentum_signal_history
 
 
 class ResolveCodesTests(unittest.TestCase):
@@ -336,6 +336,58 @@ class DualMomentumBacktestTests(unittest.TestCase):
         )
 
         self.assertIsNone(signal)
+
+    def test_build_dual_momentum_signal_history_matches_single_day_builder(self) -> None:
+        # 验证历史预计算信号与逐日截断重算的结果完全一致。
+        prices = pd.DataFrame(
+            {
+                "US.A": [100.0, 101.0, 103.0, 104.0, 108.0, 109.0],
+                "US.B": [100.0, 102.0, 101.0, 105.0, 107.0, 106.0],
+                "US.C": [100.0, 99.0, 101.0, 100.0, 98.0, 97.0],
+            },
+            index=pd.to_datetime(
+                ["2025-01-02", "2025-01-03", "2025-01-06", "2025-01-07", "2025-01-08", "2025-01-09"]
+            ).date,
+        )
+        volumes = pd.DataFrame(
+            {
+                "US.A": [100.0, 120.0, 140.0, 160.0, 180.0, 175.0],
+                "US.B": [100.0, 100.0, 90.0, 110.0, 130.0, 120.0],
+                "US.C": [100.0, 105.0, 95.0, 90.0, 85.0, 80.0],
+            },
+            index=prices.index,
+        )
+        params = DualMomentumParams(
+            lookback_days=2,
+            long_lookback_days=3,
+            long_lookback_weight=0.25,
+            top_n=2,
+            volume_window=2,
+            min_volume_ratio=1.0,
+            market_filter_window=2,
+            volatility_window=2,
+            target_annual_vol=10.0,
+            max_gross_exposure=1.0,
+        )
+
+        history_signals = build_dual_momentum_signal_history(prices, volumes, params=params)
+
+        self.assertEqual(list(history_signals.index), list(prices.index))
+        for offset, trade_date in enumerate(prices.index, start=1):
+            expected = build_dual_momentum_signal(prices.iloc[:offset], volumes.iloc[:offset], params=params)
+            actual = history_signals.loc[trade_date]
+            if expected is None:
+                self.assertIsNone(actual)
+                continue
+
+            self.assertIsNotNone(actual)
+            assert actual is not None
+            self.assertEqual(actual.completed_trade_date, expected.completed_trade_date)
+            self.assertEqual(actual.target_codes, expected.target_codes)
+            self.assertEqual(actual.target_weights, expected.target_weights)
+            self.assertEqual(actual.gross_exposure, expected.gross_exposure)
+            self.assertEqual(actual.market_is_risk_on, expected.market_is_risk_on)
+            self.assertEqual(actual.candidate_codes, expected.candidate_codes)
 
     def test_load_daily_data_keeps_missing_sessions_unfilled(self) -> None:
         # 验证加载日线数据时不会填补缺失交易日。
