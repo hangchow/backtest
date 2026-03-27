@@ -17,6 +17,8 @@ from backtest.backtest_common import (
     validate_market_for_symbol,
     validate_market_for_symbols,
 )
+from backtest.backtest_ema_cross import run_portfolio_backtest as run_ema_cross_portfolio_backtest
+from backtest.backtest_ema_rsi_combo import run_portfolio_backtest as run_ema_rsi_portfolio_backtest
 from backtest.backtest_ema_cross import DEFAULT_MAX_OPEN_POSITIONS as EMA_CROSS_DEFAULT_MAX_OPEN_POSITIONS
 from backtest.backtest_ema_rsi_combo import DEFAULT_MAX_OPEN_POSITIONS as EMA_RSI_DEFAULT_MAX_OPEN_POSITIONS
 from backtest.backtest_dual_momentum import (
@@ -28,6 +30,7 @@ from backtest.backtest_rsi_reversion import (
     DEFAULT_MAX_OPEN_POSITIONS as RSI_REVERSION_DEFAULT_MAX_OPEN_POSITIONS,
     run_portfolio_backtest,
 )
+from backtest.minute_pool_cache import MinutePoolFeatureCache
 from strategy.dual_momentum import DualMomentumParams, build_dual_momentum_signal, build_dual_momentum_signal_history
 
 
@@ -243,6 +246,86 @@ class PortfolioBacktestTests(unittest.TestCase):
         self.assertTrue((trades["time_key"] >= eval_start).all())
         self.assertTrue((trades["time_key"] <= eval_end).all())
         self.assertAlmostEqual(float(summary["final_value"]), 10000.0)
+
+    def test_ema_cross_portfolio_cache_matches_uncached_results(self) -> None:
+        histories = {
+            "US.A": self.build_history([100, 101, 102, 100, 98, 103, 106, 104]),
+            "US.B": self.build_history([200, 198, 197, 199, 201, 205, 203, 206]),
+        }
+        pool_cache = MinutePoolFeatureCache(histories)
+
+        summary_a, trades_a = run_ema_cross_portfolio_backtest(
+            histories=histories,
+            initial_cash=10000.0,
+            fast_span=2,
+            slow_span=4,
+            position_ratio=0.5,
+            volume_window=2,
+            min_volume_ratio=1.0,
+            flat_at_close=False,
+            max_open_positions=1,
+            market="US",
+        )
+        summary_b, trades_b = run_ema_cross_portfolio_backtest(
+            histories=histories,
+            pool_cache=pool_cache,
+            initial_cash=10000.0,
+            fast_span=2,
+            slow_span=4,
+            position_ratio=0.5,
+            volume_window=2,
+            min_volume_ratio=1.0,
+            flat_at_close=False,
+            max_open_positions=1,
+            market="US",
+        )
+
+        self.assertEqual(summary_a["final_value"], summary_b["final_value"])
+        self.assertEqual(summary_a["trade_count"], summary_b["trade_count"])
+        pd.testing.assert_frame_equal(trades_a.reset_index(drop=True), trades_b.reset_index(drop=True), check_dtype=False)
+
+    def test_ema_rsi_portfolio_cache_matches_uncached_results(self) -> None:
+        histories = {
+            "US.A": self.build_history([100, 98, 96, 97, 101, 103, 100, 104, 107]),
+            "US.B": self.build_history([200, 199, 198, 197, 199, 202, 201, 204, 206]),
+        }
+        pool_cache = MinutePoolFeatureCache(histories)
+
+        summary_a, trades_a = run_ema_rsi_portfolio_backtest(
+            histories=histories,
+            initial_cash=10000.0,
+            fast_span=2,
+            slow_span=5,
+            rsi_period=2,
+            buy_threshold=45,
+            sell_threshold=60,
+            position_ratio=1.0,
+            volume_window=2,
+            min_volume_ratio=1.0,
+            flat_at_close=False,
+            max_open_positions=1,
+            market="US",
+        )
+        summary_b, trades_b = run_ema_rsi_portfolio_backtest(
+            histories=histories,
+            pool_cache=pool_cache,
+            initial_cash=10000.0,
+            fast_span=2,
+            slow_span=5,
+            rsi_period=2,
+            buy_threshold=45,
+            sell_threshold=60,
+            position_ratio=1.0,
+            volume_window=2,
+            min_volume_ratio=1.0,
+            flat_at_close=False,
+            max_open_positions=1,
+            market="US",
+        )
+
+        self.assertEqual(summary_a["final_value"], summary_b["final_value"])
+        self.assertEqual(summary_a["trade_count"], summary_b["trade_count"])
+        pd.testing.assert_frame_equal(trades_a.reset_index(drop=True), trades_b.reset_index(drop=True), check_dtype=False)
 
 
 class DualMomentumBacktestTests(unittest.TestCase):

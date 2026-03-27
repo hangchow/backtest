@@ -24,6 +24,7 @@ It is not a line-by-line reproduction of any published trading system.
 from __future__ import annotations
 
 import argparse
+import numpy as np
 import pandas as pd
 
 from backtest.backtest_common import (
@@ -50,6 +51,8 @@ from backtest.backtest_common import (
     validate_market_for_symbols,
     validate_volume_filter,
 )
+from backtest.minute_indicators import compute_rsi
+from backtest.minute_pool_cache import MinutePoolFeatureCache
 
 
 DEFAULT_INITIAL_CASH = 100_000.0
@@ -90,27 +93,6 @@ def parse_args() -> argparse.Namespace:
         help="How many head/tail trades to print. Use 0 to suppress trade samples.",
     )
     return parser.parse_args()
-
-
-def compute_rsi(series: pd.Series, period: int) -> pd.Series:
-    if period <= 0:
-        raise ValueError("period must be positive")
-
-    delta = series.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.ewm(alpha=1 / period, adjust=False).mean()
-    avg_loss = loss.ewm(alpha=1 / period, adjust=False).mean()
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-
-    no_losses = avg_loss == 0
-    no_gains = avg_gain == 0
-    rsi = rsi.mask(no_losses, 100.0)
-    rsi = rsi.mask(no_gains, 0.0)
-    rsi = rsi.mask(no_losses & no_gains, 50.0)
-    return rsi.fillna(50.0)
-
 
 def run_backtest(
     history: pd.DataFrame,
@@ -268,86 +250,87 @@ def run_portfolio_backtest(
     *,
     market: str,
     security_type: str = "stock",
+    pool_cache: MinutePoolFeatureCache | None = None,
 ) -> tuple[dict, pd.DataFrame]:
     market = normalize_market(market)
-    max_open_positions = normalize_max_open_positions(max_open_positions, len(histories))
     validate_volume_filter(volume_window, min_volume_ratio)
+    pool = pool_cache or MinutePoolFeatureCache(histories)
+    max_open_positions = normalize_max_open_positions(max_open_positions, len(pool.codes))
 
-    code_frames: dict[str, pd.DataFrame] = {}
-    code_buy: dict[str, pd.Series] = {}
-    code_sell: dict[str, pd.Series] = {}
-    for code, history in histories.items():
-        frame = history.set_index("time_key", drop=False)
-        rsi = compute_rsi(history["close"], rsi_period)
-        relative_volume = compute_relative_volume(history["volume"], volume_window)
-        frame["rsi"] = rsi.values
-        frame["volume_ratio"] = relative_volume.values
-        code_frames[code] = frame
-        code_buy[code] = (
-            (rsi < buy_threshold) & (rsi.shift(1) >= buy_threshold) & (relative_volume >= min_volume_ratio)
-        ).set_axis(history["time_key"])
-        code_sell[code] = ((rsi > sell_threshold) & (rsi.shift(1) <= sell_threshold)).set_axis(history["time_key"])
+    rsi_values = pool.rsi(rsi_period)
+    volume_ratios = pool.volume_ratio(volume_window)
+    buy_signals: list[np.ndarray] = []
+    sell_signals: list[np.ndarray] = []
+    for code_index in range(len(pool.codes)):
+        rsi = rsi_values[code_index]
+        volume_ratio = volume_ratios[code_index]
+        previous_rsi = np.empty_like(rsi)
+        previous_rsi[0] = np.nan
+        previous_rsi[1:] = rsi[:-1]
+        buy_signals.append((rsi < buy_threshold) & (previous_rsi >= buy_threshold) & (volume_ratio >= min_volume_ratio))
+        sell_signals.append((rsi > sell_threshold) & (previous_rsi <= sell_threshold))
 
-    timeline = sorted({ts for frame in code_frames.values() for ts in frame.index})
-    eval_mask, warmup_start_time, start_time, end_time = resolve_eval_window(timeline, eval_start, eval_end)
-    eval_timeline = [ts for ts, include in zip(timeline, eval_mask) if include]
+    window = pool.resolve_window(eval_start, eval_end)
     cash = initial_cash
-    positions = {code: 0 for code in histories}
-    last_prices: dict[str, float] = {}
+    positions = np.zeros(len(pool.codes), dtype=np.int64)
+    last_prices = np.zeros(len(pool.codes), dtype=float)
     trades: list[dict] = []
     equity_points: list[dict] = []
+    open_count = 0
 
-    for ts in eval_timeline:
-        for code in sorted(histories):
-            frame = code_frames[code]
-            if ts not in frame.index:
-                continue
-            row = frame.loc[ts]
-            price = float(row["close"])
-            last_prices[code] = price
+    for timeline_index in window.row_indices:
+        ts = pool.timeline[timeline_index]
+        row_indices = pool.row_lookup[timeline_index]
+        active_codes = np.flatnonzero(row_indices >= 0)
+        for code_index in active_codes:
+            row_index = int(row_indices[code_index])
+            arrays = pool.code_arrays[code_index]
+            price = float(arrays.close[row_index])
+            last_prices[code_index] = price
 
-            if positions[code] > 0 and (bool(code_sell[code].get(ts, False)) or (flat_at_close and bool(row["is_day_end"]))):
+            if positions[code_index] > 0 and (
+                bool(sell_signals[code_index][row_index]) or (flat_at_close and bool(arrays.is_day_end[row_index]))
+            ):
                 fee_total, fee_breakdown = compute_order_fees(
                     fee_account=fee_account,
                     market=market,
                     side="sell",
                     price=price,
-                    shares=positions[code],
+                    shares=int(positions[code_index]),
                     security_type=security_type,
                 )
-                cash += positions[code] * price - fee_total
+                cash += int(positions[code_index]) * price - fee_total
                 trades.append(
                     {
                         "time_key": ts,
-                        "code": code,
+                        "code": pool.codes[code_index],
                         "action": "SELL",
                         "price": price,
-                        "shares": positions[code],
-                        "rsi": float(row["rsi"]),
+                        "shares": int(positions[code_index]),
+                        "rsi": float(rsi_values[code_index][row_index]),
                         "fee": fee_total,
                         "fee_breakdown": fee_breakdown,
                         "cash_after": cash,
                     }
                 )
-                positions[code] = 0
+                positions[code_index] = 0
+                open_count -= 1
 
-        open_count = sum(1 for qty in positions.values() if qty > 0)
         slots_left = max_open_positions - open_count
         if slots_left > 0:
-            buy_candidates: list[tuple[float, float, str, pd.Series]] = []
-            for code in sorted(histories):
-                if positions[code] > 0:
+            buy_candidates: list[tuple[float, int, int]] = []
+            for code_index in active_codes:
+                if positions[code_index] > 0:
                     continue
-                frame = code_frames[code]
-                if ts not in frame.index or not bool(code_buy[code].get(ts, False)):
+                row_index = int(row_indices[code_index])
+                if not bool(buy_signals[code_index][row_index]):
                     continue
-                row = frame.loc[ts]
-                buy_candidates.append((float(row["rsi"]), -float(row["volume_ratio"]), code, row))
+                buy_candidates.append((float(rsi_values[code_index][row_index]), code_index, row_index))
 
             buy_candidates.sort(key=lambda item: item[0])
-            for _, _, code, row in buy_candidates[:slots_left]:
-                price = float(row["close"])
-                remaining_slots = max_open_positions - sum(1 for qty in positions.values() if qty > 0)
+            for _, code_index, row_index in buy_candidates[:slots_left]:
+                price = float(pool.code_arrays[code_index].close[row_index])
+                remaining_slots = max_open_positions - open_count
                 budget = min(cash * position_ratio, cash / remaining_slots)
                 qty, fee_total, fee_breakdown = compute_buy_quantity_with_fees(
                     budget=budget,
@@ -359,38 +342,39 @@ def run_portfolio_backtest(
                 if qty <= 0:
                     continue
                 cash -= qty * price + fee_total
-                positions[code] = qty
+                positions[code_index] = qty
+                open_count += 1
                 trades.append(
                     {
                         "time_key": ts,
-                        "code": code,
+                        "code": pool.codes[code_index],
                         "action": "BUY",
                         "price": price,
                         "shares": qty,
-                        "rsi": float(row["rsi"]),
-                        "volume_ratio": float(row["volume_ratio"]),
+                        "rsi": float(rsi_values[code_index][row_index]),
+                        "volume_ratio": float(volume_ratios[code_index][row_index]),
                         "fee": fee_total,
                         "fee_breakdown": fee_breakdown,
                         "cash_after": cash,
                     }
                 )
 
-        equity = cash + sum(qty * last_prices.get(code, 0.0) for code, qty in positions.items())
+        equity = cash + float(np.dot(positions, last_prices))
         equity_points.append({"time_key": ts, "equity": equity})
 
-    final_value = cash + sum(qty * last_prices.get(code, 0.0) for code, qty in positions.items())
+    final_value = cash + float(np.dot(positions, last_prices))
     equity_curve = pd.DataFrame(equity_points)
     equity_curve["rolling_peak"] = equity_curve["equity"].cummax()
     equity_curve["drawdown_pct"] = (
         (equity_curve["equity"] - equity_curve["rolling_peak"]) / equity_curve["rolling_peak"] * 100
     )
     summary = {
-        "warmup_start_time": warmup_start_time,
-        "start_time": start_time,
-        "end_time": end_time,
-        "data_end_time": timeline[-1],
+        "warmup_start_time": window.warmup_start_time,
+        "start_time": window.start_time,
+        "end_time": window.end_time,
+        "data_end_time": pool.timeline[-1],
         "initial_cash": initial_cash,
-        "codes": sorted(histories),
+        "codes": pool.codes,
         "rsi_period": rsi_period,
         "buy_threshold": buy_threshold,
         "sell_threshold": sell_threshold,
@@ -407,7 +391,9 @@ def run_portfolio_backtest(
         "sell_count": sum(1 for trade in trades if trade["action"] == "SELL"),
         "total_fees": sum_trade_fees(trades),
         "ending_cash": cash,
-        "ending_positions": {code: qty for code, qty in positions.items() if qty > 0},
+        "ending_positions": {
+            pool.codes[code_index]: int(qty) for code_index, qty in enumerate(positions) if int(qty) > 0
+        },
         "final_value": final_value,
         "total_return_pct": (final_value / initial_cash - 1) * 100,
         "max_drawdown_pct": equity_curve["drawdown_pct"].min(),

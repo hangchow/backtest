@@ -24,6 +24,7 @@ from backtest.backtest_common import (
     parse_eval_start,
     validate_market_for_symbols,
 )
+from backtest.minute_pool_cache import MinutePoolFeatureCache
 
 
 DEFAULT_MINUTE_DATA_ROOT = Path("kline_minute")
@@ -367,6 +368,7 @@ def _run_minute_strategy(
 def _run_pool_minute_strategy(
     strategy_key: str,
     histories: dict[str, pd.DataFrame],
+    pool_cache: MinutePoolFeatureCache | None,
     market: str,
     initial_cash: float,
     eval_start: pd.Timestamp | None,
@@ -377,6 +379,7 @@ def _run_pool_minute_strategy(
     if strategy_key == "rsi_reversion":
         summary, _ = rsi_reversion.run_portfolio_backtest(
             histories=histories,
+            pool_cache=pool_cache,
             initial_cash=initial_cash,
             rsi_period=rsi_reversion.DEFAULT_RSI_PERIOD,
             buy_threshold=rsi_reversion.DEFAULT_BUY_THRESHOLD,
@@ -397,6 +400,7 @@ def _run_pool_minute_strategy(
     if strategy_key == "ema_cross":
         summary, _ = ema_cross.run_portfolio_backtest(
             histories=histories,
+            pool_cache=pool_cache,
             initial_cash=initial_cash,
             fast_span=ema_cross.DEFAULT_FAST_SPAN,
             slow_span=ema_cross.DEFAULT_SLOW_SPAN,
@@ -416,6 +420,7 @@ def _run_pool_minute_strategy(
     if strategy_key == "ema_rsi_combo":
         summary, _ = ema_rsi_combo.run_portfolio_backtest(
             histories=histories,
+            pool_cache=pool_cache,
             initial_cash=initial_cash,
             fast_span=ema_rsi_combo.DEFAULT_FAST_SPAN,
             slow_span=ema_rsi_combo.DEFAULT_SLOW_SPAN,
@@ -438,6 +443,7 @@ def _run_pool_minute_strategy(
     if strategy_key == "ema_rsi_bull_range":
         summary, _ = ema_rsi_combo.run_portfolio_backtest(
             histories=histories,
+            pool_cache=pool_cache,
             initial_cash=initial_cash,
             fast_span=ema_rsi_bull_range.DEFAULT_FAST_SPAN,
             slow_span=ema_rsi_bull_range.DEFAULT_SLOW_SPAN,
@@ -548,6 +554,7 @@ def run_stock_pool_strategies(
     volumes: pd.DataFrame | None = None
     hybrid_closes: pd.DataFrame | None = None
     minute_histories: dict[str, pd.DataFrame] | None = None
+    minute_pool_cache: MinutePoolFeatureCache | None = None
     dataset_frames: list[pd.DataFrame] = []
 
     if any(key in ("dual_momentum", "momentum_monthly") for key in selected):
@@ -581,6 +588,8 @@ def run_stock_pool_strategies(
             )
         if any(key in MINUTE_STRATEGY_KEYS for key in selected):
             minute_histories = dataset_histories
+            if all({"time_key", "close", "volume"}.issubset(history.columns) for history in dataset_histories.values()):
+                minute_pool_cache = MinutePoolFeatureCache(dataset_histories)
 
     if "rsi_reversion" in selected:
         assert minute_histories is not None
@@ -588,6 +597,7 @@ def run_stock_pool_strategies(
         summary = _run_pool_minute_strategy(
             "rsi_reversion",
             minute_histories,
+            minute_pool_cache,
             market,
             initial_cash,
             eval_start,
@@ -614,6 +624,7 @@ def run_stock_pool_strategies(
         summary = _run_pool_minute_strategy(
             "ema_cross",
             minute_histories,
+            minute_pool_cache,
             market,
             initial_cash,
             eval_start,
@@ -640,6 +651,7 @@ def run_stock_pool_strategies(
         summary = _run_pool_minute_strategy(
             "ema_rsi_combo",
             minute_histories,
+            minute_pool_cache,
             market,
             initial_cash,
             eval_start,
@@ -666,6 +678,7 @@ def run_stock_pool_strategies(
         summary = _run_pool_minute_strategy(
             "ema_rsi_bull_range",
             minute_histories,
+            minute_pool_cache,
             market,
             initial_cash,
             eval_start,

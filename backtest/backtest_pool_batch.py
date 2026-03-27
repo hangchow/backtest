@@ -28,6 +28,7 @@ from backtest.backtest_common import (
     validate_market_for_symbols,
 )
 from backtest.backtest_compare import STRATEGY_LABELS, default_initial_cash_for_market, markdown_table
+from backtest.minute_pool_cache import MinutePoolFeatureCache
 from marketdata.local_kline_cache import LocalKlineDataCache
 
 
@@ -276,6 +277,7 @@ class BatchDataContext:
     codes: list[str]
     cache: LocalKlineDataCache
     _minute_histories: dict[str, pd.DataFrame] | None = None
+    _minute_pool_cache: MinutePoolFeatureCache | None = None
     _daily_prices_volumes: tuple[pd.DataFrame, pd.DataFrame] | None = None
     _daily_closes: pd.DataFrame | None = None
     _hybrid_minute_indicators: dict[tuple[int, int, int], dict[str, pd.DataFrame]] = field(default_factory=dict)
@@ -290,6 +292,11 @@ class BatchDataContext:
                 histories[code] = history
             self._minute_histories = histories
         return self._minute_histories
+
+    def minute_pool_cache(self) -> MinutePoolFeatureCache:
+        if self._minute_pool_cache is None:
+            self._minute_pool_cache = MinutePoolFeatureCache(self.minute_histories())
+        return self._minute_pool_cache
 
     def daily_prices_volumes(self) -> tuple[pd.DataFrame, pd.DataFrame]:
         if self._daily_prices_volumes is None:
@@ -326,20 +333,11 @@ class BatchDataContext:
         cached = self._hybrid_minute_indicators.get(key)
         if cached is not None:
             return cached
-
-        indicators: dict[str, pd.DataFrame] = {}
-        for code in self.codes:
-            history = self.cache.get_minute_csv_frame(code).copy()
-            history["trade_date"] = history["time_key"].dt.date
-            history["is_day_end"] = history["trade_date"] != history["trade_date"].shift(-1)
-            history["ema_fast"] = history["close"].ewm(span=fast_span, adjust=False).mean()
-            history["ema_slow"] = history["close"].ewm(span=slow_span, adjust=False).mean()
-            history["rsi"] = rsi_reversion.compute_rsi(history["close"], period=rsi_period)
-
-            day_end = history[history["is_day_end"]].copy()
-            day_end["trade_date"] = pd.to_datetime(day_end["trade_date"])
-            indicators[code] = day_end.set_index("trade_date")[["close", "ema_fast", "ema_slow", "rsi"]]
-
+        indicators = self.minute_pool_cache().build_day_end_indicator_frames(
+            fast_span=fast_span,
+            slow_span=slow_span,
+            rsi_period=rsi_period,
+        )
         self._hybrid_minute_indicators[key] = indicators
         return indicators
 
@@ -360,6 +358,7 @@ def _run_strategy(
     if strategy_key == "rsi_reversion":
         summary, _ = rsi_reversion.run_portfolio_backtest(
             histories=data.minute_histories(),
+            pool_cache=data.minute_pool_cache(),
             initial_cash=initial_cash,
             rsi_period=config["rsi_period"],
             buy_threshold=config["buy_threshold"],
@@ -380,6 +379,7 @@ def _run_strategy(
     if strategy_key == "ema_cross":
         summary, _ = ema_cross.run_portfolio_backtest(
             histories=data.minute_histories(),
+            pool_cache=data.minute_pool_cache(),
             initial_cash=initial_cash,
             fast_span=config["fast_span"],
             slow_span=config["slow_span"],
@@ -399,6 +399,7 @@ def _run_strategy(
     if strategy_key == "ema_rsi_combo":
         summary, _ = ema_rsi_combo.run_portfolio_backtest(
             histories=data.minute_histories(),
+            pool_cache=data.minute_pool_cache(),
             initial_cash=initial_cash,
             fast_span=config["fast_span"],
             slow_span=config["slow_span"],
@@ -421,6 +422,7 @@ def _run_strategy(
     if strategy_key == "ema_rsi_bull_range":
         summary, _ = ema_rsi_combo.run_portfolio_backtest(
             histories=data.minute_histories(),
+            pool_cache=data.minute_pool_cache(),
             initial_cash=initial_cash,
             fast_span=config["fast_span"],
             slow_span=config["slow_span"],

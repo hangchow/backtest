@@ -19,7 +19,7 @@ from backtest.backtest_common import (
     sum_trade_fees,
     validate_market_for_symbols,
 )
-from backtest.backtest_rsi_reversion import compute_rsi
+from backtest.minute_indicators import compute_rsi
 
 DEFAULT_INITIAL_CASH = 800_000.0
 DEFAULT_DAILY_DATA_ROOT = Path("kline_day")
