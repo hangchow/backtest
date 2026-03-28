@@ -17,6 +17,7 @@ from backtest.backtest_common import (
     validate_market_for_symbol,
     validate_market_for_symbols,
 )
+from backtest.backtest_pool_batch import parse_args as parse_pool_batch_args
 from backtest.backtest_ema_cross import run_portfolio_backtest as run_ema_cross_portfolio_backtest
 from backtest.backtest_ema_rsi_combo import run_portfolio_backtest as run_ema_rsi_portfolio_backtest
 from backtest.backtest_ema_cross import DEFAULT_MAX_OPEN_POSITIONS as EMA_CROSS_DEFAULT_MAX_OPEN_POSITIONS
@@ -145,6 +146,18 @@ class EvalWindowTests(unittest.TestCase):
         self.assertEqual(warmup_start, pd.Timestamp("2025-01-02").date())
         self.assertEqual(start_time, pd.Timestamp("2025-01-03").date())
         self.assertEqual(end_time, pd.Timestamp("2025-01-03").date())
+
+
+class BatchPoolCliTests(unittest.TestCase):
+    def test_batch_pool_runner_parses_minimal_args(self) -> None:
+        args = parse_pool_batch_args(["--codes", "US.MSFT", "--market", "US"])
+
+        self.assertEqual(args.codes, ["US.MSFT"])
+        self.assertEqual(args.market, "US")
+
+    def test_batch_pool_runner_rejects_removed_file_cache_flag(self) -> None:
+        with self.assertRaises(SystemExit):
+            parse_pool_batch_args(["--codes", "US.MSFT", "--market", "US", "--enable-file-cache"])
 
 
 class PortfolioBacktestTests(unittest.TestCase):

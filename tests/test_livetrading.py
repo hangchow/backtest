@@ -63,7 +63,8 @@ from livetrading.quote_brokers.mock import MockRealtimeQuoteClient
 from livetrading.trade_account.base import TradeAccountClient
 from livetrading.trade_account.futu import FutuTradeAccountClient
 from livetrading.trade_account.mock import MockTradeAccountClient
-from domain.fees import compute_order_fees
+from strategy.fees import compute_order_fees
+from strategy.kline_reader import LocalKlineReader
 
 
 def build_daily_history(code: str, closes: list[float], volumes: list[float] | None = None) -> pd.DataFrame:
@@ -2278,6 +2279,41 @@ class LocalDataDailyHistoryProviderTests(unittest.TestCase):
 
         self.assertTrue(any("duplicate daily time_key" in msg for msg in logs.output))
         self.assertIn(15.0, list(histories["US.AAPL"]["close"]))
+
+    def test_provider_only_loads_latest_needed_week_file_for_local_warmup(self) -> None:
+        cfg = load_livetrading_config_from_payloads(
+            build_quote_payload(),
+            build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
+        ).history_broker
+        with tempfile.TemporaryDirectory() as tmp:
+            daily_root = Path(tmp) / "kline_day"
+            daily_dir = daily_root / "US.AAPL"
+            daily_dir.mkdir(parents=True)
+            (daily_dir / "US.AAPL_2026-03-09.csv").write_text(
+                "time_key,open,close,high,low,volume\n"
+                "2026-03-09 00:00:00,10,11,12,9,100\n"
+                "2026-03-10 00:00:00,11,12,13,10,110\n",
+                encoding="utf-8",
+            )
+            (daily_dir / "US.AAPL_2026-03-16.csv").write_text(
+                "time_key,open,close,high,low,volume\n"
+                "2026-03-16 00:00:00,12,13,14,11,120\n"
+                "2026-03-17 00:00:00,13,14,15,12,130\n",
+                encoding="utf-8",
+            )
+            local_cache = LocalKlineReader(kline_day_root=daily_root)
+            provider = LocalDataDailyHistoryProvider(
+                cfg,
+                logging.getLogger("test.local_history"),
+                kline_day_root=daily_root,
+                local_cache=local_cache,
+            )
+
+            histories = provider.fetch_daily_histories(["US.AAPL"], {"US.AAPL": 2})
+            stats = local_cache.snapshot()
+
+        self.assertEqual(list(histories["US.AAPL"]["close"]), [13.0, 14.0])
+        self.assertEqual(stats.files_loaded, 1)
 
 
 class PolygonCacheDailyHistoryProviderTests(unittest.TestCase):

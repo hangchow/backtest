@@ -67,7 +67,7 @@ from strategy.dual_momentum import (
     build_dual_momentum_signal_history,
     compute_volume_boost,
 )
-from domain.rebalance import (
+from strategy.rebalance import (
     DEFAULT_REBALANCE_BAND_PCT,
     RebalancePolicy,
     build_desired_shares,

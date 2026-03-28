@@ -6,7 +6,7 @@ from typing import Any
 
 import pandas as pd
 
-from domain.rebalance import DEFAULT_REBALANCE_BAND_PCT
+from .rebalance import DEFAULT_REBALANCE_BAND_PCT
 from .volume import compute_relative_volume, validate_volume_filter
 
 

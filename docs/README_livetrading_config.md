@@ -218,7 +218,7 @@ quote 配置里还允许内联：
 当前 live 侧会把 `stock_pool.strategy.params` 同时喂给：
 
 - [strategy/dual_momentum.py](../strategy/dual_momentum.py) 的 `DualMomentumParams`
-- [domain/rebalance.py](../domain/rebalance.py) 的 `RebalancePolicy`
+- [strategy/rebalance.py](../strategy/rebalance.py) 的 `RebalancePolicy`
 
 也就是说，这里既包含信号参数，也包含调仓带参数。
 

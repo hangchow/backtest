@@ -29,11 +29,12 @@ from backtest.backtest_common import (
 )
 from backtest.backtest_compare import STRATEGY_LABELS, default_initial_cash_for_market, markdown_table
 from backtest.minute_pool_cache import MinutePoolFeatureCache
-from marketdata.local_kline_cache import LocalKlineDataCache
 
 
 DEFAULT_MINUTE_DATA_ROOT = Path("kline_minute")
 DEFAULT_DAILY_DATA_ROOT = Path("kline_day")
+CSV_COLUMNS = ["time_key", "open", "close", "high", "low", "volume"]
+DYNAMIC_DAILY_COLUMNS = ["time_key", "close", "volume"]
 STRATEGY_CHOICES = (
     "rsi_reversion",
     "ema_cross",
@@ -139,9 +140,9 @@ DEFAULT_STRATEGY_PARAMS: dict[str, dict[str, Any]] = {
 }
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run one evaluation window across multiple stock-pool strategies with lazy local data caching."
+        description="Run one evaluation window across multiple stock-pool strategies."
     )
     parser.add_argument("--codes", nargs="+", help="Stock pool codes.")
     parser.add_argument("--minute-data-root", type=Path, default=DEFAULT_MINUTE_DATA_ROOT)
@@ -177,7 +178,7 @@ def parse_args() -> argparse.Namespace:
         if action.dest == "market":
             action.required = False
             break
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def _dedupe(values: list[str] | tuple[str, ...]) -> list[str]:
@@ -186,18 +187,6 @@ def _dedupe(values: list[str] | tuple[str, ...]) -> list[str]:
         if value not in result:
             result.append(value)
     return result
-
-
-def _format_bytes(num_bytes: int) -> str:
-    units = ("B", "KiB", "MiB", "GiB")
-    value = float(num_bytes)
-    unit = units[0]
-    for candidate in units:
-        unit = candidate
-        if abs(value) < 1024.0 or candidate == units[-1]:
-            break
-        value /= 1024.0
-    return f"{value:.2f} {unit}"
 
 
 def _copy_strategy_params() -> dict[str, dict[str, Any]]:
@@ -272,21 +261,69 @@ def _dump_default_strategy_config(selected: list[str]) -> str:
     return json.dumps(payload, indent=2, sort_keys=True)
 
 
+@dataclass(frozen=True)
+class BatchLoadSnapshot:
+    total_load_seconds: float
+    files_loaded: int
+    load_operations: int
+
+
 @dataclass
 class BatchDataContext:
     codes: list[str]
-    cache: LocalKlineDataCache
+    minute_data_root: Path
+    daily_data_root: Path
     _minute_histories: dict[str, pd.DataFrame] | None = None
     _minute_pool_cache: MinutePoolFeatureCache | None = None
+    _daily_histories: dict[str, pd.DataFrame] | None = None
     _daily_prices_volumes: tuple[pd.DataFrame, pd.DataFrame] | None = None
     _daily_closes: pd.DataFrame | None = None
     _hybrid_minute_indicators: dict[tuple[int, int, int], dict[str, pd.DataFrame]] = field(default_factory=dict)
+    _total_load_seconds: float = 0.0
+    _files_loaded: int = 0
+    _load_operations: int = 0
+
+    def snapshot(self) -> BatchLoadSnapshot:
+        return BatchLoadSnapshot(
+            total_load_seconds=self._total_load_seconds,
+            files_loaded=self._files_loaded,
+            load_operations=self._load_operations,
+        )
+
+    def _load_code_history(self, root: Path, code: str, *, usecols: list[str]) -> pd.DataFrame:
+        code_dir = root / code
+        if not code_dir.is_dir():
+            raise FileNotFoundError(f"Missing data directory for {code}: {code_dir}")
+        csv_files = sorted(code_dir.glob("*.csv"))
+        if not csv_files:
+            raise FileNotFoundError(f"No CSV files found in {code_dir}")
+
+        started_at = perf_counter()
+        history_parts: list[pd.DataFrame] = []
+        files_loaded = 0
+        for path in csv_files:
+            history = pd.read_csv(path, usecols=usecols)
+            files_loaded += 1
+            if history.empty:
+                continue
+            history_parts.append(history)
+        elapsed = perf_counter() - started_at
+        self._total_load_seconds += elapsed
+        self._files_loaded += files_loaded
+        self._load_operations += 1
+        if not history_parts:
+            raise FileNotFoundError(f"No readable CSV payload found in {code_dir}")
+
+        history = pd.concat(history_parts, ignore_index=True)
+        history["time_key"] = pd.to_datetime(history["time_key"])
+        history = history.sort_values("time_key").drop_duplicates(subset=["time_key"], keep="last").reset_index(drop=True)
+        return history
 
     def minute_histories(self) -> dict[str, pd.DataFrame]:
         if self._minute_histories is None:
             histories: dict[str, pd.DataFrame] = {}
             for code in self.codes:
-                history = self.cache.get_minute_csv_frame(code).copy()
+                history = self._load_code_history(self.minute_data_root, code, usecols=CSV_COLUMNS).copy()
                 history["trade_date"] = history["time_key"].dt.date
                 history["is_day_end"] = history["trade_date"] != history["trade_date"].shift(-1)
                 histories[code] = history
@@ -298,12 +335,19 @@ class BatchDataContext:
             self._minute_pool_cache = MinutePoolFeatureCache(self.minute_histories())
         return self._minute_pool_cache
 
+    def daily_histories(self) -> dict[str, pd.DataFrame]:
+        if self._daily_histories is None:
+            histories: dict[str, pd.DataFrame] = {}
+            for code in self.codes:
+                histories[code] = self._load_code_history(self.daily_data_root, code, usecols=DYNAMIC_DAILY_COLUMNS)
+            self._daily_histories = histories
+        return self._daily_histories
+
     def daily_prices_volumes(self) -> tuple[pd.DataFrame, pd.DataFrame]:
         if self._daily_prices_volumes is None:
             price_map: dict[str, pd.Series] = {}
             volume_map: dict[str, pd.Series] = {}
-            for code in self.codes:
-                history = self.cache.get_daily_csv_frame(code)
+            for code, history in self.daily_histories().items():
                 trade_dates = history["time_key"].dt.date
                 price_map[code] = pd.Series(history["close"].astype(float).to_numpy(), index=trade_dates)
                 volume_map[code] = pd.Series(history["volume"].astype(float).to_numpy(), index=trade_dates)
@@ -316,8 +360,7 @@ class BatchDataContext:
     def daily_closes(self) -> pd.DataFrame:
         if self._daily_closes is None:
             close_map: dict[str, pd.Series] = {}
-            for code in self.codes:
-                history = self.cache.get_daily_csv_frame(code)
+            for code, history in self.daily_histories().items():
                 close_map[code] = pd.Series(
                     history["close"].astype(float).to_numpy(),
                     index=history["time_key"].dt.date,
@@ -559,16 +602,16 @@ def main() -> int:
     initial_cash = default_initial_cash_for_market(market) if args.initial_cash is None else float(args.initial_cash)
     strategy_params = _resolve_strategy_params(args)
 
-    cache = LocalKlineDataCache(
-        kline_day_root=args.daily_data_root,
-        kline_minute_root=args.minute_data_root,
+    data = BatchDataContext(
+        codes=codes,
+        minute_data_root=args.minute_data_root,
+        daily_data_root=args.daily_data_root,
     )
-    data = BatchDataContext(codes=codes, cache=cache)
 
     batch_started_at = perf_counter()
     rows: list[dict] = []
     for strategy_key in selected:
-        load_before = cache.snapshot().total_load_seconds
+        load_before = data.snapshot().total_load_seconds
         strategy_started_at = perf_counter()
         summary = _run_strategy(
             strategy_key,
@@ -582,7 +625,7 @@ def main() -> int:
             security_type=args.security_type,
         )
         strategy_elapsed = perf_counter() - strategy_started_at
-        load_after = cache.snapshot().total_load_seconds
+        load_after = data.snapshot().total_load_seconds
         strategy_compute_seconds = max(0.0, strategy_elapsed - (load_after - load_before))
         rows.append(
             {
@@ -598,13 +641,14 @@ def main() -> int:
         )
 
     total_elapsed = perf_counter() - batch_started_at
-    stats = cache.snapshot()
+    stats = data.snapshot()
     print(_build_table(rows))
     print()
     print(f"Backtest total time: {total_elapsed:.2f}s")
     print(f"Evaluation window: {eval_start if eval_start is not None else 'START'} -> {eval_end if eval_end is not None else 'END'}")
-    print(f"Data loading time: {stats.total_load_seconds:.2f}s")
-    print(f"Cache peak memory: {_format_bytes(stats.peak_bytes)}")
+    print(f"Filesystem load time: {stats.total_load_seconds:.2f}s")
+    print(f"Files loaded: {stats.files_loaded}")
+    print(f"Load operations: {stats.load_operations}")
     return 0
 
 

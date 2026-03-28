@@ -7,7 +7,7 @@ from typing import Callable, Iterable, Mapping
 
 import pandas as pd
 
-from marketdata.local_kline_cache import LocalKlineDataCache
+from strategy.kline_reader import KlineReader, LocalKlineReader
 from ..config import DEFAULT_MARKET, HistoryBrokerConfig
 from .base import DailyHistoryProvider
 from .common import CSV_COLUMNS, HISTORY_COLUMNS, _default_now_provider_for_market
@@ -24,7 +24,7 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
         kline_day_root: Path | str = "kline_day",
         daily_data_root: Path | str | None = None,
         now_provider: Callable[[], datetime] | None = None,
-        local_cache: LocalKlineDataCache | None = None,
+        local_cache: KlineReader | None = None,
     ) -> None:
         self._config = config
         self._logger = logger
@@ -32,7 +32,7 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
             kline_day_root = daily_data_root
         self._kline_day_root = Path(kline_day_root)
         self._now_provider = now_provider or _default_now_provider_for_market(DEFAULT_MARKET)
-        self._local_cache = local_cache or LocalKlineDataCache(
+        self._local_cache = local_cache or LocalKlineReader(
             kline_day_root=self._kline_day_root,
             logger=logger,
         )
@@ -64,14 +64,12 @@ class LocalDataDailyHistoryProvider(DailyHistoryProvider):
     def _load_daily_from_kline_day(self, code: str, bars: int) -> pd.DataFrame | None:
         code_dir = self._kline_day_root / code
         try:
-            daily = self._local_cache.get_daily_history_frame(code)
+            daily = self._local_cache.get_daily_history_tail_frame(code, bars)
         except FileNotFoundError:
             return None
-        # 只保留策略要求的最近 N 根日线。
         # mock_signal 文档里看到的 “warm-up loaded from kline_day rows=3” 就来自这里。
-        result = daily.tail(bars).reset_index(drop=True)
-        self._logger.info("warm-up loaded from kline_day code=%s rows=%d dir=%s", code, len(result), code_dir)
-        return result
+        self._logger.info("warm-up loaded from kline_day code=%s rows=%d dir=%s", code, len(daily), code_dir)
+        return daily
 
     def _load_local_csv_history(self, code_dir: Path, code: str, *, frame_type: str, dedupe_error: bool = False) -> pd.DataFrame | None:
         try:

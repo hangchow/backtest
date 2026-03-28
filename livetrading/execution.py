@@ -4,8 +4,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import logging
 
-from domain.fees import compute_order_fees
-from domain.rebalance import (
+from strategy.fees import compute_order_fees
+from strategy.rebalance import (
     RebalancePolicy,
     build_desired_shares,
     compute_affordable_qty_with_fee,

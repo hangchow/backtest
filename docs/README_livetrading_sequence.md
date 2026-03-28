@@ -51,8 +51,8 @@
 - [livetrading/pool_strategies.py](../livetrading/pool_strategies.py)
 - [strategy/dual_momentum_state.py](../strategy/dual_momentum_state.py)
 - [strategy/dual_momentum.py](../strategy/dual_momentum.py)
-- [domain/rebalance.py](../domain/rebalance.py)
-- [domain/fees.py](../domain/fees.py)
+- [strategy/rebalance.py](../strategy/rebalance.py)
+- [strategy/fees.py](../strategy/fees.py)
 
 下面 Mermaid 里的方法说明，和代码里对应方法的中文注释保持一致，方便你对着图直接跳代码。
 
@@ -329,8 +329,8 @@ sequenceDiagram
     participant EXE as execution.py\nMockExecutor / FutuSimulateExecutor / FutuRealExecutor
     participant TAC as trade_account/futu.py\nFutuTradeAccountClient
     participant TS as event_sinks.py\nTradeAccountEventSinkAdapter
-    participant RB as domain/rebalance.py
-    participant FEE as domain/fees.py
+    participant RB as strategy/rebalance.py
+    participant FEE as strategy/fees.py
 
     PC->>RST: active_prices_for_codes()<br/>收集当前可用参考价
     loop each trade_account
@@ -451,9 +451,9 @@ sequenceDiagram
   - `trade_date` 按市场本地时间计算，并在换日第一根准入 bar 吐出 completed window
 - [strategy/dual_momentum.py](../strategy/dual_momentum.py)
   - 纯信号逻辑，输出 `target_weights`
-- [domain/rebalance.py](../domain/rebalance.py)
+- [strategy/rebalance.py](../strategy/rebalance.py)
   - 共享的目标股数、可买数量、调仓带计算
-- [domain/fees.py](../domain/fees.py)
+- [strategy/fees.py](../strategy/fees.py)
   - 共享的手续费计算
 
 ## 8. 一句话总结
@@ -469,7 +469,7 @@ quote client / trade account client / history provider
 -> pool_strategies.py
 -> dual_momentum_state.py + dual_momentum.py
 -> account_state.py + execution.py
--> domain/rebalance.py + domain/fees.py
+-> strategy/rebalance.py + strategy/fees.py
 -> DRY_RUN_ORDER / ORDER_SUBMITTED / ORDER_UPDATE / FILL / ACCOUNT / POSITIONS logs
 ```
 

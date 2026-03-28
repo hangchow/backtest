@@ -12,6 +12,27 @@
     "volatility_window": 20,
     "volume_window": 20
   },
+  "dual_momentum_ema_rsi_hybrid": {
+    "daily_vol_window": 20,
+    "entry_rsi_max": 85.0,
+    "entry_rsi_min": 35.0,
+    "exit_rsi_min": 25.0,
+    "fast_span": 20,
+    "long_lookback_days": 120,
+    "long_lookback_weight": 0.0,
+    "lookback_days": 20,
+    "market_filter_window": 20,
+    "min_hold_days": 0,
+    "min_momentum_score": -1.0,
+    "position_ratio": 1.0,
+    "rebalance_days": 5,
+    "rsi_period": 14,
+    "slow_span": 120,
+    "stop_loss_pct": 0.12,
+    "switch_score_buffer": 0.0,
+    "take_profit_pct": 0.2,
+    "timing_score_weight": 0.2
+  },
   "ema_cross": {
     "fast_span": 30,
     "flat_at_close": false,
@@ -44,6 +65,11 @@
     "sell_threshold": 60.0,
     "slow_span": 240,
     "volume_window": 20
+  },
+  "momentum_monthly": {
+    "lookback_days": 10,
+    "rebalance_band_pct": 0.01,
+    "top_n": 1
   },
   "rsi_reversion": {
     "buy_threshold": 30.0,
