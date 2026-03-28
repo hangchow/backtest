@@ -20,8 +20,10 @@ from .trade_account.base import TradeAccountClient, TradeAccountEventSink
 class ConfigRefreshPlan:
     config_changed: bool
     realtime_reconnect: bool
+    subscribe_bars: bool
     history_refresh: bool
     strategy_refresh: bool
+    defer_strategy_warmup: bool = False
     tracked_account_ids: tuple[str, ...] = field(default_factory=tuple)
     warmup_bars: dict[str, int] = field(default_factory=dict)
     new_pool_strategy: PoolLiveStrategy | None = None
@@ -96,13 +98,11 @@ class RuntimeConfigApplier:
     def _build_refresh_plan(self, config: LiveTradingConfig, *, force_warmup_refresh: bool) -> ConfigRefreshPlan:
         current_config = self._runtime_state.current_config
         config_changed = current_config is None or current_config != config
-        realtime_reconnect = current_config is None or (
-            current_config.realtime_broker.connection_signature() != config.realtime_broker.connection_signature()
-        )
         history_refresh = current_config is None or (
             current_config.history_broker.connection_signature() != config.history_broker.connection_signature()
         )
-        strategy_refresh = (
+        defer_strategy_warmup = self._should_defer_strategy_warmup(config, force_warmup_refresh=force_warmup_refresh)
+        strategy_refresh = False if defer_strategy_warmup else (
             history_refresh
             or current_config is None
             or current_config.stock_pool != config.stock_pool
@@ -117,12 +117,41 @@ class RuntimeConfigApplier:
                 code: new_pool_strategy.required_daily_warmup_bars()
                 for code in config.stock_pool.codes
             }
+        subscribe_bars = (
+            new_pool_strategy.requires_realtime_bars()
+            if new_pool_strategy is not None
+            else (
+                self._runtime_state.pool_strategy.requires_realtime_bars()
+                if self._runtime_state.pool_strategy is not None
+                else (
+                    build_pool_strategy(config.stock_pool).requires_realtime_bars()
+                    if config.stock_pool is not None
+                    else True
+                )
+            )
+        )
+        current_subscribe_bars = (
+            self._runtime_state.pool_strategy.requires_realtime_bars()
+            if self._runtime_state.pool_strategy is not None
+            else (
+                build_pool_strategy(current_config.stock_pool).requires_realtime_bars()
+                if current_config is not None
+                else True
+            )
+        )
+        realtime_reconnect = current_config is None or (
+            current_config.realtime_broker.connection_signature() != config.realtime_broker.connection_signature()
+        ) or current_subscribe_bars != subscribe_bars
         return ConfigRefreshPlan(
             config_changed=config_changed,
             realtime_reconnect=realtime_reconnect,
+            subscribe_bars=subscribe_bars,
             history_refresh=history_refresh,
             strategy_refresh=strategy_refresh,
-            tracked_account_ids=(config.trade_account.account_id,),
+            defer_strategy_warmup=defer_strategy_warmup,
+            tracked_account_ids=()
+            if config.trade_account.execution.executor == "notify"
+            else (config.trade_account.account_id,),
             warmup_bars=warmup_bars,
             new_pool_strategy=new_pool_strategy,
         )
@@ -137,13 +166,19 @@ class RuntimeConfigApplier:
                 self._quote_event_sink,
                 self._logger,
             )
-            self._runtime_state.quote_broker.connect(config.stock_pool.codes)
+            self._runtime_state.quote_broker.connect(
+                config.stock_pool.codes,
+                subscribe_bars=refresh_plan.subscribe_bars,
+            )
             return
 
         if self._runtime_state.quote_broker is not None and (
             current_config is None or current_config.stock_pool.codes != config.stock_pool.codes
         ):
-            self._runtime_state.quote_broker.update_symbols(config.stock_pool.codes)
+            self._runtime_state.quote_broker.update_symbols(
+                config.stock_pool.codes,
+                subscribe_bars=refresh_plan.subscribe_bars,
+            )
 
     def _apply_history_provider(self, config: LiveTradingConfig, refresh_plan: ConfigRefreshPlan) -> None:
         if not refresh_plan.history_refresh:
@@ -181,6 +216,11 @@ class RuntimeConfigApplier:
         warmup_histories: dict[str, pd.DataFrame],
         unavailable_codes: tuple[str, ...],
     ) -> None:
+        if refresh_plan.defer_strategy_warmup:
+            self._runtime_state.pool_strategy = None
+            self._runtime_state.history_warmup_pending = False
+            self._runtime_state.warmup_unavailable_codes = ()
+            return
         if not refresh_plan.strategy_refresh:
             return
         if unavailable_codes:
@@ -206,6 +246,11 @@ class RuntimeConfigApplier:
 
     def _apply_trade_account_config(self, config: LiveTradingConfig) -> None:
         account = config.trade_account
+        if account.execution.executor == "notify":
+            for account_id, client in list(self._runtime_state.trade_account_clients.items()):
+                client.close()
+                del self._runtime_state.trade_account_clients[account_id]
+            return
         current_config = self._runtime_state.current_config
         current_account = current_config.trade_account if current_config is not None else None
         for account_id, client in list(self._runtime_state.trade_account_clients.items()):
@@ -227,6 +272,14 @@ class RuntimeConfigApplier:
             client = self._trade_account_factory(account, self._trade_event_sink, self._logger)
             self._runtime_state.trade_account_clients[account.account_id] = client
             client.connect()
+
+    @staticmethod
+    def _should_defer_strategy_warmup(config: LiveTradingConfig, *, force_warmup_refresh: bool) -> bool:
+        return (
+            config.trade_account.execution.executor == "notify"
+            and config.realtime_broker.type == "schedule_us"
+            and not force_warmup_refresh
+        )
 
     def _sync_shadow_state(self, config: LiveTradingConfig) -> None:
         active_codes = set(config.all_codes())

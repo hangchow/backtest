@@ -72,8 +72,40 @@ class DualMomentumDailyState:
             return None
 
         row = pd.Series(bar)
+        return self._consume_market_update(
+            code=code,
+            timestamp=row["time_key"],
+            close=float(row["close"]),
+            volume=float(row.get("volume", 0.0)),
+            volume_mode="delta",
+        )
+
+    def on_quote(self, code: str, quote: Any) -> CompletedDailyFrames | None:
+        """消费一条 quote 更新，用累计成交量近似维护当日日线状态。"""
+        if code not in self._daily_histories:
+            return None
+
+        volume = getattr(quote, "volume", None)
+        return self._consume_market_update(
+            code=code,
+            timestamp=getattr(quote, "timestamp"),
+            close=float(getattr(quote, "last_price")),
+            volume=None if volume is None else float(volume),
+            volume_mode="cumulative",
+        )
+
+    def _consume_market_update(
+        self,
+        *,
+        code: str,
+        timestamp: object,
+        close: float,
+        volume: float | None,
+        volume_mode: str,
+    ) -> CompletedDailyFrames | None:
+        """统一处理分钟 bar / quote 触发的换日判断与当日日线推进。"""
         # 状态机内部统一使用“市场本地 naive 时间”，和 mock quote broker 的归一化口径保持一致。
-        timestamp = normalize_market_timestamp(row["time_key"], DEFAULT_MARKET).tz_localize(None)
+        timestamp = normalize_market_timestamp(timestamp, DEFAULT_MARKET).tz_localize(None)
         trade_date = market_trade_date_for_timestamp(timestamp, DEFAULT_MARKET)
         completed = None
         # 关键顺序：
@@ -84,7 +116,13 @@ class DualMomentumDailyState:
         if self._current_trade_date is not None and trade_date > self._current_trade_date:
             completed = self._emit_completed_frames(signal_time=timestamp, current_trade_date=trade_date)
         self._current_trade_date = trade_date
-        self._update_daily_bar(code, timestamp, float(row["close"]), float(row.get("volume", 0.0)))
+        self._update_daily_bar(
+            code,
+            timestamp,
+            close,
+            volume,
+            volume_mode=volume_mode,
+        )
         return completed
 
     def _emit_completed_frames(
@@ -106,17 +144,26 @@ class DualMomentumDailyState:
             volumes=volumes,
         )
 
-    def _update_daily_bar(self, code: str, timestamp: pd.Timestamp, close: float, volume: float) -> None:
+    def _update_daily_bar(
+        self,
+        code: str,
+        timestamp: pd.Timestamp,
+        close: float,
+        volume: float | None,
+        *,
+        volume_mode: str,
+    ) -> None:
         """把分钟 bar 合并到对应交易日的日频聚合状态。"""
         history = self._daily_histories[code]
         trade_date = market_trade_date_for_timestamp(timestamp, DEFAULT_MARKET)
+        normalized_volume = None if volume is None else max(0.0, volume)
         if history.empty or trade_date > history.iloc[-1]["trade_date"]:
             next_row = pd.DataFrame(
                 [
                     {
                         "trade_date": trade_date,
                         "close": close,
-                        "volume": max(0.0, volume),
+                        "volume": normalized_volume or 0.0,
                         "last_bar_time": timestamp,
                     }
                 ]
@@ -130,7 +177,7 @@ class DualMomentumDailyState:
                         {
                             "trade_date": trade_date,
                             "close": close,
-                            "volume": max(0.0, volume),
+                            "volume": normalized_volume or 0.0,
                             "last_bar_time": timestamp,
                         }
                     ]
@@ -139,11 +186,16 @@ class DualMomentumDailyState:
             else:
                 row_index = idx[-1]
                 last_bar_time = history.at[row_index, "last_bar_time"]
-                # 同一天里，close 始终覆盖成“最新一分钟的 close”；
-                # volume 则持续累加。这样文档里 15:59 的那次 push 就能改写当天最终收盘结构。
-                history.at[row_index, "close"] = close
-                if pd.isna(last_bar_time) or pd.Timestamp(last_bar_time) < timestamp:
-                    history.at[row_index, "volume"] = float(history.at[row_index, "volume"]) + max(0.0, volume)
+                # 同一天里，只接受时间上不倒退的更新：
+                # close 用最新一条行情覆盖；
+                # delta 模式累加 volume，cumulative 模式则保留更大的日内累计成交量。
+                if pd.isna(last_bar_time) or pd.Timestamp(last_bar_time) <= timestamp:
+                    history.at[row_index, "close"] = close
+                    if normalized_volume is not None:
+                        if volume_mode == "delta":
+                            history.at[row_index, "volume"] = float(history.at[row_index, "volume"]) + normalized_volume
+                        else:
+                            history.at[row_index, "volume"] = max(float(history.at[row_index, "volume"]), normalized_volume)
                     history.at[row_index, "last_bar_time"] = timestamp
         self._daily_histories[code] = history.sort_values("trade_date").tail(self._warmup_bars).reset_index(drop=True)
 
@@ -158,6 +210,21 @@ class DualMomentumDailyState:
                 continue
             price_map[code] = pd.Series(completed["close"].to_numpy(), index=completed["trade_date"].tolist())
             volume_map[code] = pd.Series(completed["volume"].to_numpy(), index=completed["trade_date"].tolist())
+        if not price_map or not volume_map:
+            return pd.DataFrame(), pd.DataFrame()
+        prices = pd.DataFrame(price_map).sort_index()
+        volumes = pd.DataFrame(volume_map).sort_index()
+        return prices, volumes
+
+    def snapshot_signal_inputs(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """返回当前 warm-up 完成后的全部已完成日线窗口。"""
+        price_map: dict[str, pd.Series] = {}
+        volume_map: dict[str, pd.Series] = {}
+        for code, history in self._daily_histories.items():
+            if history.empty:
+                continue
+            price_map[code] = pd.Series(history["close"].to_numpy(), index=history["trade_date"].tolist())
+            volume_map[code] = pd.Series(history["volume"].to_numpy(), index=history["trade_date"].tolist())
         if not price_map or not volume_map:
             return pd.DataFrame(), pd.DataFrame()
         prices = pd.DataFrame(price_map).sort_index()

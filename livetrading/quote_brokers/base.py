@@ -5,11 +5,14 @@ from typing import Any, Iterable, Protocol
 
 import pandas as pd
 
-from ..models import QuoteUpdate
+from ..models import QuoteUpdate, ScheduledTrigger
 
 
 class QuoteBrokerEventSink(Protocol):
     def on_quote(self, update: QuoteUpdate) -> None:
+        raise NotImplementedError
+
+    def on_schedule(self, trigger: ScheduledTrigger) -> None:
         raise NotImplementedError
 
     def on_bar(self, code: str, bar: pd.Series | dict[str, Any]) -> None:
@@ -21,11 +24,11 @@ class QuoteBrokerEventSink(Protocol):
 
 class QuoteBrokerClient(ABC):
     @abstractmethod
-    def connect(self, codes: Iterable[str]) -> None:
+    def connect(self, codes: Iterable[str], *, subscribe_bars: bool = True) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def update_symbols(self, codes: Iterable[str]) -> None:
+    def update_symbols(self, codes: Iterable[str], *, subscribe_bars: bool = True) -> None:
         raise NotImplementedError
 
     @abstractmethod

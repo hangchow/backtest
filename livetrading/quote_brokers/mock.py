@@ -24,7 +24,7 @@ class MockRealtimeQuoteClient(QuoteBrokerClient):
         self._server: ThreadingHTTPServer | None = None
         self._server_thread: threading.Thread | None = None
 
-    def connect(self, codes: Iterable[str]) -> None:
+    def connect(self, codes: Iterable[str], *, subscribe_bars: bool = True) -> None:
         """启动本地 HTTP 服务，并切换当前订阅股票池。"""
         with self._lock:
             self.close()
@@ -43,7 +43,7 @@ class MockRealtimeQuoteClient(QuoteBrokerClient):
                 f"codes={','.join(self._codes)}",
             )
 
-    def update_symbols(self, codes: Iterable[str]) -> None:
+    def update_symbols(self, codes: Iterable[str], *, subscribe_bars: bool = True) -> None:
         """更新当前允许接收 push 的股票列表。"""
         with self._lock:
             self._codes = self._normalize_codes(codes)

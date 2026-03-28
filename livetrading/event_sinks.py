@@ -6,9 +6,12 @@ from typing import Any
 
 import pandas as pd
 
+from .config import DEFAULT_MARKET
+from .market_hours import is_realtime_bar_allowed_for_market, market_trade_date_for_timestamp
 from .account_state import AccountStateStore
-from .models import AccountSnapshot, FillEvent, OrderUpdate, PositionSnapshot, QuoteUpdate
+from .models import AccountSnapshot, FillEvent, OrderUpdate, PositionSnapshot, QuoteUpdate, ScheduledTrigger
 from .portfolio import PortfolioCoordinator
+from .pool_strategies import build_pool_strategy
 from .runtime_state import LiveTradingRuntimeState
 
 
@@ -33,6 +36,21 @@ class QuoteBrokerEventSinkAdapter:
             self._runtime_state.latest_quotes[update.code] = update
             config = self._runtime_state.callback_config()
             runtime = config.runtime if config is not None else None
+            pool_strategy = self._runtime_state.pool_strategy
+            should_drive_strategy = (
+                config is not None
+                and pool_strategy is not None
+                and not pool_strategy.requires_realtime_bars()
+                and is_realtime_bar_allowed_for_market(
+                    update.timestamp,
+                    market=DEFAULT_MARKET,
+                    subscribe_extended_time=config.realtime_broker.subscribe_extended_time,
+                )
+                and self._all_pool_codes_have_current_trade_date_quotes(
+                    config.all_codes(),
+                    update.timestamp,
+                )
+            )
         if runtime is not None and runtime.log_price_updates:
             self._logger.info(
                 "QUOTE code=%s time=%s last=%.4f volume=%s turnover=%s",
@@ -42,6 +60,19 @@ class QuoteBrokerEventSinkAdapter:
                 update.volume,
                 update.turnover,
             )
+        if should_drive_strategy:
+            decision = pool_strategy.on_quote(update)
+            if decision is not None:
+                self._portfolio_coordinator.execute_portfolio_rebalance(decision)
+
+    def on_schedule(self, trigger: ScheduledTrigger) -> None:
+        with self._lock:
+            config = self._runtime_state.callback_config()
+            if config is None:
+                return
+            decision = self._refresh_strategy_for_schedule(config, trigger)
+        if decision is not None:
+            self._portfolio_coordinator.execute_portfolio_rebalance(decision)
 
     def on_bar(self, code: str, bar: pd.Series | dict[str, Any]) -> None:
         bar_row = pd.Series(bar)
@@ -50,13 +81,71 @@ class QuoteBrokerEventSinkAdapter:
             # 它和策略内部用来出信号的 completed daily window 是两套概念。
             self._runtime_state.latest_bar_prices[code] = float(bar_row["close"])
             pool_strategy = self._runtime_state.pool_strategy
-        if pool_strategy is None:
+        if pool_strategy is None or not pool_strategy.requires_realtime_bars():
             return
 
         # 任意一只股票的新分钟 bar 都可能推动整个股票池策略出一次组合决策。
         decision = pool_strategy.on_bar(code, bar_row)
         if decision is not None:
             self._portfolio_coordinator.execute_portfolio_rebalance(decision)
+
+    def _all_pool_codes_have_current_trade_date_quotes(
+        self,
+        codes: tuple[str, ...],
+        timestamp: pd.Timestamp,
+    ) -> bool:
+        current_trade_date = market_trade_date_for_timestamp(timestamp, DEFAULT_MARKET)
+        for code in codes:
+            latest = self._runtime_state.latest_quotes.get(code)
+            if latest is None:
+                return False
+            if market_trade_date_for_timestamp(latest.timestamp, DEFAULT_MARKET) != current_trade_date:
+                return False
+        return True
+
+    def _refresh_strategy_for_schedule(
+        self,
+        config,
+        trigger: ScheduledTrigger,
+    ):
+        history_provider = self._runtime_state.history_provider
+        if history_provider is None:
+            self._logger.error(
+                "SCHEDULE_TRIGGER_SKIPPED source=%s signal_time=%s reason=history_provider_unavailable",
+                trigger.source,
+                trigger.timestamp,
+            )
+            return None
+        pool_strategy = build_pool_strategy(config.stock_pool)
+        warmup_bars = {
+            code: pool_strategy.required_daily_warmup_bars()
+            for code in config.stock_pool.codes
+        }
+        warmup_histories = history_provider.fetch_daily_histories(
+            config.stock_pool.codes,
+            warmup_bars,
+        )
+        unavailable_codes = tuple(
+            code
+            for code in config.stock_pool.codes
+            if code not in warmup_histories or warmup_histories[code] is None or warmup_histories[code].empty
+        )
+        if unavailable_codes:
+            self._runtime_state.pool_strategy = None
+            self._runtime_state.history_warmup_pending = True
+            self._runtime_state.warmup_unavailable_codes = unavailable_codes
+            self._logger.error(
+                "HISTORY_WARMUP_UNAVAILABLE history=%s strategy=%s codes=%s",
+                config.history_broker.endpoint_summary(),
+                config.stock_pool.strategy.name,
+                ",".join(unavailable_codes),
+            )
+            return None
+        pool_strategy.bootstrap(warmup_histories)
+        self._runtime_state.pool_strategy = pool_strategy
+        self._runtime_state.history_warmup_pending = False
+        self._runtime_state.warmup_unavailable_codes = ()
+        return pool_strategy.on_schedule(trigger)
 
     def on_broker_message(self, level: int, message: str) -> None:
         self._logger.log(level, message)

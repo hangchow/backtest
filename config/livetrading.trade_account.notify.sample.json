@@ -1,0 +1,25 @@
+{
+  "trade_account": {
+    "account_id": "notify_only",
+    "broker": {
+      "type": "mock"
+    },
+    "execution": {
+      "executor": "notify"
+    },
+    "notification": {
+      "email": {
+        "enabled": true,
+        "smtp_host": "smtp.example.com",
+        "smtp_port": 587,
+        "username": "bot@example.com",
+        "password_env": "LIVETRADING_NOTIFY_EMAIL_PASSWORD",
+        "from": "bot@example.com",
+        "to": [
+          "you@example.com"
+        ],
+        "subject_prefix": "[dual_momentum]"
+      }
+    }
+  }
+}

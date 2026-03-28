@@ -1,0 +1,15 @@
+{
+  "realtime_broker": {
+    "type": "schedule_us",
+    "trigger_time": "09:30",
+    "timezone": "America/New_York",
+    "market_calendar": "XNYS",
+    "catch_up_missed_session": true
+  },
+  "runtime": {
+    "config_reload_interval_seconds": 10,
+    "log_price_updates": false,
+    "log_account_updates": false,
+    "log_position_updates": false
+  }
+}
