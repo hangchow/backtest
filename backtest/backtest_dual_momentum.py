@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from time import perf_counter
 
 import pandas as pd
 
@@ -44,6 +45,7 @@ from backtest.backtest_common import (
     add_fee_args,
     add_market_arg,
     compute_order_fees,
+    FilesystemLoadTracker,
     normalize_market,
     parse_eval_end,
     parse_eval_start,
@@ -52,6 +54,8 @@ from backtest.backtest_common import (
     sum_trade_fees,
     validate_market_for_symbols,
 )
+from backtest.reporting import observations_by_code_from_frame, render_single_strategy_report
+from backtest.strategy_config import add_strategy_config_arg, resolve_single_strategy_defaults
 from strategy.dual_momentum import (
     DEFAULT_LONG_LOOKBACK_DAYS,
     DEFAULT_LONG_LOOKBACK_WEIGHT,
@@ -80,10 +84,28 @@ DEFAULT_INITIAL_CASH = 100_000.0
 DEFAULT_DAILY_DATA_ROOT = Path("kline_day")
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    config_defaults = resolve_single_strategy_defaults(
+        "dual_momentum",
+        {
+            "lookback_days": DEFAULT_LOOKBACK_DAYS,
+            "long_lookback_days": DEFAULT_LONG_LOOKBACK_DAYS,
+            "long_lookback_weight": DEFAULT_LONG_LOOKBACK_WEIGHT,
+            "top_n": DEFAULT_TOP_N,
+            "volume_window": DEFAULT_VOLUME_WINDOW,
+            "min_volume_ratio": DEFAULT_MIN_VOLUME_RATIO,
+            "market_filter_window": DEFAULT_MARKET_FILTER_WINDOW,
+            "rebalance_band_pct": DEFAULT_REBALANCE_BAND_PCT,
+            "volatility_window": DEFAULT_VOLATILITY_WINDOW,
+            "target_annual_vol": DEFAULT_TARGET_ANNUAL_VOL,
+            "max_gross_exposure": DEFAULT_MAX_GROSS_EXPOSURE,
+        },
+        argv=argv,
+    )
     parser = argparse.ArgumentParser(
         description="Backtest a daily dual-momentum stock-pool rotation strategy."
     )
+    add_strategy_config_arg(parser)
     parser.add_argument("--codes", nargs="+", required=True, help="Stock pool codes under --data-root.")
     parser.add_argument(
         "--data-root",
@@ -92,20 +114,20 @@ def parse_args() -> argparse.Namespace:
         help="Base directory for per-code daily CSVs. Defaults to kline_day.",
     )
     parser.add_argument("--initial-cash", type=float, default=DEFAULT_INITIAL_CASH)
-    parser.add_argument("--lookback-days", type=int, default=DEFAULT_LOOKBACK_DAYS)
+    parser.add_argument("--lookback-days", type=int, default=config_defaults["lookback_days"])
     parser.add_argument(
         "--long-lookback-days",
         type=int,
-        default=DEFAULT_LONG_LOOKBACK_DAYS,
+        default=config_defaults["long_lookback_days"],
         help="Secondary lookback horizon to build a blended momentum score.",
     )
     parser.add_argument(
         "--long-lookback-weight",
         type=float,
-        default=DEFAULT_LONG_LOOKBACK_WEIGHT,
+        default=config_defaults["long_lookback_weight"],
         help="Weight assigned to the long lookback momentum score in blended ranking.",
     )
-    parser.add_argument("--top-n", type=int, default=DEFAULT_TOP_N)
+    parser.add_argument("--top-n", type=int, default=config_defaults["top_n"])
     add_eval_start_arg(parser)
     add_eval_end_arg(parser)
     add_fee_args(parser)
@@ -113,13 +135,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--volume-window",
         type=int,
-        default=DEFAULT_VOLUME_WINDOW,
+        default=config_defaults["volume_window"],
         help="Rolling window used to compare current daily volume against recent average volume.",
     )
     parser.add_argument(
         "--min-volume-ratio",
         type=float,
-        default=DEFAULT_MIN_VOLUME_RATIO,
+        default=config_defaults["min_volume_ratio"],
         help="Relative-volume level above which momentum scores receive a volume boost.",
     )
     parser.add_argument(
@@ -132,46 +154,55 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--market-filter-window",
         type=int,
-        default=DEFAULT_MARKET_FILTER_WINDOW,
+        default=config_defaults["market_filter_window"],
         help="Risk-on filter window: only hold risk assets when equal-weight pool is above this MA.",
     )
     parser.add_argument(
         "--rebalance-band-pct",
         type=float,
-        default=DEFAULT_REBALANCE_BAND_PCT,
+        default=config_defaults["rebalance_band_pct"],
         help="Only rebalance a target when weight gap exceeds this portfolio-level band.",
     )
     parser.add_argument(
         "--volatility-window",
         type=int,
-        default=DEFAULT_VOLATILITY_WINDOW,
+        default=config_defaults["volatility_window"],
         help="Rolling window used to estimate daily volatility for position scaling.",
     )
     parser.add_argument(
         "--target-annual-vol",
         type=float,
-        default=DEFAULT_TARGET_ANNUAL_VOL,
+        default=config_defaults["target_annual_vol"],
         help="Annualized volatility target. Lower values reduce gross risk allocation.",
     )
     parser.add_argument(
         "--max-gross-exposure",
         type=float,
-        default=DEFAULT_MAX_GROSS_EXPOSURE,
+        default=config_defaults["max_gross_exposure"],
         help="Maximum gross exposure multiplier (1.0=fully funded, >1 allows bounded leverage).",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def load_daily_data(data_root: Path, codes: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
+def load_daily_data(
+    data_root: Path,
+    codes: list[str],
+    *,
+    load_tracker: FilesystemLoadTracker | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     price_map: dict[str, pd.Series] = {}
     volume_map: dict[str, pd.Series] = {}
     for code in codes:
         history_parts: list[pd.DataFrame] = []
-        for path in sorted((data_root / code).glob("*.csv")):
+        csv_files = sorted((data_root / code).glob("*.csv"))
+        started_at = perf_counter()
+        for path in csv_files:
             history = pd.read_csv(path, usecols=["time_key", "close", "volume"])
             if history.empty:
                 continue
             history_parts.append(history)
+        if load_tracker is not None:
+            load_tracker.record(files_loaded=len(csv_files), elapsed_seconds=perf_counter() - started_at)
         if not history_parts:
             raise FileNotFoundError(f"No CSV files found in {data_root / code}")
 
@@ -388,12 +419,15 @@ def run_backtest(
 
 
 def main() -> int:
+    total_started_at = perf_counter()
     args = parse_args()
     codes = resolve_codes(args.data_root, args.codes)
     market = validate_market_for_symbols(codes, args.market, label="--codes")
-    prices, volumes = load_daily_data(args.data_root, codes)
+    load_tracker = FilesystemLoadTracker()
+    prices, volumes = load_daily_data(args.data_root, codes, load_tracker=load_tracker)
     eval_start = parse_eval_start(args.eval_start)
     eval_end = parse_eval_end(args.eval_end)
+    strategy_started_at = perf_counter()
     summary, trades = run_backtest(
         prices=prices,
         volumes=volumes,
@@ -415,33 +449,19 @@ def main() -> int:
         market=market,
         security_type=args.security_type,
     )
-
-    data_end_time = summary.get("data_end_time", summary["end_time"])
-    print(f"Data range: {summary['warmup_start_time']} -> {data_end_time}")
-    if summary["warmup_start_time"] != summary["start_time"] or data_end_time != summary["end_time"]:
-        print(f"Evaluation range: {summary['start_time']} -> {summary['end_time']}")
-    print(f"Initial cash: {summary['initial_cash']:.2f}")
+    strategy_elapsed = perf_counter() - strategy_started_at
+    total_elapsed = perf_counter() - total_started_at
+    coverage_sections = [("Daily data coverage", observations_by_code_from_frame(prices))]
     print(
-        "Strategy: daily dual momentum "
-        f"(short/long lookback {summary['lookback_days']}/{summary['long_lookback_days']} trading days, "
-        f"long-weight {summary['long_lookback_weight']:.2f}, top {summary['top_n']}, "
-        f"volume boost above {summary['min_volume_ratio']:.2f}x avg({summary['volume_window']}), "
-        f"market filter MA{summary['market_filter_window']}, "
-        f"rebalance band {summary['rebalance_band_pct']:.2%}, "
-        f"vol target {summary['target_annual_vol']:.2f} ann (window {summary['volatility_window']}), "
-        f"max gross exposure {summary['max_gross_exposure']:.2f}x)"
+        render_single_strategy_report(
+            "dual_momentum",
+            summary,
+            strategy_elapsed,
+            total_time_sec=total_elapsed,
+            load_stats=load_tracker.snapshot(),
+            coverage_sections=coverage_sections,
+        )
     )
-    if summary["fee_account"]:
-        print(f"Fee account: {summary['fee_account']}")
-        print(f"Market/Security: {summary['market']} / {summary['security_type']}")
-    print(f"Stock pool: {', '.join(summary['codes'])}")
-    print(f"Trades: {summary['trade_count']} (BUY {summary['buy_count']}, SELL {summary['sell_count']})")
-    print(f"Total fees: {summary['total_fees']:.2f}")
-    print(f"Ending cash: {summary['ending_cash']:.2f}")
-    print(f"Ending positions: {summary['ending_positions']}")
-    print(f"Final value: {summary['final_value']:.2f}")
-    print(f"Total return: {summary['total_return_pct']:.2f}%")
-    print(f"Max drawdown: {summary['max_drawdown_pct']:.2f}%")
 
     if args.show_trades == 1:
         if trades.empty:

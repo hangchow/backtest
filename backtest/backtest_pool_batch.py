@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, field
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -27,8 +27,15 @@ from backtest.backtest_common import (
     parse_eval_start,
     validate_market_for_symbols,
 )
-from backtest.backtest_compare import STRATEGY_LABELS, default_initial_cash_for_market, markdown_table
+from backtest.backtest_compare import default_initial_cash_for_market
 from backtest.minute_pool_cache import MinutePoolFeatureCache
+from backtest.reporting import (
+    build_strategy_summary_row,
+    build_strategy_summary_table,
+    observations_by_code_from_histories,
+    render_data_coverage_sections,
+)
+from backtest.strategy_config import add_strategy_config_arg, resolve_batch_strategy_params
 
 
 DEFAULT_MINUTE_DATA_ROOT = Path("kline_minute")
@@ -45,15 +52,6 @@ STRATEGY_CHOICES = (
     "dual_momentum_ema_rsi_hybrid",
 )
 DEFAULT_STRATEGIES = STRATEGY_CHOICES
-FREQUENCY_MAP = {
-    "rsi_reversion": "minute",
-    "ema_cross": "minute",
-    "ema_rsi_combo": "minute",
-    "ema_rsi_bull_range": "minute",
-    "dual_momentum": "daily",
-    "momentum_monthly": "daily",
-    "dual_momentum_ema_rsi_hybrid": "day+minute",
-}
 DEFAULT_STRATEGY_PARAMS: dict[str, dict[str, Any]] = {
     "rsi_reversion": {
         "rsi_period": rsi_reversion.DEFAULT_RSI_PERIOD,
@@ -164,12 +162,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Print the default per-strategy JSON config template and exit.",
     )
-    parser.add_argument(
-        "--strategy-config",
-        type=Path,
-        default=None,
-        help="JSON file mapping strategy names to per-strategy parameter overrides.",
-    )
+    add_strategy_config_arg(parser)
     add_eval_start_arg(parser)
     add_eval_end_arg(parser)
     add_fee_args(parser)
@@ -189,71 +182,8 @@ def _dedupe(values: list[str] | tuple[str, ...]) -> list[str]:
     return result
 
 
-def _copy_strategy_params() -> dict[str, dict[str, Any]]:
-    return {strategy_key: params.copy() for strategy_key, params in DEFAULT_STRATEGY_PARAMS.items()}
-
-
-def _coerce_config_value(strategy_key: str, key: str, value: Any, sample: Any) -> Any:
-    if isinstance(sample, bool):
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            normalized = value.strip().lower()
-            if normalized in {"1", "true", "yes", "on"}:
-                return True
-            if normalized in {"0", "false", "no", "off"}:
-                return False
-        raise ValueError(f"invalid boolean value for {strategy_key}.{key}: {value!r}")
-    if isinstance(sample, int) and not isinstance(sample, bool):
-        try:
-            return int(value)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"invalid integer value for {strategy_key}.{key}: {value!r}") from exc
-    if isinstance(sample, float):
-        try:
-            return float(value)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"invalid float value for {strategy_key}.{key}: {value!r}") from exc
-    if isinstance(sample, str):
-        return str(value)
-    return value
-
-
-def _merge_strategy_values(
-    target: dict[str, dict[str, Any]],
-    source: dict[str, dict[str, Any]],
-    *,
-    source_label: str,
-) -> None:
-    for strategy_key, overrides in source.items():
-        if strategy_key not in target:
-            raise ValueError(f"unsupported strategy in {source_label}: {strategy_key}")
-        if not isinstance(overrides, dict):
-            raise ValueError(f"strategy config for {strategy_key} in {source_label} must be an object")
-        base = target[strategy_key]
-        for key, value in overrides.items():
-            if key not in base:
-                raise ValueError(f"unsupported parameter in {source_label}: {strategy_key}.{key}")
-            base[key] = _coerce_config_value(strategy_key, key, value, base[key])
-
-
-def _load_strategy_config(path: Path | None) -> dict[str, dict[str, Any]]:
-    if path is None:
-        return {}
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise ValueError("--strategy-config must be a JSON object")
-    return payload
-
-
 def _resolve_strategy_params(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
-    resolved = _copy_strategy_params()
-    _merge_strategy_values(
-        resolved,
-        _load_strategy_config(args.strategy_config),
-        source_label=str(args.strategy_config) if args.strategy_config is not None else "--strategy-config",
-    )
-    return resolved
+    return resolve_batch_strategy_params(DEFAULT_STRATEGY_PARAMS, path=args.strategy_config)
 
 
 def _dump_default_strategy_config(selected: list[str]) -> str:
@@ -383,6 +313,16 @@ class BatchDataContext:
         )
         self._hybrid_minute_indicators[key] = indicators
         return indicators
+
+    def loaded_daily_observations(self) -> dict[str, pd.DatetimeIndex]:
+        if self._daily_histories is None:
+            return {}
+        return observations_by_code_from_histories(self._daily_histories, date_column="time_key")
+
+    def loaded_minute_observations(self) -> dict[str, pd.DatetimeIndex]:
+        if self._minute_histories is None:
+            return {}
+        return observations_by_code_from_histories(self._minute_histories)
 
 
 def _run_strategy(
@@ -563,20 +503,8 @@ def _run_strategy(
 
 
 def _build_table(rows: list[dict]) -> str:
-    frame = pd.DataFrame(rows)
-    frame = frame.sort_values(["return_pct", "strategy"], ascending=[False, True]).reset_index(drop=True)
-    return markdown_table(
-        frame,
-        [
-            "strategy",
-            "frequency",
-            "final_value",
-            "return_pct",
-            "max_drawdown_pct",
-            "trade_count",
-            "total_fees",
-            "strategy_time_sec",
-        ],
+    return build_strategy_summary_table(
+        sorted(rows, key=lambda row: (-float(row["return_pct"]), str(row["strategy"])))
     )
 
 
@@ -627,18 +555,7 @@ def main() -> int:
         strategy_elapsed = perf_counter() - strategy_started_at
         load_after = data.snapshot().total_load_seconds
         strategy_compute_seconds = max(0.0, strategy_elapsed - (load_after - load_before))
-        rows.append(
-            {
-                "strategy": STRATEGY_LABELS[strategy_key],
-                "frequency": FREQUENCY_MAP[strategy_key],
-                "final_value": summary["final_value"],
-                "return_pct": summary["total_return_pct"],
-                "max_drawdown_pct": summary["max_drawdown_pct"],
-                "trade_count": summary["trade_count"],
-                "total_fees": summary.get("total_fees", 0.0),
-                "strategy_time_sec": round(strategy_compute_seconds, 2),
-            }
-        )
+        rows.append(build_strategy_summary_row(strategy_key, summary, strategy_compute_seconds))
 
     total_elapsed = perf_counter() - batch_started_at
     stats = data.snapshot()
@@ -649,6 +566,21 @@ def main() -> int:
     print(f"Filesystem load time: {stats.total_load_seconds:.2f}s")
     print(f"Files loaded: {stats.files_loaded}")
     print(f"Load operations: {stats.load_operations}")
+    coverage_sections: list[tuple[str, dict[str, pd.DatetimeIndex]]] = []
+    daily_observations = data.loaded_daily_observations()
+    minute_observations = data.loaded_minute_observations()
+    if daily_observations:
+        coverage_sections.append(("Daily data coverage", daily_observations))
+    if minute_observations:
+        coverage_sections.append(("Minute data coverage", minute_observations))
+    if coverage_sections:
+        print()
+        for line in render_data_coverage_sections(
+            coverage_sections,
+            expected_start=eval_start,
+            expected_end=eval_end,
+        ):
+            print(line)
     return 0
 
 

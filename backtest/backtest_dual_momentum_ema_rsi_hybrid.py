@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from time import perf_counter
 
 import pandas as pd
 
@@ -13,6 +14,7 @@ from backtest.backtest_common import (
     add_market_arg,
     compute_buy_quantity_with_fees,
     compute_order_fees,
+    FilesystemLoadTracker,
     normalize_market,
     parse_eval_end,
     parse_eval_start,
@@ -20,6 +22,8 @@ from backtest.backtest_common import (
     validate_market_for_symbols,
 )
 from backtest.minute_indicators import compute_rsi
+from backtest.reporting import observations_by_code_from_frame, render_single_strategy_report
+from backtest.strategy_config import add_strategy_config_arg, resolve_single_strategy_defaults
 
 DEFAULT_INITIAL_CASH = 800_000.0
 DEFAULT_DAILY_DATA_ROOT = Path("kline_day")
@@ -45,46 +49,81 @@ DEFAULT_TAKE_PROFIT_PCT = 0.2
 DEFAULT_POSITION_RATIO = 0.95
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    config_defaults = resolve_single_strategy_defaults(
+        "dual_momentum_ema_rsi_hybrid",
+        {
+            "lookback_days": DEFAULT_LOOKBACK_DAYS,
+            "long_lookback_days": DEFAULT_LONG_LOOKBACK_DAYS,
+            "long_lookback_weight": DEFAULT_LONG_LOOKBACK_WEIGHT,
+            "market_filter_window": DEFAULT_MARKET_FILTER_WINDOW,
+            "daily_vol_window": DEFAULT_DAILY_VOL_WINDOW,
+            "min_momentum_score": DEFAULT_MIN_MOMENTUM_SCORE,
+            "rebalance_days": DEFAULT_REBALANCE_DAYS,
+            "switch_score_buffer": DEFAULT_SWITCH_SCORE_BUFFER,
+            "min_hold_days": DEFAULT_MIN_HOLD_DAYS,
+            "timing_score_weight": DEFAULT_TIMING_SCORE_WEIGHT,
+            "fast_span": DEFAULT_FAST_SPAN,
+            "slow_span": DEFAULT_SLOW_SPAN,
+            "rsi_period": DEFAULT_RSI_PERIOD,
+            "entry_rsi_min": DEFAULT_ENTRY_RSI_MIN,
+            "entry_rsi_max": DEFAULT_ENTRY_RSI_MAX,
+            "exit_rsi_min": DEFAULT_EXIT_RSI_MIN,
+            "stop_loss_pct": DEFAULT_STOP_LOSS_PCT,
+            "take_profit_pct": DEFAULT_TAKE_PROFIT_PCT,
+            "position_ratio": DEFAULT_POSITION_RATIO,
+        },
+        argv=argv,
+    )
     parser = argparse.ArgumentParser(description="Hybrid stock-pool backtest: daily dual momentum + minute EMA/RSI timing.")
+    add_strategy_config_arg(parser)
     parser.add_argument("--codes", nargs="+", required=True, help="Stock pool codes.")
     parser.add_argument("--daily-data-root", type=Path, default=DEFAULT_DAILY_DATA_ROOT)
     parser.add_argument("--minute-data-root", type=Path, default=DEFAULT_MINUTE_DATA_ROOT)
     parser.add_argument("--initial-cash", type=float, default=DEFAULT_INITIAL_CASH)
-    parser.add_argument("--lookback-days", type=int, default=DEFAULT_LOOKBACK_DAYS)
-    parser.add_argument("--long-lookback-days", type=int, default=DEFAULT_LONG_LOOKBACK_DAYS)
-    parser.add_argument("--long-lookback-weight", type=float, default=DEFAULT_LONG_LOOKBACK_WEIGHT)
-    parser.add_argument("--market-filter-window", type=int, default=DEFAULT_MARKET_FILTER_WINDOW)
-    parser.add_argument("--daily-vol-window", type=int, default=DEFAULT_DAILY_VOL_WINDOW)
-    parser.add_argument("--min-momentum-score", type=float, default=DEFAULT_MIN_MOMENTUM_SCORE)
-    parser.add_argument("--rebalance-days", type=int, default=DEFAULT_REBALANCE_DAYS, help="Only rotate to a new symbol every N trading days.")
-    parser.add_argument("--switch-score-buffer", type=float, default=DEFAULT_SWITCH_SCORE_BUFFER, help="Minimum score lead required before switching holdings.")
-    parser.add_argument("--min-hold-days", type=int, default=DEFAULT_MIN_HOLD_DAYS, help="Minimum holding days before allowing symbol rotation.")
-    parser.add_argument("--timing-score-weight", type=float, default=DEFAULT_TIMING_SCORE_WEIGHT, help="Weight applied to minute EMA/RSI timing score.")
-    parser.add_argument("--fast-span", type=int, default=DEFAULT_FAST_SPAN)
-    parser.add_argument("--slow-span", type=int, default=DEFAULT_SLOW_SPAN)
-    parser.add_argument("--rsi-period", type=int, default=DEFAULT_RSI_PERIOD)
-    parser.add_argument("--entry-rsi-min", type=float, default=DEFAULT_ENTRY_RSI_MIN)
-    parser.add_argument("--entry-rsi-max", type=float, default=DEFAULT_ENTRY_RSI_MAX)
-    parser.add_argument("--exit-rsi-min", type=float, default=DEFAULT_EXIT_RSI_MIN)
-    parser.add_argument("--stop-loss-pct", type=float, default=DEFAULT_STOP_LOSS_PCT)
-    parser.add_argument("--take-profit-pct", type=float, default=DEFAULT_TAKE_PROFIT_PCT)
-    parser.add_argument("--position-ratio", type=float, default=DEFAULT_POSITION_RATIO)
+    parser.add_argument("--lookback-days", type=int, default=config_defaults["lookback_days"])
+    parser.add_argument("--long-lookback-days", type=int, default=config_defaults["long_lookback_days"])
+    parser.add_argument("--long-lookback-weight", type=float, default=config_defaults["long_lookback_weight"])
+    parser.add_argument("--market-filter-window", type=int, default=config_defaults["market_filter_window"])
+    parser.add_argument("--daily-vol-window", type=int, default=config_defaults["daily_vol_window"])
+    parser.add_argument("--min-momentum-score", type=float, default=config_defaults["min_momentum_score"])
+    parser.add_argument("--rebalance-days", type=int, default=config_defaults["rebalance_days"], help="Only rotate to a new symbol every N trading days.")
+    parser.add_argument("--switch-score-buffer", type=float, default=config_defaults["switch_score_buffer"], help="Minimum score lead required before switching holdings.")
+    parser.add_argument("--min-hold-days", type=int, default=config_defaults["min_hold_days"], help="Minimum holding days before allowing symbol rotation.")
+    parser.add_argument("--timing-score-weight", type=float, default=config_defaults["timing_score_weight"], help="Weight applied to minute EMA/RSI timing score.")
+    parser.add_argument("--fast-span", type=int, default=config_defaults["fast_span"])
+    parser.add_argument("--slow-span", type=int, default=config_defaults["slow_span"])
+    parser.add_argument("--rsi-period", type=int, default=config_defaults["rsi_period"])
+    parser.add_argument("--entry-rsi-min", type=float, default=config_defaults["entry_rsi_min"])
+    parser.add_argument("--entry-rsi-max", type=float, default=config_defaults["entry_rsi_max"])
+    parser.add_argument("--exit-rsi-min", type=float, default=config_defaults["exit_rsi_min"])
+    parser.add_argument("--stop-loss-pct", type=float, default=config_defaults["stop_loss_pct"])
+    parser.add_argument("--take-profit-pct", type=float, default=config_defaults["take_profit_pct"])
+    parser.add_argument("--position-ratio", type=float, default=config_defaults["position_ratio"])
     add_eval_start_arg(parser)
     add_eval_end_arg(parser)
     add_fee_args(parser)
     add_market_arg(parser)
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def load_daily_closes(data_root: Path, codes: list[str]) -> pd.DataFrame:
+def load_daily_closes(
+    data_root: Path,
+    codes: list[str],
+    *,
+    load_tracker: FilesystemLoadTracker | None = None,
+) -> pd.DataFrame:
     close_map: dict[str, pd.Series] = {}
     for code in codes:
         parts = []
-        for path in sorted((data_root / code).glob("*.csv")):
+        csv_files = sorted((data_root / code).glob("*.csv"))
+        started_at = perf_counter()
+        for path in csv_files:
             chunk = pd.read_csv(path, usecols=["time_key", "close"])
             if not chunk.empty:
                 parts.append(chunk)
+        if load_tracker is not None:
+            load_tracker.record(files_loaded=len(csv_files), elapsed_seconds=perf_counter() - started_at)
         if not parts:
             raise FileNotFoundError(f"No daily files for {code} under {data_root}")
         history = pd.concat(parts, ignore_index=True)
@@ -103,14 +142,20 @@ def load_day_end_minute_indicators(
     fast_span: int,
     slow_span: int,
     rsi_period: int,
+    *,
+    load_tracker: FilesystemLoadTracker | None = None,
 ) -> dict[str, pd.DataFrame]:
     result: dict[str, pd.DataFrame] = {}
     for code in codes:
         parts = []
-        for path in sorted((data_root / code).glob("*.csv")):
+        csv_files = sorted((data_root / code).glob("*.csv"))
+        started_at = perf_counter()
+        for path in csv_files:
             chunk = pd.read_csv(path, usecols=["time_key", "close"])
             if not chunk.empty:
                 parts.append(chunk)
+        if load_tracker is not None:
+            load_tracker.record(files_loaded=len(csv_files), elapsed_seconds=perf_counter() - started_at)
         if not parts:
             raise FileNotFoundError(f"No minute files for {code} under {data_root}")
 
@@ -347,18 +392,22 @@ def run_backtest(
 
 
 def main() -> int:
+    total_started_at = perf_counter()
     args = parse_args()
     market = validate_market_for_symbols(args.codes, args.market, label="--codes")
     eval_start = parse_eval_start(args.eval_start)
     eval_end = parse_eval_end(args.eval_end)
-    closes = load_daily_closes(args.daily_data_root, args.codes)
+    load_tracker = FilesystemLoadTracker()
+    closes = load_daily_closes(args.daily_data_root, args.codes, load_tracker=load_tracker)
     minute_indicators = load_day_end_minute_indicators(
         args.minute_data_root,
         args.codes,
         fast_span=args.fast_span,
         slow_span=args.slow_span,
         rsi_period=args.rsi_period,
+        load_tracker=load_tracker,
     )
+    strategy_started_at = perf_counter()
     summary, _ = run_backtest(
         closes=closes,
         minute_indicators=minute_indicators,
@@ -385,12 +434,22 @@ def main() -> int:
         market=market,
         security_type=args.security_type,
     )
-    print(f"Eval range: {summary['start_time']} -> {summary['end_time']}")
-    print(f"Trades: {summary['trade_count']} (BUY {summary['buy_count']}, SELL {summary['sell_count']})")
-    print(f"Total fees: {summary['total_fees']:.2f}")
-    print(f"Final value: {summary['final_value']:.2f}")
-    print(f"Total return: {summary['total_return_pct']:.2f}%")
-    print(f"Max drawdown: {summary['max_drawdown_pct']:.2f}%")
+    strategy_elapsed = perf_counter() - strategy_started_at
+    total_elapsed = perf_counter() - total_started_at
+    coverage_sections = [
+        ("Daily data coverage", observations_by_code_from_frame(closes)),
+        ("Minute data coverage", {code: frame.index.tolist() for code, frame in minute_indicators.items()}),
+    ]
+    print(
+        render_single_strategy_report(
+            "dual_momentum_ema_rsi_hybrid",
+            summary,
+            strategy_elapsed,
+            total_time_sec=total_elapsed,
+            load_stats=load_tracker.snapshot(),
+            coverage_sections=coverage_sections,
+        )
+    )
     return 0
 
 

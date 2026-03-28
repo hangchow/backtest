@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 import pandas as pd
@@ -12,6 +14,32 @@ from strategy.volume import compute_relative_volume, compute_volume_scale, valid
 
 DEFAULT_DATA_ROOT = Path("kline_minute")
 SUPPORTED_BACKTEST_MARKETS = ("HK", "US")
+
+
+@dataclass(frozen=True)
+class FilesystemLoadSnapshot:
+    total_load_seconds: float
+    files_loaded: int
+    load_operations: int
+
+
+class FilesystemLoadTracker:
+    def __init__(self) -> None:
+        self._total_load_seconds = 0.0
+        self._files_loaded = 0
+        self._load_operations = 0
+
+    def record(self, *, files_loaded: int, elapsed_seconds: float) -> None:
+        self._total_load_seconds += float(elapsed_seconds)
+        self._files_loaded += int(files_loaded)
+        self._load_operations += 1
+
+    def snapshot(self) -> FilesystemLoadSnapshot:
+        return FilesystemLoadSnapshot(
+            total_load_seconds=self._total_load_seconds,
+            files_loaded=self._files_loaded,
+            load_operations=self._load_operations,
+        )
 
 
 def add_data_source_args(parser: argparse.ArgumentParser) -> None:
@@ -220,18 +248,26 @@ def resolve_eval_window(
     )
 
 
-def load_histories(data_root: Path, codes: list[str]) -> dict[str, pd.DataFrame]:
+def load_histories(
+    data_root: Path,
+    codes: list[str],
+    *,
+    load_tracker: FilesystemLoadTracker | None = None,
+) -> dict[str, pd.DataFrame]:
     if not codes:
         raise ValueError("codes must not be empty")
-    return {code: load_history(data_root / code) for code in codes}
+    return {code: load_history(data_root / code, load_tracker=load_tracker) for code in codes}
 
 
-def load_history(data_dir: Path) -> pd.DataFrame:
+def load_history(data_dir: Path, *, load_tracker: FilesystemLoadTracker | None = None) -> pd.DataFrame:
     files = sorted(data_dir.glob("*.csv"))
     if not files:
         raise FileNotFoundError(f"No CSV files found in {data_dir}")
 
+    started_at = perf_counter()
     frames = [pd.read_csv(path) for path in files]
+    if load_tracker is not None:
+        load_tracker.record(files_loaded=len(files), elapsed_seconds=perf_counter() - started_at)
     history = pd.concat(frames, ignore_index=True)
     history["time_key"] = pd.to_datetime(history["time_key"])
     history = history.sort_values("time_key").reset_index(drop=True)

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-from numbers import Real
 from pathlib import Path
 import time
 
@@ -25,6 +24,7 @@ from backtest.backtest_common import (
     validate_market_for_symbols,
 )
 from backtest.minute_pool_cache import MinutePoolFeatureCache
+from backtest.reporting import STRATEGY_LABELS, markdown_table
 
 
 DEFAULT_MINUTE_DATA_ROOT = Path("kline_minute")
@@ -54,17 +54,6 @@ NATIVE_POOL_STRATEGY_KEYS = (
 )
 ALL_STRATEGY_KEYS = MINUTE_STRATEGY_KEYS + NATIVE_POOL_STRATEGY_KEYS
 SCOPE_CHOICES = ("single", "pool")
-
-STRATEGY_LABELS = {
-    "rsi_reversion": "RSI reversion",
-    "ema_cross": "EMA cross",
-    "ema_rsi_combo": "EMA + RSI",
-    "ema_rsi_bull_range": "EMA + RSI bull range",
-    "dual_momentum": "Dual momentum",
-    "momentum_monthly": "Momentum monthly",
-    "dual_momentum_ema_rsi_hybrid": "Dual momentum + EMA + RSI hybrid",
-}
-
 
 def default_initial_cash_for_market(market: str) -> float:
     if market == "HK":
@@ -228,49 +217,6 @@ def format_duration_mmss(duration_seconds: float) -> str:
     total_seconds = max(0, int(round(duration_seconds)))
     minutes, seconds = divmod(total_seconds, 60)
     return f"{minutes}:{seconds:02d}"
-
-
-def format_cell(value: object) -> str:
-    if isinstance(value, float):
-        return f"{value:.2f}"
-    return str(value)
-
-
-def is_numeric_column(frame: pd.DataFrame, column: str) -> bool:
-    has_non_null = False
-    for value in frame[column]:
-        if pd.isna(value):
-            continue
-        has_non_null = True
-        if isinstance(value, bool) or not isinstance(value, Real):
-            return False
-    return has_non_null
-
-
-def markdown_table(frame: pd.DataFrame, columns: list[str]) -> str:
-    column_values = {column: [format_cell(value) for value in frame[column]] for column in columns}
-    numeric_columns = {column: is_numeric_column(frame, column) for column in columns}
-    widths = {
-        column: max(len(column), *(len(value) for value in column_values[column]))
-        for column in columns
-    }
-
-    def align(value: str, column: str) -> str:
-        if numeric_columns[column]:
-            return value.rjust(widths[column])
-        return value.ljust(widths[column])
-
-    header = "| " + " | ".join(align(column, column) for column in columns) + " |"
-    divider = "| " + " | ".join(
-        ("-" * max(widths[column] - 1, 1) + ":") if numeric_columns[column] else "-" * widths[column]
-        for column in columns
-    ) + " |"
-    rows = []
-    for row_index in range(len(frame)):
-        rows.append(
-            "| " + " | ".join(align(column_values[column][row_index], column) for column in columns) + " |"
-        )
-    return "\n".join([header, divider, *rows])
 
 
 def _run_minute_strategy(
