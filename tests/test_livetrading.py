@@ -49,7 +49,7 @@ from livetrading.history_providers.common import _expected_latest_trade_date_for
 from livetrading.history_providers.futu import FutuDailyHistoryProvider
 from livetrading.history_providers.local import LocalDataDailyHistoryProvider
 from livetrading.history_providers.polygon import PolygonCacheDailyHistoryProvider
-from livetrading.models import AccountSnapshot, FillEvent, OrderIntent, OrderSubmission, OrderUpdate, PortfolioRebalanceDecision, PositionSnapshot, QuoteUpdate
+from livetrading.models import AccountSnapshot, FillEvent, OrderIntent, OrderSubmission, OrderUpdate, PortfolioRebalanceDecision, PositionSnapshot, QuoteUpdate, ScheduledTrigger
 from livetrading.pool_strategies import (
     PoolLiveStrategy,
     build_pool_strategy,
@@ -60,10 +60,12 @@ from livetrading.pool_strategies import (
 from livetrading.quote_brokers.base import QuoteBrokerClient
 from livetrading.quote_brokers.futu import FutuRealtimeQuoteClient
 from livetrading.quote_brokers.mock import MockRealtimeQuoteClient
+from livetrading.quote_brokers.schedule_us import ScheduleUSQuoteClient
 from livetrading.trade_account.base import TradeAccountClient
 from livetrading.trade_account.futu import FutuTradeAccountClient
 from livetrading.trade_account.mock import MockTradeAccountClient
-from domain.fees import compute_order_fees
+from strategy.fees import compute_order_fees
+from strategy.kline_reader import LocalKlineReader
 
 
 def build_daily_history(code: str, closes: list[float], volumes: list[float] | None = None) -> pd.DataFrame:
@@ -229,6 +231,7 @@ def build_mock_trade_account_payload(
     initial_cash: float = 100000.0,
     initial_positions: dict[str, int] | None = None,
     execution: dict[str, object] | None = None,
+    notification: dict[str, object] | None = None,
 ) -> dict[str, object]:
     payload = {
         "account_id": account_id,
@@ -241,6 +244,8 @@ def build_mock_trade_account_payload(
     }
     if execution is not None:
         payload["execution"] = execution
+    if notification is not None:
+        payload["notification"] = notification
     return payload
 
 
@@ -273,16 +278,20 @@ class FakeQuoteBroker(QuoteBrokerClient):
         self.connect_calls = 0
         self.update_calls = 0
         self.connected_codes: list[tuple[str, ...]] = []
+        self.connect_subscribe_bars: list[bool] = []
+        self.update_subscribe_bars: list[bool] = []
         FakeQuoteBroker.instances.append(self)
 
-    def connect(self, codes):
+    def connect(self, codes, *, subscribe_bars: bool = True):
         self.connect_calls += 1
         self.closed = False
         self.connected_codes.append(tuple(codes))
+        self.connect_subscribe_bars.append(subscribe_bars)
 
-    def update_symbols(self, codes):
+    def update_symbols(self, codes, *, subscribe_bars: bool = True):
         self.update_calls += 1
         self.connected_codes.append(tuple(codes))
+        self.update_subscribe_bars.append(subscribe_bars)
 
     def close(self) -> None:
         self.closed = True
@@ -364,11 +373,15 @@ class FakeTradeAccountClient(TradeAccountClient):
 class RecordingQuoteSink:
     def __init__(self) -> None:
         self.quotes: list[QuoteUpdate] = []
+        self.schedules: list[ScheduledTrigger] = []
         self.bars: list[tuple[str, dict[str, object]]] = []
         self.messages: list[tuple[int, str]] = []
 
     def on_quote(self, update: QuoteUpdate) -> None:
         self.quotes.append(update)
+
+    def on_schedule(self, trigger: ScheduledTrigger) -> None:
+        self.schedules.append(trigger)
 
     def on_bar(self, code: str, bar: pd.Series | dict[str, object]) -> None:
         self.bars.append((code, dict(bar)))
@@ -419,6 +432,7 @@ class LiveTradingConfigTests(unittest.TestCase):
         self.assertEqual(config.history_broker.type, "futu")
         self.assertEqual(config.history_broker.host, "127.0.0.2")
         self.assertEqual(config.history_broker.port, 22222)
+        self.assertEqual(config.history_broker.data_root, ".kline_day")
         self.assertEqual(config.stock_pool.codes, ("US.AAPL", "US.MSFT"))
         self.assertEqual(config.stock_pool.strategy.name, "dual_momentum")
         self.assertEqual(config.runtime.config_reload_interval_seconds, 3.0)
@@ -528,6 +542,7 @@ class LiveTradingConfigTests(unittest.TestCase):
         self.assertEqual(config.history_broker.type, "futu")
         self.assertEqual(config.history_broker.host, "127.0.0.2")
         self.assertEqual(config.history_broker.port, 22222)
+        self.assertEqual(config.history_broker.data_root, ".kline_day")
 
     def test_load_quote_config_allows_stock_pool_to_be_split_out(self) -> None:
         # 验证加载 行情配置 允许 股票池 到 be 拆分 out这个场景的行为。
@@ -570,6 +585,57 @@ class LiveTradingConfigTests(unittest.TestCase):
         self.assertEqual(config.history_broker.type, "futu")
         self.assertEqual(config.history_broker.host, "127.0.0.1")
         self.assertEqual(config.history_broker.port, 11111)
+        self.assertEqual(config.history_broker.data_root, ".kline_day")
+
+    def test_load_quote_config_supports_shared_quote_broker_data_root(self) -> None:
+        # 验证加载 行情配置 支持 共享 quote_broker 透传 history data_root 这个场景的行为。
+        config = load_quote_config_from_text(
+            json.dumps(
+                {
+                    "quote_broker": {
+                        "type": "futu",
+                        "host": "127.0.0.1",
+                        "port": 11111,
+                        "data_root": "runtime/shared_history_cache",
+                    },
+                    "stock_pool": {
+                        "codes": ["US.AAPL", "US.MSFT"],
+                        "strategy": {"name": "dual_momentum"},
+                    },
+                }
+            )
+        )
+
+        self.assertEqual(config.realtime_broker.host, "127.0.0.1")
+        self.assertEqual(config.realtime_broker.port, 11111)
+        self.assertEqual(config.history_broker.host, "127.0.0.1")
+        self.assertEqual(config.history_broker.port, 11111)
+        self.assertEqual(config.history_broker.data_root, "runtime/shared_history_cache")
+
+    def test_load_quote_config_supports_shared_broker_data_root(self) -> None:
+        # 验证加载 行情配置 支持 共享 broker 透传 history data_root 这个场景的行为。
+        config = load_quote_config_from_text(
+            json.dumps(
+                {
+                    "broker": {
+                        "type": "futu",
+                        "host": "127.0.0.1",
+                        "port": 11111,
+                        "data_root": "runtime/shared_history_cache",
+                    },
+                    "stock_pool": {
+                        "codes": ["US.AAPL", "US.MSFT"],
+                        "strategy": {"name": "dual_momentum"},
+                    },
+                }
+            )
+        )
+
+        self.assertEqual(config.realtime_broker.host, "127.0.0.1")
+        self.assertEqual(config.realtime_broker.port, 11111)
+        self.assertEqual(config.history_broker.host, "127.0.0.1")
+        self.assertEqual(config.history_broker.port, 11111)
+        self.assertEqual(config.history_broker.data_root, "runtime/shared_history_cache")
 
     def test_load_quote_config_supports_shared_broker_history_endpoint_override(self) -> None:
         # 验证加载 行情配置 支持 共享 broker 覆盖 history host/port 这个场景的行为。
@@ -595,6 +661,7 @@ class LiveTradingConfigTests(unittest.TestCase):
         self.assertEqual(config.realtime_broker.port, 11111)
         self.assertEqual(config.history_broker.host, "127.0.0.2")
         self.assertEqual(config.history_broker.port, 22222)
+        self.assertEqual(config.history_broker.data_root, ".kline_day")
 
     def test_load_quote_config_supports_shared_broker_realtime_endpoint_override(self) -> None:
         # 验证加载 行情配置 支持 共享 broker 覆盖 realtime host/port 这个场景的行为。
@@ -620,6 +687,7 @@ class LiveTradingConfigTests(unittest.TestCase):
         self.assertEqual(config.realtime_broker.port, 11111)
         self.assertEqual(config.history_broker.host, "127.0.0.2")
         self.assertEqual(config.history_broker.port, 22222)
+        self.assertEqual(config.history_broker.data_root, ".kline_day")
 
     def test_load_quote_config_rejects_trade_account_overlap(self) -> None:
         # 验证加载 行情配置 拒绝 交易账户 重叠这个场景的行为。
@@ -651,6 +719,26 @@ class LiveTradingConfigTests(unittest.TestCase):
         self.assertEqual(config.realtime_broker.port, 19111)
         self.assertEqual(config.history_broker.type, "futu")
 
+    def test_load_quote_config_supports_schedule_us_realtime_broker(self) -> None:
+        payload = build_quote_payload(history_type="local")
+        payload["realtime_broker"] = {
+            "type": "schedule_us",
+            "trigger_time": "09:30",
+            "timezone": "America/New_York",
+            "market_calendar": "XNYS",
+            "catch_up_missed_session": True,
+        }
+
+        config = load_quote_config_from_text(json.dumps(payload))
+
+        self.assertEqual(config.realtime_broker.type, "schedule_us")
+        self.assertEqual(config.realtime_broker.trigger_time, "09:30")
+        self.assertEqual(config.realtime_broker.timezone, "America/New_York")
+        self.assertEqual(config.realtime_broker.market_calendar, "XNYS")
+        self.assertTrue(config.realtime_broker.catch_up_missed_session)
+        self.assertIsNone(config.realtime_broker.host)
+        self.assertIsNone(config.realtime_broker.port)
+
     def test_load_quote_config_supports_minimal_futu_realtime_config(self) -> None:
         # 验证加载 行情配置 支持 最小 futu 实时配置这个场景的行为。
         with tempfile.TemporaryDirectory() as tmp:
@@ -678,6 +766,17 @@ class LiveTradingConfigTests(unittest.TestCase):
         self.assertEqual(config.history_broker.type, "polygon")
         self.assertIsNone(config.history_broker.host)
         self.assertIsNone(config.history_broker.port)
+        self.assertEqual(config.history_broker.data_root, ".kline_day")
+
+    def test_load_quote_config_supports_polygon_history_broker_custom_data_root(self) -> None:
+        # 验证加载 行情配置 支持 Polygon 历史券商 自定义 data_root这个场景的行为。
+        payload = build_quote_payload(history_type="polygon")
+        payload["history_broker"]["data_root"] = "runtime/polygon_cache"
+
+        config = load_quote_config_from_text(json.dumps(payload))
+
+        self.assertEqual(config.history_broker.type, "polygon")
+        self.assertEqual(config.history_broker.data_root, "runtime/polygon_cache")
 
     def test_load_quote_config_supports_local_history_broker(self) -> None:
         # 验证加载 行情配置 支持 本地 历史券商这个场景的行为。
@@ -788,6 +887,36 @@ class LiveTradingConfigTests(unittest.TestCase):
 
         self.assertEqual(config.execution.executor, "mock")
         self.assertEqual(config.execution.order_session, "RTH")
+
+    def test_load_trade_account_config_supports_notify_executor_with_email_config(self) -> None:
+        payload = build_trade_payload(
+            [
+                build_mock_trade_account_payload(
+                    account_id="notify_only",
+                    execution={"executor": "notify"},
+                    notification={
+                        "email": {
+                            "enabled": True,
+                            "smtp_host": "smtp.example.com",
+                            "smtp_port": 587,
+                            "username": "bot@example.com",
+                            "password_env": "LIVETRADING_NOTIFY_EMAIL_PASSWORD",
+                            "from": "bot@example.com",
+                            "to": ["you@example.com"],
+                            "subject_prefix": "[dual_momentum]",
+                        }
+                    },
+                )
+            ]
+        )
+
+        config = load_trade_account_config_from_text(json.dumps(payload))
+
+        self.assertEqual(config.execution.executor, "notify")
+        self.assertEqual(config.broker.type, "mock")
+        self.assertTrue(config.notification.email.enabled)
+        self.assertEqual(config.notification.email.smtp_host, "smtp.example.com")
+        self.assertEqual(config.notification.email.to_addresses, ("you@example.com",))
 
     def test_load_trade_account_config_defaults_us_futu_real_order_session_to_eth(self) -> None:
         # 验证加载 交易账户配置 默认 对 美股 futu_real 使用 ETH 会话这个场景的行为。
@@ -1034,20 +1163,31 @@ class LiveTradingConfigTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             load_livetrading_config_from_payloads(quote_payload, build_trade_payload([trade_account]))
 
-    def test_build_livetrading_config_rejects_extended_hours_on_mock_executor(self) -> None:
-        # 验证构建 实盘配置 拒绝 盘前盘后 on mock 执行器这个场景的行为。
-        quote_payload = build_quote_payload()
+    def test_build_livetrading_config_rejects_notify_executor_with_non_mock_broker(self) -> None:
+        quote_payload = build_quote_payload(history_type="local")
         trade_account = build_trade_account_payload(
-            "sim_primary",
+            "notify_only",
             "127.0.0.9",
+            execution={"executor": "notify"},
+        )
+
+        with self.assertRaises(ValueError):
+            load_livetrading_config_from_payloads(quote_payload, build_trade_payload([trade_account]))
+
+    def test_build_livetrading_config_allows_extended_hours_on_mock_executor(self) -> None:
+        # 验证构建 实盘配置 允许 mock 执行器 使用扩展时段订阅这个场景的行为。
+        quote_payload = build_quote_payload()
+        trade_account = build_mock_trade_account_payload(
             execution={
                 "executor": "mock",
                 "order_session": "ETH",
             },
         )
 
-        with self.assertRaises(ValueError):
-            load_livetrading_config_from_payloads(quote_payload, build_trade_payload([trade_account]))
+        config = load_livetrading_config_from_payloads(quote_payload, build_trade_payload([trade_account]))
+
+        self.assertEqual(config.trade_account.execution.order_session, "ETH")
+        self.assertTrue(config.realtime_broker.subscribe_extended_time)
 
 
 class RebalancePlannerTests(unittest.TestCase):
@@ -1784,6 +1924,68 @@ class MockRealtimeQuoteClientTests(unittest.TestCase):
         self.assertEqual(sink.quotes[0].last_price, 104.5)
         self.assertEqual(sink.quotes[0].source, "mock")
 
+    def test_mock_quote_client_ignores_pre_market_push_under_rth_subscription(self) -> None:
+        # 验证 mock 行情客户端会按 RTH 订阅规则忽略盘前分钟 bar。
+        sink = RecordingQuoteSink()
+        fake_server = FakeHttpServer()
+        client = MockRealtimeQuoteClient(
+            RealtimeQuoteBrokerConfig(
+                type="mock",
+                host="127.0.0.1",
+                port=19111,
+                subscribe_extended_time=False,
+            ),
+            sink,
+            logging.getLogger("test.mock_quote"),
+        )
+        with patch.object(client, "_build_server", return_value=fake_server):
+            client.connect(["US.AAPL"])
+            payload = client.push_bars(
+                {
+                    "code": "US.AAPL",
+                    "time_key": "2026-03-13 04:00:00",
+                    "close": 104.5,
+                    "volume": 321,
+                }
+            )
+            client.close()
+
+        self.assertEqual(payload["accepted"], 0)
+        self.assertEqual(payload["ignored"], 1)
+        self.assertEqual(sink.quotes, [])
+        self.assertEqual(sink.bars, [])
+
+    def test_mock_quote_client_accepts_pre_market_push_when_extended_time_enabled(self) -> None:
+        # 验证 mock 行情客户端在扩展时段订阅开启时会接收盘前分钟 bar。
+        sink = RecordingQuoteSink()
+        fake_server = FakeHttpServer()
+        client = MockRealtimeQuoteClient(
+            RealtimeQuoteBrokerConfig(
+                type="mock",
+                host="127.0.0.1",
+                port=19111,
+                subscribe_extended_time=True,
+            ),
+            sink,
+            logging.getLogger("test.mock_quote"),
+        )
+        with patch.object(client, "_build_server", return_value=fake_server):
+            client.connect(["US.AAPL"])
+            payload = client.push_bars(
+                {
+                    "code": "US.AAPL",
+                    "time_key": "2026-03-13 04:00:00",
+                    "close": 104.5,
+                    "volume": 321,
+                }
+            )
+            client.close()
+
+        self.assertEqual(payload["accepted"], 1)
+        self.assertEqual(payload["ignored"], 0)
+        self.assertEqual(len(sink.quotes), 1)
+        self.assertEqual(sink.quotes[0].last_price, 104.5)
+
 
 class FutuRealtimeQuoteClientTests(unittest.TestCase):
     def test_futu_quote_client_subscribe_uses_configured_extended_time_flag(self) -> None:
@@ -1852,7 +2054,74 @@ class FutuRealtimeQuoteClientTests(unittest.TestCase):
 
         self.assertEqual(len(fake_contexts), 1)
         self.assertEqual(fake_contexts[0].subscribe_calls[0]["codes"], ["US.AAPL"])
+        self.assertEqual(fake_contexts[0].subscribe_calls[0]["sub_types"], ["QUOTE", "K_1M"])
         self.assertFalse(fake_contexts[0].subscribe_calls[0]["extended_time"])
+
+    def test_futu_quote_client_can_skip_kline_subscription(self) -> None:
+        class FakeQuoteContext:
+            def __init__(self, host: str, port: int) -> None:
+                self.host = host
+                self.port = port
+                self.subscribe_calls: list[dict[str, object]] = []
+
+            def set_handler(self, handler) -> None:
+                return None
+
+            def start(self) -> None:
+                return None
+
+            def subscribe(self, codes, sub_types, **kwargs):
+                self.subscribe_calls.append(
+                    {
+                        "codes": list(codes),
+                        "sub_types": list(sub_types),
+                        **kwargs,
+                    }
+                )
+                return 0, "ok"
+
+            def unsubscribe(self, codes, sub_types):
+                return 0, "ok"
+
+            def close(self) -> None:
+                return None
+
+        class FakeHandlerBase:
+            def on_recv_rsp(self, rsp_pb):
+                return 0, rsp_pb
+
+        fake_contexts: list[FakeQuoteContext] = []
+
+        def build_quote_context(host: str, port: int) -> FakeQuoteContext:
+            context = FakeQuoteContext(host, port)
+            fake_contexts.append(context)
+            return context
+
+        fake_futu = {
+            "OpenQuoteContext": build_quote_context,
+            "StockQuoteHandlerBase": FakeHandlerBase,
+            "CurKlineHandlerBase": FakeHandlerBase,
+            "SubType": type("FakeSubType", (), {"QUOTE": "QUOTE", "K_1M": "K_1M"}),
+            "RET_OK": 0,
+        }
+        sink = RecordingQuoteSink()
+        client = FutuRealtimeQuoteClient(
+            RealtimeQuoteBrokerConfig(
+                type="futu",
+                host="127.0.0.1",
+                port=11111,
+                subscribe_extended_time=False,
+            ),
+            sink,
+            logging.getLogger("test.futu_quote.no_kline"),
+        )
+
+        with patch("livetrading.quote_brokers.futu._load_futu_api", return_value=fake_futu):
+            client.connect(["US.AAPL"], subscribe_bars=False)
+            client.close()
+
+        self.assertEqual(len(fake_contexts), 1)
+        self.assertEqual(fake_contexts[0].subscribe_calls[0]["sub_types"], ["QUOTE"])
 
 
 class MockTradeAccountClientTests(unittest.TestCase):
@@ -1939,10 +2208,10 @@ class FactoryRegistryTests(unittest.TestCase):
                 self.event_sink = event_sink
                 self.logger = logger
 
-            def connect(self, codes) -> None:
+            def connect(self, codes, *, subscribe_bars: bool = True) -> None:
                 return None
 
-            def update_symbols(self, codes) -> None:
+            def update_symbols(self, codes, *, subscribe_bars: bool = True) -> None:
                 return None
 
             def close(self) -> None:
@@ -2151,6 +2420,41 @@ class LocalDataDailyHistoryProviderTests(unittest.TestCase):
         self.assertTrue(any("duplicate daily time_key" in msg for msg in logs.output))
         self.assertIn(15.0, list(histories["US.AAPL"]["close"]))
 
+    def test_provider_only_loads_latest_needed_week_file_for_local_warmup(self) -> None:
+        cfg = load_livetrading_config_from_payloads(
+            build_quote_payload(),
+            build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
+        ).history_broker
+        with tempfile.TemporaryDirectory() as tmp:
+            daily_root = Path(tmp) / "kline_day"
+            daily_dir = daily_root / "US.AAPL"
+            daily_dir.mkdir(parents=True)
+            (daily_dir / "US.AAPL_2026-03-09.csv").write_text(
+                "time_key,open,close,high,low,volume\n"
+                "2026-03-09 00:00:00,10,11,12,9,100\n"
+                "2026-03-10 00:00:00,11,12,13,10,110\n",
+                encoding="utf-8",
+            )
+            (daily_dir / "US.AAPL_2026-03-16.csv").write_text(
+                "time_key,open,close,high,low,volume\n"
+                "2026-03-16 00:00:00,12,13,14,11,120\n"
+                "2026-03-17 00:00:00,13,14,15,12,130\n",
+                encoding="utf-8",
+            )
+            local_cache = LocalKlineReader(kline_day_root=daily_root)
+            provider = LocalDataDailyHistoryProvider(
+                cfg,
+                logging.getLogger("test.local_history"),
+                kline_day_root=daily_root,
+                local_cache=local_cache,
+            )
+
+            histories = provider.fetch_daily_histories(["US.AAPL"], {"US.AAPL": 2})
+            stats = local_cache.snapshot()
+
+        self.assertEqual(list(histories["US.AAPL"]["close"]), [13.0, 14.0])
+        self.assertEqual(stats.files_loaded, 1)
+
 
 class PolygonCacheDailyHistoryProviderTests(unittest.TestCase):
     def test_polygon_request_retries_after_429_and_then_succeeds(self) -> None:
@@ -2212,26 +2516,31 @@ class PolygonCacheDailyHistoryProviderTests(unittest.TestCase):
 
     def test_create_daily_history_provider_uses_polygon_cache_provider(self) -> None:
         # 验证创建 日线历史提供器 使用 Polygon 缓存提供器这个场景的行为。
+        quote_payload = build_quote_payload(history_type="polygon")
+        quote_payload["history_broker"]["data_root"] = "runtime/polygon_cache"
         cfg = load_livetrading_config_from_payloads(
-            build_quote_payload(history_type="polygon"),
+            quote_payload,
             build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
         ).history_broker
 
         provider = create_daily_history_provider(cfg, logging.getLogger("test.polygon_cache_factory"))
 
         self.assertIsInstance(provider, PolygonCacheDailyHistoryProvider)
-        self.assertEqual(provider._kline_day_root, Path(".kline_day"))
+        self.assertEqual(provider._kline_day_root, Path("runtime/polygon_cache"))
 
     def test_create_daily_history_provider_uses_futu_provider(self) -> None:
         # 验证创建 日线历史提供器 使用 Futu 提供器这个场景的行为。
+        quote_payload = build_quote_payload(history_type="futu")
+        quote_payload["history_broker"]["data_root"] = "runtime/futu_cache"
         cfg = load_livetrading_config_from_payloads(
-            build_quote_payload(history_type="futu"),
+            quote_payload,
             build_trade_payload([build_trade_account_payload("a", "127.0.0.1")]),
         ).history_broker
 
         provider = create_daily_history_provider(cfg, logging.getLogger("test.futu_history_factory"))
 
         self.assertIsInstance(provider, FutuDailyHistoryProvider)
+        self.assertEqual(provider._kline_day_root, Path("runtime/futu_cache"))
 
     def test_futu_provider_excludes_in_progress_daily_bar_and_rewrites_exact_cache(self) -> None:
         # 验证Futu 提供器 排除 在 progress 日线 bar and 重写 精确 缓存这个场景的行为。
@@ -3204,6 +3513,107 @@ class DualMomentumPoolStrategyTests(unittest.TestCase):
         self.assertIsNotNone(first)
         self.assertIsNone(second)
 
+    def test_dual_momentum_uses_market_local_trade_date_for_timezone_aware_bar(self) -> None:
+        # 验证双动量状态机会先按市场本地时区归属 trade_date，再决定是否换日。
+        # 这里直接调用 strategy.on_bar，绕过 quote broker 时段过滤，只验证时区到 trade_date 的映射。
+        quote_payload = build_quote_payload()
+        trade_payload = build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.9")])
+        config = load_livetrading_config_from_payloads(quote_payload, trade_payload)
+        strategy = build_pool_strategy(config.stock_pool)
+        strategy.bootstrap(
+            {
+                "US.AAPL": build_daily_history("US.AAPL", [100.0, 101.0, 102.0, 103.0]),
+                "US.MSFT": build_daily_history("US.MSFT", [100.0, 105.0, 110.0, 120.0]),
+            }
+        )
+
+        # 这个 UTC 时间换算到纽约时间是 2026-03-12 19:30:00，
+        # 仍属于 2026-03-12 这个市场本地日期，不应被误判成 2026-03-13 的新交易日。
+        decision = strategy.on_bar(
+            "US.AAPL",
+            build_minute_bar("US.AAPL", "2026-03-13 00:30:00+00:00", 104.0),
+        )
+
+        self.assertIsNone(decision)
+
+    def test_dual_momentum_can_rebalance_from_quote_updates_without_realtime_bars(self) -> None:
+        quote_payload = build_quote_payload()
+        trade_payload = build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.9")])
+        config = load_livetrading_config_from_payloads(quote_payload, trade_payload)
+        strategy = build_pool_strategy(config.stock_pool)
+        strategy.bootstrap(
+            {
+                "US.AAPL": build_daily_history("US.AAPL", [100.0, 101.0, 102.0, 103.0]),
+                "US.MSFT": build_daily_history("US.MSFT", [100.0, 105.0, 110.0, 120.0]),
+            }
+        )
+
+        decision = strategy.on_quote(
+            QuoteUpdate(
+                code="US.AAPL",
+                timestamp=pd.Timestamp("2026-03-13 09:30:00"),
+                last_price=104.0,
+                volume=1300.0,
+            )
+        )
+
+        self.assertFalse(strategy.requires_realtime_bars())
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertIn("US.MSFT", decision.target_weights)
+        self.assertGreater(decision.target_weights["US.MSFT"], 0.0)
+
+
+class ScheduleUSQuoteClientTests(unittest.TestCase):
+    def test_schedule_us_quote_client_can_catch_up_current_session(self) -> None:
+        sink = RecordingQuoteSink()
+        config = RealtimeQuoteBrokerConfig(
+            type="schedule_us",
+            trigger_time="09:30",
+            timezone="America/New_York",
+            market_calendar="XNYS",
+            catch_up_missed_session=True,
+        )
+        broker = ScheduleUSQuoteClient(
+            config,
+            sink,
+            logging.getLogger("test.schedule_us.catch_up"),
+            now_provider=lambda: datetime(2026, 3, 16, 10, 0, tzinfo=ZoneInfo("America/New_York")),
+            sleep_interval_seconds=0.01,
+        )
+
+        broker.connect(("US.AAPL", "US.MSFT"), subscribe_bars=False)
+        deadline = time.time() + 0.2
+        while time.time() < deadline and not sink.schedules:
+            time.sleep(0.01)
+        broker.close()
+
+        self.assertEqual(len(sink.schedules), 1)
+        self.assertEqual(sink.schedules[0].timestamp, pd.Timestamp("2026-03-16 09:30:00-0400"))
+
+    def test_schedule_us_quote_client_skips_missed_session_without_catch_up(self) -> None:
+        sink = RecordingQuoteSink()
+        config = RealtimeQuoteBrokerConfig(
+            type="schedule_us",
+            trigger_time="09:30",
+            timezone="America/New_York",
+            market_calendar="XNYS",
+            catch_up_missed_session=False,
+        )
+        broker = ScheduleUSQuoteClient(
+            config,
+            sink,
+            logging.getLogger("test.schedule_us.no_catch_up"),
+            now_provider=lambda: datetime(2026, 3, 16, 10, 0, tzinfo=ZoneInfo("America/New_York")),
+            sleep_interval_seconds=0.01,
+        )
+
+        broker.connect(("US.AAPL", "US.MSFT"), subscribe_bars=False)
+        time.sleep(0.05)
+        broker.close()
+
+        self.assertEqual(sink.schedules, [])
+
 
 class LiveTradingEngineTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -3248,6 +3658,101 @@ class LiveTradingEngineTests(unittest.TestCase):
         self.assertEqual(state.shadow_cash, 12345.0)
         self.assertEqual(state.actual_positions["US.MSFT"].qty, 3)
         self.assertEqual(state.shadow_positions["US.MSFT"], 3)
+
+    def test_engine_uses_quote_only_subscription_for_dual_momentum(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            quote_path = Path(tmp) / "quote.json"
+            trade_path = Path(tmp) / "trade.json"
+            quote_path.write_text(json.dumps(build_quote_payload()), encoding="utf-8")
+            trade_path.write_text(
+                json.dumps(build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.9")])),
+                encoding="utf-8",
+            )
+            config = load_livetrading_config(quote_path, trade_path)
+
+            engine = LiveTradingEngine(
+                quote_path,
+                trade_path,
+                quote_broker_factory=FakeQuoteBroker,
+                history_provider_factory=FakeHistoryProvider,
+                trade_account_factory=FakeTradeAccountClient,
+            )
+            engine.apply_config(config)
+            engine.stop()
+
+        self.assertEqual(len(FakeQuoteBroker.instances), 1)
+        self.assertEqual(FakeQuoteBroker.instances[0].connect_subscribe_bars, [False])
+
+    def test_engine_schedule_notify_refreshes_history_and_sends_email(self) -> None:
+        sent_emails: list[tuple[str, str]] = []
+
+        def fake_email_sender(email_config, *, subject: str, body: str) -> None:
+            sent_emails.append((subject, body))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            quote_path = Path(tmp) / "quote.json"
+            trade_path = Path(tmp) / "trade.json"
+            quote_payload = build_quote_payload(history_type="local")
+            quote_payload["realtime_broker"] = {
+                "type": "schedule_us",
+                "trigger_time": "09:30",
+                "timezone": "America/New_York",
+                "market_calendar": "XNYS",
+                "catch_up_missed_session": True,
+            }
+            quote_path.write_text(json.dumps(quote_payload), encoding="utf-8")
+            trade_path.write_text(
+                json.dumps(
+                    build_trade_payload(
+                        [
+                            build_mock_trade_account_payload(
+                                account_id="notify_only",
+                                execution={"executor": "notify"},
+                                notification={
+                                    "email": {
+                                        "enabled": True,
+                                        "smtp_host": "smtp.example.com",
+                                        "smtp_port": 587,
+                                        "username": "bot@example.com",
+                                        "password_env": "LIVETRADING_NOTIFY_EMAIL_PASSWORD",
+                                        "from": "bot@example.com",
+                                        "to": ["you@example.com"],
+                                        "subject_prefix": "[dual_momentum]",
+                                    }
+                                },
+                            )
+                        ]
+                    )
+                ),
+                encoding="utf-8",
+            )
+            config = load_livetrading_config(quote_path, trade_path)
+
+            engine = LiveTradingEngine(
+                quote_path,
+                trade_path,
+                quote_broker_factory=FakeQuoteBroker,
+                history_provider_factory=FakeHistoryProvider,
+                trade_account_factory=FakeTradeAccountClient,
+                email_sender=fake_email_sender,
+            )
+            engine.apply_config(config)
+            self.assertIsNone(engine._pool_strategy)
+            engine.on_schedule(
+                ScheduledTrigger(
+                    timestamp=pd.Timestamp("2026-03-13 09:30:00", tz="America/New_York"),
+                    source="schedule_us",
+                )
+            )
+            engine.stop()
+
+        self.assertEqual(len(FakeQuoteBroker.instances), 1)
+        self.assertEqual(len(FakeHistoryProvider.instances), 1)
+        self.assertEqual(len(FakeHistoryProvider.instances[0].fetch_calls), 1)
+        self.assertEqual(FakeTradeAccountClient.instances, [])
+        self.assertEqual(len(sent_emails), 1)
+        self.assertIn("推荐", sent_emails[0][0])
+        self.assertIn("推荐目标：US.MSFT", sent_emails[0][1])
 
     def test_engine_survives_invalid_hot_reload_config(self) -> None:
         # 验证engine 在异常场景下保持可运行 非法 热加载 配置这个场景的行为。
@@ -3385,14 +3890,14 @@ class LiveTradingEngineTests(unittest.TestCase):
             engine.on_quote(
                 QuoteUpdate(
                     code="US.AAPL",
-                    timestamp=pd.Timestamp("2026-03-13 09:29:00"),
+                    timestamp=pd.Timestamp("2026-03-13 09:30:00"),
                     last_price=104.0,
                 )
             )
             engine.on_quote(
                 QuoteUpdate(
                     code="US.MSFT",
-                    timestamp=pd.Timestamp("2026-03-13 09:29:00"),
+                    timestamp=pd.Timestamp("2026-03-13 09:30:00"),
                     last_price=121.0,
                 )
             )
@@ -3473,6 +3978,46 @@ class LiveTradingEngineTests(unittest.TestCase):
         self.assertEqual(FakeQuoteBroker.instances[0].update_calls, 0)
         self.assertEqual(len(FakeHistoryProvider.instances), 2)
         self.assertTrue(FakeHistoryProvider.instances[0].closed)
+        self.assertEqual(len(FakeHistoryProvider.instances[0].fetch_calls), 1)
+        self.assertEqual(len(FakeHistoryProvider.instances[1].fetch_calls), 1)
+
+    def test_engine_refreshes_history_when_polygon_data_root_changes(self) -> None:
+        # 验证engine 刷新 历史 当 Polygon data_root 变化这个场景的行为。
+        with tempfile.TemporaryDirectory() as tmp:
+            quote_path = Path(tmp) / "quote.json"
+            trade_path = Path(tmp) / "trade.json"
+            quote_payload_a = build_quote_payload(history_type="polygon")
+            quote_payload_a["history_broker"]["data_root"] = "runtime/polygon_cache_a"
+            quote_path.write_text(json.dumps(quote_payload_a), encoding="utf-8")
+            trade_path.write_text(
+                json.dumps(build_trade_payload([build_trade_account_payload("sim_primary", "127.0.0.9")])),
+                encoding="utf-8",
+            )
+            config_a = load_livetrading_config(quote_path, trade_path)
+
+            engine = LiveTradingEngine(
+                quote_path,
+                trade_path,
+                quote_broker_factory=FakeQuoteBroker,
+                history_provider_factory=FakeHistoryProvider,
+                trade_account_factory=FakeTradeAccountClient,
+            )
+            engine.apply_config(config_a)
+
+            quote_payload_b = build_quote_payload(history_type="polygon")
+            quote_payload_b["history_broker"]["data_root"] = "runtime/polygon_cache_b"
+            quote_path.write_text(json.dumps(quote_payload_b), encoding="utf-8")
+            config_b = load_livetrading_config(quote_path, trade_path)
+            engine.apply_config(config_b)
+            engine.stop()
+
+        self.assertEqual(len(FakeQuoteBroker.instances), 1)
+        self.assertEqual(FakeQuoteBroker.instances[0].connect_calls, 1)
+        self.assertEqual(FakeQuoteBroker.instances[0].update_calls, 0)
+        self.assertEqual(len(FakeHistoryProvider.instances), 2)
+        self.assertTrue(FakeHistoryProvider.instances[0].closed)
+        self.assertEqual(FakeHistoryProvider.instances[0].config.data_root, "runtime/polygon_cache_a")
+        self.assertEqual(FakeHistoryProvider.instances[1].config.data_root, "runtime/polygon_cache_b")
         self.assertEqual(len(FakeHistoryProvider.instances[0].fetch_calls), 1)
         self.assertEqual(len(FakeHistoryProvider.instances[1].fetch_calls), 1)
 
@@ -3578,14 +4123,14 @@ class LiveTradingEngineTests(unittest.TestCase):
             engine.on_quote(
                 QuoteUpdate(
                     code="US.AAPL",
-                    timestamp=pd.Timestamp("2026-03-13 09:29:00"),
+                    timestamp=pd.Timestamp("2026-03-13 09:30:00"),
                     last_price=104.0,
                 )
             )
             engine.on_quote(
                 QuoteUpdate(
                     code="US.MSFT",
-                    timestamp=pd.Timestamp("2026-03-13 09:29:00"),
+                    timestamp=pd.Timestamp("2026-03-13 09:30:00"),
                     last_price=121.0,
                 )
             )
@@ -3632,14 +4177,14 @@ class LiveTradingEngineTests(unittest.TestCase):
             engine.on_quote(
                 QuoteUpdate(
                     code="US.AAPL",
-                    timestamp=pd.Timestamp("2026-03-13 09:29:00"),
+                    timestamp=pd.Timestamp("2026-03-13 09:30:00"),
                     last_price=104.0,
                 )
             )
             engine.on_quote(
                 QuoteUpdate(
                     code="US.MSFT",
-                    timestamp=pd.Timestamp("2026-03-13 09:29:00"),
+                    timestamp=pd.Timestamp("2026-03-13 09:30:00"),
                     last_price=121.0,
                 )
             )

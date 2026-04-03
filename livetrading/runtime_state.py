@@ -40,6 +40,8 @@ class LiveTradingRuntimeState:
     def active_prices_for_codes(self, codes: tuple[str, ...]) -> dict[str, float]:
         prices: dict[str, float] = {}
         for code in codes:
+            # 执行层只认运行时收到过的最新价格，不会回头去 warm-up 日线里取收盘价。
+            # 这就是 mock_signal 文档里为什么要先补一次 AAPL/MSFT 参考价。
             price = self.resolve_reference_price(code)
             if price is not None and price > 0:
                 prices[code] = price

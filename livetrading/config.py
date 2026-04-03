@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 import json
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -12,7 +13,7 @@ from .broker import (
 )
 from .pool_strategy_registry import supported_pool_strategy_names
 
-SUPPORTED_EXECUTOR_TYPES = frozenset({"mock", "futu_simulate", "futu_real"})
+SUPPORTED_EXECUTOR_TYPES = frozenset({"mock", "futu_simulate", "futu_real", "notify"})
 SUPPORTED_ORDER_SESSIONS = frozenset({"RTH", "ETH", "ALL"})
 QUOTE_CONFIG_ALLOWED_TOP_LEVEL_KEYS = frozenset({"realtime_broker", "quote_broker", "broker", "history_broker", "stock_pool", "runtime"})
 HISTORY_CONFIG_ALLOWED_TOP_LEVEL_KEYS = frozenset(
@@ -20,11 +21,15 @@ HISTORY_CONFIG_ALLOWED_TOP_LEVEL_KEYS = frozenset(
 )
 POOL_CONFIG_ALLOWED_TOP_LEVEL_KEYS = frozenset({"stock_pool", "pool", "codes", "strategy"})
 TRADE_CONFIG_ALLOWED_TOP_LEVEL_KEYS = frozenset({"trade_account"})
-REALTIME_BROKER_ALLOWED_KEYS = frozenset({"type", "host", "port", "quote_host", "quote_port"})
-REALTIME_BROKER_SHARED_ALLOWED_KEYS = REALTIME_BROKER_ALLOWED_KEYS | frozenset({"history_host", "history_port"})
+REALTIME_BROKER_ALLOWED_KEYS = frozenset(
+    {"type", "host", "port", "quote_host", "quote_port", "trigger_time", "timezone", "market_calendar", "catch_up_missed_session"}
+)
+REALTIME_BROKER_SHARED_ALLOWED_KEYS = REALTIME_BROKER_ALLOWED_KEYS | frozenset(
+    {"history_host", "history_port", "data_root", "kline_day_root"}
+)
 HISTORY_BROKER_ALLOWED_KEYS = frozenset({"type", "host", "port", "data_root", "history_host", "history_port", "kline_day_root"})
 HISTORY_BROKER_SHARED_ALLOWED_KEYS = HISTORY_BROKER_ALLOWED_KEYS | frozenset({"quote_host", "quote_port"})
-TRADE_ACCOUNT_ALLOWED_KEYS = frozenset({"account_id", "broker", "execution"})
+TRADE_ACCOUNT_ALLOWED_KEYS = frozenset({"account_id", "broker", "execution", "notification"})
 TRADE_BROKER_ALLOWED_KEYS = frozenset(
     {
         "type",
@@ -42,6 +47,10 @@ TRADE_BROKER_ALLOWED_KEYS = frozenset(
     }
 )
 EXECUTION_ALLOWED_KEYS = frozenset({"executor", "order_session"})
+NOTIFICATION_ALLOWED_KEYS = frozenset({"email"})
+EMAIL_NOTIFICATION_ALLOWED_KEYS = frozenset(
+    {"enabled", "smtp_host", "smtp_port", "username", "password_env", "from", "to", "subject_prefix", "use_tls"}
+)
 DEFAULT_MARKET = "US"
 DEFAULT_CURRENCY = "USD"
 DEFAULT_SECURITY_TYPE = "stock"
@@ -163,8 +172,12 @@ def _parse_order_session(value: Any, *, label: str, default: str = "RTH") -> str
 @dataclass(frozen=True)
 class RealtimeQuoteBrokerConfig:
     type: str
-    host: str
-    port: int
+    host: str | None = None
+    port: int | None = None
+    trigger_time: str | None = None
+    timezone: str | None = None
+    market_calendar: str | None = None
+    catch_up_missed_session: bool = False
     subscribe_extended_time: bool = False
 
     def connection_signature(self) -> tuple[object, ...]:
@@ -172,10 +185,20 @@ class RealtimeQuoteBrokerConfig:
             self.type,
             self.host,
             self.port,
+            self.trigger_time,
+            self.timezone,
+            self.market_calendar,
+            self.catch_up_missed_session,
             self.subscribe_extended_time,
         )
 
     def endpoint_summary(self) -> str:
+        if self.type == "schedule_us":
+            return (
+                f"{self.market_calendar or 'XNYS'} "
+                f"{self.timezone or 'America/New_York'} "
+                f"{self.trigger_time or '09:30'}"
+            )
         return f"{self.host}:{self.port}"
 
 
@@ -186,27 +209,32 @@ class HistoryBrokerConfig:
     port: int | None = None
     data_root: str | None = None
 
+    def effective_data_root(self) -> str:
+        return self.data_root or ".kline_day"
+
     def connection_signature(self) -> tuple[object, ...]:
         if self.type == "polygon":
             return (
                 self.type,
+                self.effective_data_root(),
             )
         if self.type == "local":
             return (
                 self.type,
-                self.data_root,
+                self.effective_data_root(),
             )
         return (
             self.type,
             self.host,
             self.port,
+            self.effective_data_root(),
         )
 
     def endpoint_summary(self) -> str:
         if self.type == "polygon":
             return "polygon"
         if self.type == "local":
-            return self.data_root or ".kline_day"
+            return self.effective_data_root()
         return f"{self.host}:{self.port}"
 
 
@@ -247,6 +275,24 @@ class ExecutionConfig:
 
 
 @dataclass(frozen=True)
+class EmailNotificationConfig:
+    enabled: bool = False
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    username: str | None = None
+    password_env: str | None = None
+    from_address: str | None = None
+    to_addresses: tuple[str, ...] = field(default_factory=tuple)
+    subject_prefix: str = "[livetrading]"
+    use_tls: bool = True
+
+
+@dataclass(frozen=True)
+class NotificationConfig:
+    email: EmailNotificationConfig = field(default_factory=EmailNotificationConfig)
+
+
+@dataclass(frozen=True)
 class RuntimeConfig:
     config_reload_interval_seconds: float = 10.0
     log_level: str = "INFO"
@@ -280,6 +326,7 @@ class TradeAccountConfig:
     account_id: str
     broker: TradeBrokerConfig
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
+    notification: NotificationConfig = field(default_factory=NotificationConfig)
 
     def connection_signature(self) -> tuple[object, ...]:
         return (self.account_id,) + self.broker.connection_signature()
@@ -325,16 +372,36 @@ def _parse_realtime_quote_broker_config(
         label=label,
         allowed_keys=REALTIME_BROKER_SHARED_ALLOWED_KEYS if allow_cross_endpoint_aliases else REALTIME_BROKER_ALLOWED_KEYS,
     )
-    host = str(raw.get("quote_host", raw.get("host", ""))).strip()
-    if not host:
-        raise ValueError(f"{label}.host must not be empty")
-    port = _coerce_port(raw.get("quote_port", raw.get("port")), label=f"{label}.port")
     broker_type = _parse_broker_type(
         raw.get("type"),
         label=f"{label}.type",
         default="futu",
         supported_types=supported_quote_broker_types(),
     )
+    if broker_type == "schedule_us":
+        trigger_time = str(raw.get("trigger_time", "09:30")).strip() or "09:30"
+        try:
+            datetime.strptime(trigger_time, "%H:%M")
+        except ValueError as exc:
+            raise ValueError(f"{label}.trigger_time must use HH:MM format") from exc
+        timezone = str(raw.get("timezone", "America/New_York")).strip() or "America/New_York"
+        market_calendar = str(raw.get("market_calendar", "XNYS")).strip().upper() or "XNYS"
+        return RealtimeQuoteBrokerConfig(
+            type=broker_type,
+            trigger_time=trigger_time,
+            timezone=timezone,
+            market_calendar=market_calendar,
+            catch_up_missed_session=_coerce_bool(
+                raw.get("catch_up_missed_session"),
+                default=False,
+                label=f"{label}.catch_up_missed_session",
+            ),
+        )
+
+    host = str(raw.get("quote_host", raw.get("host", ""))).strip()
+    if not host:
+        raise ValueError(f"{label}.host must not be empty")
+    port = _coerce_port(raw.get("quote_port", raw.get("port")), label=f"{label}.port")
     return RealtimeQuoteBrokerConfig(
         type=broker_type,
         host=host,
@@ -359,6 +426,7 @@ def _parse_history_broker_config(
         default="futu",
         supported_types=supported_daily_history_provider_types(),
     )
+    data_root = str(raw.get("data_root", raw.get("kline_day_root", ".kline_day"))).strip() or ".kline_day"
     if broker_type == "polygon":
         host_raw = raw.get("history_host", raw.get("host"))
         port_raw = raw.get("history_port", raw.get("port"))
@@ -368,9 +436,9 @@ def _parse_history_broker_config(
             type=broker_type,
             host=host,
             port=port,
+            data_root=data_root,
         )
     if broker_type == "local":
-        data_root = str(raw.get("data_root", raw.get("kline_day_root", ".kline_day"))).strip() or ".kline_day"
         return HistoryBrokerConfig(
             type=broker_type,
             data_root=data_root,
@@ -384,6 +452,7 @@ def _parse_history_broker_config(
         type=broker_type,
         host=host,
         port=port,
+        data_root=data_root,
     )
 
 
@@ -508,13 +577,73 @@ def _parse_execution_config(
         default=default_order_session,
     )
     if order_session != "RTH" and broker is not None:
-        if broker.type != "futu":
+        if executor != "mock" and broker.type != "futu":
             raise ValueError(f"{label}.order_session only supports broker.type=futu")
-        if executor == "mock":
-            raise ValueError(f"{label}.order_session requires a futu submit executor")
     return ExecutionConfig(
         executor=executor,
         order_session=order_session,
+    )
+
+
+def _parse_email_recipients(value: Any, *, label: str) -> tuple[str, ...]:
+    if value in (None, []):
+        return ()
+    if not isinstance(value, list):
+        raise ValueError(f"{label} must be an array")
+    recipients = tuple(str(item).strip() for item in value if str(item).strip())
+    if not recipients:
+        raise ValueError(f"{label} must not be empty")
+    return recipients
+
+
+def _parse_email_notification_config(raw: Mapping[str, Any], *, label: str) -> EmailNotificationConfig:
+    _validate_allowed_mapping_keys(raw, label=label, allowed_keys=EMAIL_NOTIFICATION_ALLOWED_KEYS)
+    enabled = _coerce_bool(raw.get("enabled"), default=False, label=f"{label}.enabled")
+    smtp_host = str(raw.get("smtp_host", "")).strip() or None
+    smtp_port = _coerce_port(raw.get("smtp_port", 587), label=f"{label}.smtp_port")
+    username = raw.get("username")
+    if username is not None:
+        username = str(username).strip() or None
+    password_env = raw.get("password_env")
+    if password_env is not None:
+        password_env = str(password_env).strip() or None
+    from_address = raw.get("from")
+    if from_address is not None:
+        from_address = str(from_address).strip() or None
+    to_addresses = _parse_email_recipients(raw.get("to"), label=f"{label}.to")
+    subject_prefix = str(raw.get("subject_prefix", "[livetrading]")).strip() or "[livetrading]"
+    use_tls = _coerce_bool(raw.get("use_tls"), default=True, label=f"{label}.use_tls")
+    if enabled:
+        if not smtp_host:
+            raise ValueError(f"{label}.smtp_host must not be empty when email notification is enabled")
+        if not to_addresses:
+            raise ValueError(f"{label}.to must not be empty when email notification is enabled")
+        if username is not None and password_env is None:
+            raise ValueError(f"{label}.password_env must be provided when {label}.username is set")
+        if from_address is None:
+            from_address = username
+        if from_address is None:
+            raise ValueError(f"{label}.from must not be empty when email notification is enabled")
+    return EmailNotificationConfig(
+        enabled=enabled,
+        smtp_host=smtp_host,
+        smtp_port=smtp_port,
+        username=username,
+        password_env=password_env,
+        from_address=from_address,
+        to_addresses=to_addresses,
+        subject_prefix=subject_prefix,
+        use_tls=use_tls,
+    )
+
+
+def _parse_notification_config(raw: Mapping[str, Any], *, label: str) -> NotificationConfig:
+    _validate_allowed_mapping_keys(raw, label=label, allowed_keys=NOTIFICATION_ALLOWED_KEYS)
+    return NotificationConfig(
+        email=_parse_email_notification_config(
+            _require_mapping(raw.get("email", {}), f"{label}.email"),
+            label=f"{label}.email",
+        )
     )
 
 
@@ -603,7 +732,11 @@ def _parse_trade_account_config(raw: Mapping[str, Any], *, label: str = "trade_a
         label=f"{label}.execution",
         broker=broker,
     )
-    return TradeAccountConfig(account_id=account_id, broker=broker, execution=execution)
+    notification = _parse_notification_config(
+        _require_mapping(raw.get("notification", {}), f"{label}.notification"),
+        label=f"{label}.notification",
+    )
+    return TradeAccountConfig(account_id=account_id, broker=broker, execution=execution, notification=notification)
 
 
 def load_quote_config_from_text(text: str) -> QuoteConfig:
@@ -699,21 +832,21 @@ def build_livetrading_config(
         raise ValueError("stock pool config must be provided either inline in quote config or via --pool-config")
     sole_account = trade_account_config
     if sole_account.execution.order_session != "RTH":
-        if sole_account.broker.type != "futu":
+        if sole_account.execution.executor != "mock" and sole_account.broker.type != "futu":
             raise ValueError(
                 f"trade account {sole_account.account_id} order_session only supports broker.type=futu"
-            )
-        if sole_account.execution.executor == "mock":
-            raise ValueError(
-                f"trade account {sole_account.account_id} order_session requires a futu submit executor"
             )
     if sole_account.execution.executor == "futu_simulate" and sole_account.broker.trade_env != "SIMULATE":
         raise ValueError(
             f"trade account {sole_account.account_id} executor futu_simulate requires broker.trade_env=SIMULATE"
         )
-    if sole_account.broker.type == "mock" and sole_account.execution.executor != "mock":
+    if sole_account.execution.executor == "notify" and sole_account.broker.type != "mock":
         raise ValueError(
-            f"trade account {sole_account.account_id} broker.type=mock only supports execution.executor=mock"
+            f"trade account {sole_account.account_id} executor notify requires broker.type=mock"
+        )
+    if sole_account.broker.type == "mock" and sole_account.execution.executor not in {"mock", "notify"}:
+        raise ValueError(
+            f"trade account {sole_account.account_id} broker.type=mock only supports execution.executor=mock or notify"
         )
     if sole_account.execution.executor == "futu_real" and sole_account.broker.trade_env != "REAL":
         raise ValueError(

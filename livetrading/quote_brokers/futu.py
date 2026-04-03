@@ -20,9 +20,10 @@ class FutuRealtimeQuoteClient(QuoteBrokerClient):
         self._quote_ctx = None
         self._futu = None
         self._codes: list[str] = []
+        self._subscribe_bars = True
         self._lock = threading.RLock()
 
-    def connect(self, codes: Iterable[str]) -> None:
+    def connect(self, codes: Iterable[str], *, subscribe_bars: bool = True) -> None:
         with self._lock:
             self.close()
             self._futu = _load_futu_api()
@@ -30,23 +31,29 @@ class FutuRealtimeQuoteClient(QuoteBrokerClient):
             self._quote_ctx.set_handler(self._build_quote_handler())
             self._quote_ctx.set_handler(self._build_kline_handler())
             self._quote_ctx.start()
-        self.update_symbols(codes)
+        self.update_symbols(codes, subscribe_bars=subscribe_bars)
 
-    def update_symbols(self, codes: Iterable[str]) -> None:
+    def update_symbols(self, codes: Iterable[str], *, subscribe_bars: bool = True) -> None:
         with self._lock:
             if self._quote_ctx is None or self._futu is None:
                 raise RuntimeError("Futu realtime quote broker is not connected")
 
             target_codes = sorted({str(code).strip().upper() for code in codes if str(code).strip()})
+            current_sub_types = [self._futu["SubType"].QUOTE]
+            if self._subscribe_bars:
+                current_sub_types.append(self._futu["SubType"].K_1M)
             if self._codes:
-                ret, data = self._quote_ctx.unsubscribe(self._codes, [self._futu["SubType"].QUOTE, self._futu["SubType"].K_1M])
+                ret, data = self._quote_ctx.unsubscribe(self._codes, current_sub_types)
                 if ret != self._futu["RET_OK"]:
                     self._event_sink.on_broker_message(logging.WARNING, f"quote unsubscribe failed: {data}")
 
+            next_sub_types = [self._futu["SubType"].QUOTE]
+            if subscribe_bars:
+                next_sub_types.append(self._futu["SubType"].K_1M)
             if target_codes:
                 ret, data = self._quote_ctx.subscribe(
                     target_codes,
-                    [self._futu["SubType"].QUOTE, self._futu["SubType"].K_1M],
+                    next_sub_types,
                     is_first_push=False,
                     subscribe_push=True,
                     extended_time=self._config.subscribe_extended_time,
@@ -55,12 +62,14 @@ class FutuRealtimeQuoteClient(QuoteBrokerClient):
                     raise RuntimeError(f"quote subscribe failed: {data}")
 
             self._codes = target_codes
+            self._subscribe_bars = subscribe_bars
 
     def close(self) -> None:
         with self._lock:
             quote_ctx = self._quote_ctx
             self._quote_ctx = None
             self._codes = []
+            self._subscribe_bars = True
             if quote_ctx is not None:
                 try:
                     quote_ctx.close()

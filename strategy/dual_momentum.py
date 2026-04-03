@@ -6,7 +6,7 @@ from typing import Any
 
 import pandas as pd
 
-from domain.rebalance import DEFAULT_REBALANCE_BAND_PCT
+from .rebalance import DEFAULT_REBALANCE_BAND_PCT
 from .volume import compute_relative_volume, validate_volume_filter
 
 
@@ -267,60 +267,98 @@ def build_dual_momentum_signal(
         target_annual_vol=target_annual_vol,
         max_gross_exposure=max_gross_exposure,
     )
-    if prices.empty or volumes.empty:
+    signals = build_dual_momentum_signal_history(prices, volumes, params=resolved)
+    if signals.empty:
         return None
+    return signals.iloc[-1]
+
+
+def build_dual_momentum_signal_history(
+    prices: pd.DataFrame,
+    volumes: pd.DataFrame,
+    *,
+    params: DualMomentumParams | None = None,
+    lookback_days: int = DEFAULT_LOOKBACK_DAYS,
+    long_lookback_days: int = DEFAULT_LONG_LOOKBACK_DAYS,
+    long_lookback_weight: float = DEFAULT_LONG_LOOKBACK_WEIGHT,
+    top_n: int = DEFAULT_TOP_N,
+    volume_window: int = DEFAULT_VOLUME_WINDOW,
+    min_volume_ratio: float = DEFAULT_MIN_VOLUME_RATIO,
+    market_filter_window: int = DEFAULT_MARKET_FILTER_WINDOW,
+    volatility_window: int = DEFAULT_VOLATILITY_WINDOW,
+    target_annual_vol: float = DEFAULT_TARGET_ANNUAL_VOL,
+    max_gross_exposure: float = DEFAULT_MAX_GROSS_EXPOSURE,
+) -> pd.Series:
+    """预计算整段历史的 dual momentum 信号。"""
+    resolved = _resolve_dual_momentum_params(
+        params=params,
+        lookback_days=lookback_days,
+        long_lookback_days=long_lookback_days,
+        long_lookback_weight=long_lookback_weight,
+        top_n=top_n,
+        volume_window=volume_window,
+        min_volume_ratio=min_volume_ratio,
+        market_filter_window=market_filter_window,
+        volatility_window=volatility_window,
+        target_annual_vol=target_annual_vol,
+        max_gross_exposure=max_gross_exposure,
+    )
+    if prices.empty or volumes.empty:
+        return pd.Series(dtype=object)
     if not prices.index.equals(volumes.index) or not prices.columns.equals(volumes.columns):
         raise ValueError("prices and volumes must share the same index and columns")
-    if len(prices.index) < required_dual_momentum_signal_bars(params=resolved):
-        return None
 
+    required_bars = required_dual_momentum_signal_bars(params=resolved)
     top_n = min(resolved.top_n, len(prices.columns))
-    # 相对成交量按列分别计算，每个标的只和自己的近期成交量基线比较。
     relative_volume = volumes.apply(lambda column: compute_relative_volume(column, resolved.volume_window))
-    idx = len(prices.index) - 1
-
-    # dual momentum 的第一层是相对强弱：短周期为主，长周期作为辅助权重。
-    short_momentum = prices.iloc[idx] / prices.iloc[idx - resolved.lookback_days] - 1
-    long_momentum = pd.Series(0.0, index=prices.columns, dtype=float)
-    if idx >= resolved.long_lookback_days:
-        long_momentum = prices.iloc[idx] / prices.iloc[idx - resolved.long_lookback_days] - 1
+    short_momentum = prices.divide(prices.shift(resolved.lookback_days)) - 1
+    if resolved.long_lookback_weight > 0:
+        long_momentum = prices.divide(prices.shift(resolved.long_lookback_days)) - 1
+    else:
+        long_momentum = pd.DataFrame(0.0, index=prices.index, columns=prices.columns)
     blended_momentum = short_momentum * (1 - resolved.long_lookback_weight) + long_momentum * resolved.long_lookback_weight
-    # 放量只增强正动量，不让负动量因为放量“变好”。
-    volume_weight = compute_volume_boost(relative_volume.iloc[idx], resolved.min_volume_ratio)
-    weighted_momentum = blended_momentum.where(blended_momentum > 0) * volume_weight
-    candidate_codes = tuple(select_target_codes(weighted_momentum, top_n))
+    weighted_momentum = blended_momentum.where(blended_momentum > 0) * relative_volume.apply(
+        lambda row: compute_volume_boost(row, resolved.min_volume_ratio),
+        axis=1,
+    )
 
-    # dual momentum 的第二层是绝对动量/市场过滤：
-    # 股票池整体跌破自身均线时，直接切到现金，不持有风险资产。
     pool_close = prices.mean(axis=1)
     pool_ma = pool_close.rolling(
         window=resolved.market_filter_window,
         min_periods=resolved.market_filter_window,
     ).mean()
-    market_is_risk_on = bool(pd.notna(pool_ma.iloc[idx]) and pool_close.iloc[idx] >= pool_ma.iloc[idx])
-    target_codes = candidate_codes if market_is_risk_on else ()
-
-    # 第三层是波动率控制：当股票池近期波动过大时，下调总 gross exposure。
-    target_vol_multiplier = 1.0
     daily_pool_returns = pool_close.pct_change()
     realized_daily_vol = daily_pool_returns.rolling(
         window=resolved.volatility_window,
         min_periods=resolved.volatility_window,
     ).std()
-    if pd.notna(realized_daily_vol.iloc[idx]) and realized_daily_vol.iloc[idx] > 0:
-        annualized_vol = float(realized_daily_vol.iloc[idx]) * (252**0.5)
-        target_vol_multiplier = min(1.0, resolved.target_annual_vol / annualized_vol)
+    target_vol_multiplier = pd.Series(1.0, index=prices.index, dtype=float)
+    positive_vol_mask = realized_daily_vol > 0
+    annualized_vol = realized_daily_vol.loc[positive_vol_mask] * (252**0.5)
+    target_vol_multiplier.loc[positive_vol_mask] = (
+        resolved.target_annual_vol / annualized_vol
+    ).clip(upper=1.0)
 
-    # 当前版本仍是等权持仓，只是用 gross_exposure 控制总风险预算。
-    gross_exposure = target_vol_multiplier * resolved.max_gross_exposure if target_codes else 0.0
-    weight_per_code = gross_exposure / len(target_codes) if target_codes else 0.0
-    target_weights = {code: weight_per_code for code in target_codes}
+    signals: list[DualMomentumSignal | None] = []
+    for index, trade_date in enumerate(prices.index):
+        if index + 1 < required_bars:
+            signals.append(None)
+            continue
 
-    return DualMomentumSignal(
-        completed_trade_date=prices.index[idx],
-        target_codes=target_codes,
-        target_weights=target_weights,
-        gross_exposure=gross_exposure,
-        market_is_risk_on=market_is_risk_on,
-        candidate_codes=candidate_codes,
-    )
+        candidate_codes = tuple(select_target_codes(weighted_momentum.iloc[index], top_n))
+        market_is_risk_on = bool(pd.notna(pool_ma.iloc[index]) and pool_close.iloc[index] >= pool_ma.iloc[index])
+        target_codes = candidate_codes if market_is_risk_on else ()
+        gross_exposure = float(target_vol_multiplier.iloc[index] * resolved.max_gross_exposure) if target_codes else 0.0
+        weight_per_code = gross_exposure / len(target_codes) if target_codes else 0.0
+        signals.append(
+            DualMomentumSignal(
+                completed_trade_date=trade_date,
+                target_codes=target_codes,
+                target_weights={code: weight_per_code for code in target_codes},
+                gross_exposure=gross_exposure,
+                market_is_risk_on=market_is_risk_on,
+                candidate_codes=candidate_codes,
+            )
+        )
+
+    return pd.Series(signals, index=prices.index, dtype=object)

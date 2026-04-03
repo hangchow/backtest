@@ -23,7 +23,8 @@ from .config_applier import RuntimeConfigApplier
 from .event_sinks import QuoteBrokerEventSinkAdapter, TradeAccountEventSinkAdapter
 from .execution import RebalancePlanner, TradeAccountState
 from .history_providers.base import DailyHistoryProvider
-from .models import AccountSnapshot, FillEvent, OrderUpdate, PortfolioRebalanceDecision, PositionSnapshot, QuoteUpdate
+from .models import AccountSnapshot, FillEvent, OrderUpdate, PortfolioRebalanceDecision, PositionSnapshot, QuoteUpdate, ScheduledTrigger
+from .notifications import send_email_notification
 from .portfolio import PortfolioCoordinator
 from .quote_brokers.base import QuoteBrokerClient
 from .runtime_state import LiveTradingRuntimeState
@@ -67,6 +68,7 @@ class LiveTradingEngine:
         quote_broker_factory: Callable[[RealtimeQuoteBrokerConfig, object, logging.Logger], QuoteBrokerClient] = create_quote_broker_client,
         history_provider_factory: Callable[[HistoryBrokerConfig, logging.Logger], DailyHistoryProvider] = create_daily_history_provider,
         trade_account_factory: Callable[[TradeAccountConfig, object, logging.Logger], TradeAccountClient] = create_trade_account_client,
+        email_sender: Callable[..., None] | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self._quote_config_path = Path(quote_config_path)
@@ -87,6 +89,7 @@ class LiveTradingEngine:
             runtime_state=self._runtime_state,
             state_store=self._account_state_store,
             planner=self._planner,
+            email_sender=email_sender or send_email_notification,
         )
         self._quote_event_sink = QuoteBrokerEventSinkAdapter(
             lock=self._lock,
@@ -210,6 +213,9 @@ class LiveTradingEngine:
     def on_quote(self, update: QuoteUpdate) -> None:
         self._quote_event_sink.on_quote(update)
 
+    def on_schedule(self, trigger: ScheduledTrigger) -> None:
+        self._quote_event_sink.on_schedule(trigger)
+
     def on_bar(self, code: str, bar: pd.Series | dict[str, object]) -> None:
         self._quote_event_sink.on_bar(code, bar)
 
@@ -236,7 +242,12 @@ class LiveTradingEngine:
 
     def _history_warmup_retry_pending(self) -> bool:
         with self._lock:
-            return self._runtime_state.history_warmup_pending and self._runtime_state.current_config is not None
+            config = self._runtime_state.current_config
+            if config is None:
+                return False
+            if config.trade_account.execution.executor == "notify" and config.realtime_broker.type == "schedule_us":
+                return False
+            return self._runtime_state.history_warmup_pending
 
     def _execute_portfolio_rebalance(self, decision: PortfolioRebalanceDecision) -> None:
         self._portfolio_coordinator.execute_portfolio_rebalance(decision)

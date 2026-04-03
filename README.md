@@ -174,7 +174,9 @@ source .venv/bin/active
   - 仅 `futu` 模式生效，对应 OpenD 地址。
   - `polygon` / `local` 模式下可以省略。
   - `history_broker.data_root`
-  - 仅 `local` 模式生效，表示本地日线目录，默认 `.kline_day`。
+  - 默认 `.kline_day`。
+  - `local` 模式下表示直接读取的本地日线目录。
+  - `futu` / `polygon` 模式下表示 warm-up 日线的本地缓存目录。
 - 股票池配置
   - `stock_pool.codes`
   - 股票池代码列表。

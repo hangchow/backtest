@@ -22,6 +22,13 @@ class QuoteUpdate:
 
 
 @dataclass(frozen=True)
+class ScheduledTrigger:
+    timestamp: pd.Timestamp
+    source: str = "schedule"
+    raw: dict[str, Any] = field(default_factory=dict, compare=False)
+
+
+@dataclass(frozen=True)
 class AccountSnapshot:
     timestamp: pd.Timestamp
     total_assets: float | None

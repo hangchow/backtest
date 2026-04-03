@@ -1,0 +1,24 @@
+{
+  "stock_pool": {
+    "codes": [
+      "US.AAPL",
+      "US.MSFT"
+    ],
+    "strategy": {
+      "name": "dual_momentum",
+      "params": {
+        "lookback_days": 1,
+        "long_lookback_days": 2,
+        "long_lookback_weight": 0.0,
+        "top_n": 1,
+        "volume_window": 1,
+        "min_volume_ratio": 1.0,
+        "market_filter_window": 2,
+        "rebalance_band_pct": 0.0,
+        "volatility_window": 2,
+        "target_annual_vol": 999.0,
+        "max_gross_exposure": 1.0
+      }
+    }
+  }
+}

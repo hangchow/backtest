@@ -1,5 +1,6 @@
 {
   "history_broker": {
-    "type": "polygon"
+    "type": "polygon",
+    "data_root": ".kline_day"
   }
 }

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-from numbers import Real
 from pathlib import Path
 import time
 
@@ -24,6 +23,8 @@ from backtest.backtest_common import (
     parse_eval_start,
     validate_market_for_symbols,
 )
+from backtest.minute_pool_cache import MinutePoolFeatureCache
+from backtest.reporting import STRATEGY_LABELS, markdown_table
 
 
 DEFAULT_MINUTE_DATA_ROOT = Path("kline_minute")
@@ -53,17 +54,6 @@ NATIVE_POOL_STRATEGY_KEYS = (
 )
 ALL_STRATEGY_KEYS = MINUTE_STRATEGY_KEYS + NATIVE_POOL_STRATEGY_KEYS
 SCOPE_CHOICES = ("single", "pool")
-
-STRATEGY_LABELS = {
-    "rsi_reversion": "RSI reversion",
-    "ema_cross": "EMA cross",
-    "ema_rsi_combo": "EMA + RSI",
-    "ema_rsi_bull_range": "EMA + RSI bull range",
-    "dual_momentum": "Dual momentum",
-    "momentum_monthly": "Momentum monthly",
-    "dual_momentum_ema_rsi_hybrid": "Dual momentum + EMA + RSI hybrid",
-}
-
 
 def default_initial_cash_for_market(market: str) -> float:
     if market == "HK":
@@ -229,49 +219,6 @@ def format_duration_mmss(duration_seconds: float) -> str:
     return f"{minutes}:{seconds:02d}"
 
 
-def format_cell(value: object) -> str:
-    if isinstance(value, float):
-        return f"{value:.2f}"
-    return str(value)
-
-
-def is_numeric_column(frame: pd.DataFrame, column: str) -> bool:
-    has_non_null = False
-    for value in frame[column]:
-        if pd.isna(value):
-            continue
-        has_non_null = True
-        if isinstance(value, bool) or not isinstance(value, Real):
-            return False
-    return has_non_null
-
-
-def markdown_table(frame: pd.DataFrame, columns: list[str]) -> str:
-    column_values = {column: [format_cell(value) for value in frame[column]] for column in columns}
-    numeric_columns = {column: is_numeric_column(frame, column) for column in columns}
-    widths = {
-        column: max(len(column), *(len(value) for value in column_values[column]))
-        for column in columns
-    }
-
-    def align(value: str, column: str) -> str:
-        if numeric_columns[column]:
-            return value.rjust(widths[column])
-        return value.ljust(widths[column])
-
-    header = "| " + " | ".join(align(column, column) for column in columns) + " |"
-    divider = "| " + " | ".join(
-        ("-" * max(widths[column] - 1, 1) + ":") if numeric_columns[column] else "-" * widths[column]
-        for column in columns
-    ) + " |"
-    rows = []
-    for row_index in range(len(frame)):
-        rows.append(
-            "| " + " | ".join(align(column_values[column][row_index], column) for column in columns) + " |"
-        )
-    return "\n".join([header, divider, *rows])
-
-
 def _run_minute_strategy(
     strategy_key: str,
     history: pd.DataFrame,
@@ -367,6 +314,7 @@ def _run_minute_strategy(
 def _run_pool_minute_strategy(
     strategy_key: str,
     histories: dict[str, pd.DataFrame],
+    pool_cache: MinutePoolFeatureCache | None,
     market: str,
     initial_cash: float,
     eval_start: pd.Timestamp | None,
@@ -377,6 +325,7 @@ def _run_pool_minute_strategy(
     if strategy_key == "rsi_reversion":
         summary, _ = rsi_reversion.run_portfolio_backtest(
             histories=histories,
+            pool_cache=pool_cache,
             initial_cash=initial_cash,
             rsi_period=rsi_reversion.DEFAULT_RSI_PERIOD,
             buy_threshold=rsi_reversion.DEFAULT_BUY_THRESHOLD,
@@ -397,6 +346,7 @@ def _run_pool_minute_strategy(
     if strategy_key == "ema_cross":
         summary, _ = ema_cross.run_portfolio_backtest(
             histories=histories,
+            pool_cache=pool_cache,
             initial_cash=initial_cash,
             fast_span=ema_cross.DEFAULT_FAST_SPAN,
             slow_span=ema_cross.DEFAULT_SLOW_SPAN,
@@ -416,6 +366,7 @@ def _run_pool_minute_strategy(
     if strategy_key == "ema_rsi_combo":
         summary, _ = ema_rsi_combo.run_portfolio_backtest(
             histories=histories,
+            pool_cache=pool_cache,
             initial_cash=initial_cash,
             fast_span=ema_rsi_combo.DEFAULT_FAST_SPAN,
             slow_span=ema_rsi_combo.DEFAULT_SLOW_SPAN,
@@ -438,6 +389,7 @@ def _run_pool_minute_strategy(
     if strategy_key == "ema_rsi_bull_range":
         summary, _ = ema_rsi_combo.run_portfolio_backtest(
             histories=histories,
+            pool_cache=pool_cache,
             initial_cash=initial_cash,
             fast_span=ema_rsi_bull_range.DEFAULT_FAST_SPAN,
             slow_span=ema_rsi_bull_range.DEFAULT_SLOW_SPAN,
@@ -548,6 +500,7 @@ def run_stock_pool_strategies(
     volumes: pd.DataFrame | None = None
     hybrid_closes: pd.DataFrame | None = None
     minute_histories: dict[str, pd.DataFrame] | None = None
+    minute_pool_cache: MinutePoolFeatureCache | None = None
     dataset_frames: list[pd.DataFrame] = []
 
     if any(key in ("dual_momentum", "momentum_monthly") for key in selected):
@@ -581,6 +534,8 @@ def run_stock_pool_strategies(
             )
         if any(key in MINUTE_STRATEGY_KEYS for key in selected):
             minute_histories = dataset_histories
+            if all({"time_key", "close", "volume"}.issubset(history.columns) for history in dataset_histories.values()):
+                minute_pool_cache = MinutePoolFeatureCache(dataset_histories)
 
     if "rsi_reversion" in selected:
         assert minute_histories is not None
@@ -588,6 +543,7 @@ def run_stock_pool_strategies(
         summary = _run_pool_minute_strategy(
             "rsi_reversion",
             minute_histories,
+            minute_pool_cache,
             market,
             initial_cash,
             eval_start,
@@ -614,6 +570,7 @@ def run_stock_pool_strategies(
         summary = _run_pool_minute_strategy(
             "ema_cross",
             minute_histories,
+            minute_pool_cache,
             market,
             initial_cash,
             eval_start,
@@ -640,6 +597,7 @@ def run_stock_pool_strategies(
         summary = _run_pool_minute_strategy(
             "ema_rsi_combo",
             minute_histories,
+            minute_pool_cache,
             market,
             initial_cash,
             eval_start,
@@ -666,6 +624,7 @@ def run_stock_pool_strategies(
         summary = _run_pool_minute_strategy(
             "ema_rsi_bull_range",
             minute_histories,
+            minute_pool_cache,
             market,
             initial_cash,
             eval_start,

@@ -17,6 +17,9 @@ from backtest.backtest_common import (
     validate_market_for_symbol,
     validate_market_for_symbols,
 )
+from backtest.backtest_pool_batch import parse_args as parse_pool_batch_args
+from backtest.backtest_ema_cross import run_portfolio_backtest as run_ema_cross_portfolio_backtest
+from backtest.backtest_ema_rsi_combo import run_portfolio_backtest as run_ema_rsi_portfolio_backtest
 from backtest.backtest_ema_cross import DEFAULT_MAX_OPEN_POSITIONS as EMA_CROSS_DEFAULT_MAX_OPEN_POSITIONS
 from backtest.backtest_ema_rsi_combo import DEFAULT_MAX_OPEN_POSITIONS as EMA_RSI_DEFAULT_MAX_OPEN_POSITIONS
 from backtest.backtest_dual_momentum import (
@@ -28,7 +31,8 @@ from backtest.backtest_rsi_reversion import (
     DEFAULT_MAX_OPEN_POSITIONS as RSI_REVERSION_DEFAULT_MAX_OPEN_POSITIONS,
     run_portfolio_backtest,
 )
-from strategy.dual_momentum import DualMomentumParams, build_dual_momentum_signal
+from backtest.minute_pool_cache import MinutePoolFeatureCache
+from strategy.dual_momentum import DualMomentumParams, build_dual_momentum_signal, build_dual_momentum_signal_history
 
 
 class ResolveCodesTests(unittest.TestCase):
@@ -144,6 +148,18 @@ class EvalWindowTests(unittest.TestCase):
         self.assertEqual(end_time, pd.Timestamp("2025-01-03").date())
 
 
+class BatchPoolCliTests(unittest.TestCase):
+    def test_batch_pool_runner_parses_minimal_args(self) -> None:
+        args = parse_pool_batch_args(["--codes", "US.MSFT", "--market", "US"])
+
+        self.assertEqual(args.codes, ["US.MSFT"])
+        self.assertEqual(args.market, "US")
+
+    def test_batch_pool_runner_rejects_removed_file_cache_flag(self) -> None:
+        with self.assertRaises(SystemExit):
+            parse_pool_batch_args(["--codes", "US.MSFT", "--market", "US", "--enable-file-cache"])
+
+
 class PortfolioBacktestTests(unittest.TestCase):
     def build_history(self, closes: list[float]) -> pd.DataFrame:
         times = pd.date_range("2025-01-02 09:30:00", periods=len(closes), freq="min")
@@ -244,6 +260,86 @@ class PortfolioBacktestTests(unittest.TestCase):
         self.assertTrue((trades["time_key"] <= eval_end).all())
         self.assertAlmostEqual(float(summary["final_value"]), 10000.0)
 
+    def test_ema_cross_portfolio_cache_matches_uncached_results(self) -> None:
+        histories = {
+            "US.A": self.build_history([100, 101, 102, 100, 98, 103, 106, 104]),
+            "US.B": self.build_history([200, 198, 197, 199, 201, 205, 203, 206]),
+        }
+        pool_cache = MinutePoolFeatureCache(histories)
+
+        summary_a, trades_a = run_ema_cross_portfolio_backtest(
+            histories=histories,
+            initial_cash=10000.0,
+            fast_span=2,
+            slow_span=4,
+            position_ratio=0.5,
+            volume_window=2,
+            min_volume_ratio=1.0,
+            flat_at_close=False,
+            max_open_positions=1,
+            market="US",
+        )
+        summary_b, trades_b = run_ema_cross_portfolio_backtest(
+            histories=histories,
+            pool_cache=pool_cache,
+            initial_cash=10000.0,
+            fast_span=2,
+            slow_span=4,
+            position_ratio=0.5,
+            volume_window=2,
+            min_volume_ratio=1.0,
+            flat_at_close=False,
+            max_open_positions=1,
+            market="US",
+        )
+
+        self.assertEqual(summary_a["final_value"], summary_b["final_value"])
+        self.assertEqual(summary_a["trade_count"], summary_b["trade_count"])
+        pd.testing.assert_frame_equal(trades_a.reset_index(drop=True), trades_b.reset_index(drop=True), check_dtype=False)
+
+    def test_ema_rsi_portfolio_cache_matches_uncached_results(self) -> None:
+        histories = {
+            "US.A": self.build_history([100, 98, 96, 97, 101, 103, 100, 104, 107]),
+            "US.B": self.build_history([200, 199, 198, 197, 199, 202, 201, 204, 206]),
+        }
+        pool_cache = MinutePoolFeatureCache(histories)
+
+        summary_a, trades_a = run_ema_rsi_portfolio_backtest(
+            histories=histories,
+            initial_cash=10000.0,
+            fast_span=2,
+            slow_span=5,
+            rsi_period=2,
+            buy_threshold=45,
+            sell_threshold=60,
+            position_ratio=1.0,
+            volume_window=2,
+            min_volume_ratio=1.0,
+            flat_at_close=False,
+            max_open_positions=1,
+            market="US",
+        )
+        summary_b, trades_b = run_ema_rsi_portfolio_backtest(
+            histories=histories,
+            pool_cache=pool_cache,
+            initial_cash=10000.0,
+            fast_span=2,
+            slow_span=5,
+            rsi_period=2,
+            buy_threshold=45,
+            sell_threshold=60,
+            position_ratio=1.0,
+            volume_window=2,
+            min_volume_ratio=1.0,
+            flat_at_close=False,
+            max_open_positions=1,
+            market="US",
+        )
+
+        self.assertEqual(summary_a["final_value"], summary_b["final_value"])
+        self.assertEqual(summary_a["trade_count"], summary_b["trade_count"])
+        pd.testing.assert_frame_equal(trades_a.reset_index(drop=True), trades_b.reset_index(drop=True), check_dtype=False)
+
 
 class DualMomentumBacktestTests(unittest.TestCase):
     def test_dual_momentum_params_from_mapping_coerces_numeric_values(self) -> None:
@@ -336,6 +432,58 @@ class DualMomentumBacktestTests(unittest.TestCase):
         )
 
         self.assertIsNone(signal)
+
+    def test_build_dual_momentum_signal_history_matches_single_day_builder(self) -> None:
+        # 验证历史预计算信号与逐日截断重算的结果完全一致。
+        prices = pd.DataFrame(
+            {
+                "US.A": [100.0, 101.0, 103.0, 104.0, 108.0, 109.0],
+                "US.B": [100.0, 102.0, 101.0, 105.0, 107.0, 106.0],
+                "US.C": [100.0, 99.0, 101.0, 100.0, 98.0, 97.0],
+            },
+            index=pd.to_datetime(
+                ["2025-01-02", "2025-01-03", "2025-01-06", "2025-01-07", "2025-01-08", "2025-01-09"]
+            ).date,
+        )
+        volumes = pd.DataFrame(
+            {
+                "US.A": [100.0, 120.0, 140.0, 160.0, 180.0, 175.0],
+                "US.B": [100.0, 100.0, 90.0, 110.0, 130.0, 120.0],
+                "US.C": [100.0, 105.0, 95.0, 90.0, 85.0, 80.0],
+            },
+            index=prices.index,
+        )
+        params = DualMomentumParams(
+            lookback_days=2,
+            long_lookback_days=3,
+            long_lookback_weight=0.25,
+            top_n=2,
+            volume_window=2,
+            min_volume_ratio=1.0,
+            market_filter_window=2,
+            volatility_window=2,
+            target_annual_vol=10.0,
+            max_gross_exposure=1.0,
+        )
+
+        history_signals = build_dual_momentum_signal_history(prices, volumes, params=params)
+
+        self.assertEqual(list(history_signals.index), list(prices.index))
+        for offset, trade_date in enumerate(prices.index, start=1):
+            expected = build_dual_momentum_signal(prices.iloc[:offset], volumes.iloc[:offset], params=params)
+            actual = history_signals.loc[trade_date]
+            if expected is None:
+                self.assertIsNone(actual)
+                continue
+
+            self.assertIsNotNone(actual)
+            assert actual is not None
+            self.assertEqual(actual.completed_trade_date, expected.completed_trade_date)
+            self.assertEqual(actual.target_codes, expected.target_codes)
+            self.assertEqual(actual.target_weights, expected.target_weights)
+            self.assertEqual(actual.gross_exposure, expected.gross_exposure)
+            self.assertEqual(actual.market_is_risk_on, expected.market_is_risk_on)
+            self.assertEqual(actual.candidate_codes, expected.candidate_codes)
 
     def test_load_daily_data_keeps_missing_sessions_unfilled(self) -> None:
         # 验证加载日线数据时不会填补缺失交易日。
