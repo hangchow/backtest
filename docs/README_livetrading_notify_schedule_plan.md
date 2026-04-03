@@ -233,7 +233,7 @@ NotifyRecommendation(
         "smtp_host": "smtp.example.com",
         "smtp_port": 587,
         "username": "bot@example.com",
-        "password_env": "LIVETRADING_NOTIFY_EMAIL_PASSWORD",
+        "password": "your-smtp-password",
         "from": "bot@example.com",
         "to": ["you@example.com"],
         "subject_prefix": "[dual_momentum]"

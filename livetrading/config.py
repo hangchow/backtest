@@ -49,7 +49,7 @@ TRADE_BROKER_ALLOWED_KEYS = frozenset(
 EXECUTION_ALLOWED_KEYS = frozenset({"executor", "order_session"})
 NOTIFICATION_ALLOWED_KEYS = frozenset({"email"})
 EMAIL_NOTIFICATION_ALLOWED_KEYS = frozenset(
-    {"enabled", "smtp_host", "smtp_port", "username", "password_env", "from", "to", "subject_prefix", "use_tls"}
+    {"enabled", "smtp_host", "smtp_port", "username", "password", "password_env", "from", "to", "subject_prefix", "use_tls"}
 )
 DEFAULT_MARKET = "US"
 DEFAULT_CURRENCY = "USD"
@@ -280,6 +280,7 @@ class EmailNotificationConfig:
     smtp_host: str | None = None
     smtp_port: int = 587
     username: str | None = None
+    password: str | None = None
     password_env: str | None = None
     from_address: str | None = None
     to_addresses: tuple[str, ...] = field(default_factory=tuple)
@@ -604,6 +605,9 @@ def _parse_email_notification_config(raw: Mapping[str, Any], *, label: str) -> E
     username = raw.get("username")
     if username is not None:
         username = str(username).strip() or None
+    password = raw.get("password")
+    if password is not None:
+        password = str(password) or None
     password_env = raw.get("password_env")
     if password_env is not None:
         password_env = str(password_env).strip() or None
@@ -618,8 +622,8 @@ def _parse_email_notification_config(raw: Mapping[str, Any], *, label: str) -> E
             raise ValueError(f"{label}.smtp_host must not be empty when email notification is enabled")
         if not to_addresses:
             raise ValueError(f"{label}.to must not be empty when email notification is enabled")
-        if username is not None and password_env is None:
-            raise ValueError(f"{label}.password_env must be provided when {label}.username is set")
+        if username is not None and password is None and password_env is None:
+            raise ValueError(f"{label}.password or {label}.password_env must be provided when {label}.username is set")
         if from_address is None:
             from_address = username
         if from_address is None:
@@ -629,6 +633,7 @@ def _parse_email_notification_config(raw: Mapping[str, Any], *, label: str) -> E
         smtp_host=smtp_host,
         smtp_port=smtp_port,
         username=username,
+        password=password,
         password_env=password_env,
         from_address=from_address,
         to_addresses=to_addresses,

@@ -31,6 +31,7 @@ from livetrading.broker import (
     unregister_trade_account_client,
 )
 from livetrading.config import (
+    EmailNotificationConfig,
     RealtimeQuoteBrokerConfig,
     load_history_config,
     load_history_config_from_text,
@@ -48,6 +49,7 @@ from livetrading.history_providers.base import DailyHistoryProvider
 from livetrading.history_providers.common import _expected_latest_trade_date_for_market
 from livetrading.history_providers.futu import FutuDailyHistoryProvider
 from livetrading.history_providers.local import LocalDataDailyHistoryProvider
+from livetrading.notifications.email import send_email_notification
 from livetrading.history_providers.polygon import PolygonCacheDailyHistoryProvider
 from livetrading.models import AccountSnapshot, FillEvent, OrderIntent, OrderSubmission, OrderUpdate, PortfolioRebalanceDecision, PositionSnapshot, QuoteUpdate, ScheduledTrigger
 from livetrading.pool_strategies import (
@@ -916,6 +918,38 @@ class LiveTradingConfigTests(unittest.TestCase):
         self.assertEqual(config.broker.type, "mock")
         self.assertTrue(config.notification.email.enabled)
         self.assertEqual(config.notification.email.smtp_host, "smtp.example.com")
+        self.assertEqual(config.notification.email.password_env, "LIVETRADING_NOTIFY_EMAIL_PASSWORD")
+        self.assertIsNone(config.notification.email.password)
+        self.assertEqual(config.notification.email.to_addresses, ("you@example.com",))
+
+    def test_load_trade_account_config_supports_notify_executor_with_inline_email_password(self) -> None:
+        payload = build_trade_payload(
+            [
+                build_mock_trade_account_payload(
+                    account_id="notify_only",
+                    execution={"executor": "notify"},
+                    notification={
+                        "email": {
+                            "enabled": True,
+                            "smtp_host": "smtp.example.com",
+                            "smtp_port": 587,
+                            "username": "bot@example.com",
+                            "password": "smtp-secret",
+                            "from": "bot@example.com",
+                            "to": ["you@example.com"],
+                            "subject_prefix": "[dual_momentum]",
+                        }
+                    },
+                )
+            ]
+        )
+
+        config = load_trade_account_config_from_text(json.dumps(payload))
+
+        self.assertEqual(config.execution.executor, "notify")
+        self.assertTrue(config.notification.email.enabled)
+        self.assertEqual(config.notification.email.password, "smtp-secret")
+        self.assertIsNone(config.notification.email.password_env)
         self.assertEqual(config.notification.email.to_addresses, ("you@example.com",))
 
     def test_load_trade_account_config_defaults_us_futu_real_order_session_to_eth(self) -> None:
@@ -4366,6 +4400,26 @@ class LiveTradingEngineTests(unittest.TestCase):
         self.assertIsNotNone(engine._pool_strategy)
         self.assertEqual(len(FakeQuoteBroker.instances), 1)
         self.assertEqual(FakeQuoteBroker.instances[0].connect_calls, 1)
+
+
+class EmailNotificationTests(unittest.TestCase):
+    def test_send_email_notification_supports_inline_password(self) -> None:
+        config = EmailNotificationConfig(
+            enabled=True,
+            smtp_host="smtp.example.com",
+            smtp_port=587,
+            username="bot@example.com",
+            password="smtp-secret",
+            from_address="bot@example.com",
+            to_addresses=("you@example.com",),
+        )
+
+        with patch("livetrading.notifications.email.smtplib.SMTP") as smtp_class:
+            smtp = smtp_class.return_value.__enter__.return_value
+            send_email_notification(config, subject="hello", body="world")
+
+        smtp.login.assert_called_once_with("bot@example.com", "smtp-secret")
+        smtp.send_message.assert_called_once()
 
 
 def load_livetrading_config_from_payloads(

@@ -22,7 +22,7 @@ def send_email_notification(config: EmailNotificationConfig, *, subject: str, bo
     message["To"] = ", ".join(config.to_addresses)
     message.set_content(body)
 
-    password = os.environ.get(config.password_env, "") if config.password_env else ""
+    password = config.password or (os.environ.get(config.password_env, "") if config.password_env else "")
     with smtplib.SMTP(config.smtp_host, config.smtp_port, timeout=30) as smtp:
         smtp.ehlo()
         if config.use_tls:

@@ -55,23 +55,32 @@
 
 - 把 `notification.email.enabled` 改成 `false`
 
-## 4. 邮件密码环境变量
+## 4. 邮件密码配置
 
-如果你配置了：
+最省事的写法是直接在配置里写：
+
+```json
+"password": "your-smtp-password"
+```
+
+如果你更在意把密码和配置文件分开，再改成环境变量写法：
 
 ```json
 "password_env": "LIVETRADING_NOTIFY_EMAIL_PASSWORD"
 ```
 
-启动前需要先设置：
+启动前先设置：
 
 ```bash
 export LIVETRADING_NOTIFY_EMAIL_PASSWORD='your-smtp-password'
 ```
 
+两种方式二选一即可。
+
 如果 SMTP 不需要认证：
 
 - 可以不写 `username`
+- 也可以不写 `password`
 - 也可以不写 `password_env`
 
 ## 5. 启动命令
