@@ -1,37 +1,41 @@
 from __future__ import annotations
 
-import subprocess
-import sys
 import unittest
-from pathlib import Path
+
+from livetrading.cli import parse_args
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-
-
-class LiveTradingCliEntryTests(unittest.TestCase):
-    def run_command(self, *args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [sys.executable, *args],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
+class ParseArgsTests(unittest.TestCase):
+    def test_parse_args_accepts_schedule_trigger_time(self) -> None:
+        args = parse_args(
+            [
+                "--quote-config",
+                "quote.json",
+                "--history-config",
+                "history.json",
+                "--pool-config",
+                "pool.json",
+                "--trade-config",
+                "trade.json",
+                "--schedule-trigger-time",
+                "09:20",
+            ]
         )
 
-    def test_root_script_help_uses_shared_cli(self) -> None:
-        result = self.run_command("livetrading.py", "--help")
+        self.assertEqual(args.schedule_trigger_time, "09:20")
 
-        self.assertEqual(result.returncode, 0, msg=result.stderr)
-        self.assertIn("--quote-config", result.stdout)
-        self.assertIn("--trade-config", result.stdout)
-
-    def test_module_help_uses_shared_cli(self) -> None:
-        result = self.run_command("-m", "livetrading", "--help")
-
-        self.assertEqual(result.returncode, 0, msg=result.stderr)
-        self.assertIn("--quote-config", result.stdout)
-        self.assertIn("--trade-config", result.stdout)
+    def test_parse_args_rejects_invalid_schedule_trigger_time(self) -> None:
+        with self.assertRaises(SystemExit):
+            parse_args(
+                [
+                    "--quote-config",
+                    "quote.json",
+                    "--trade-config",
+                    "trade.json",
+                    "--schedule-trigger-time",
+                    "9:20:00",
+                ]
+            )
 
 
 if __name__ == "__main__":

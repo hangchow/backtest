@@ -33,6 +33,7 @@ from livetrading.broker import (
 from livetrading.config import (
     EmailNotificationConfig,
     RealtimeQuoteBrokerConfig,
+    build_livetrading_config,
     load_history_config,
     load_history_config_from_text,
     load_livetrading_config,
@@ -3654,6 +3655,44 @@ class LiveTradingEngineTests(unittest.TestCase):
         FakeQuoteBroker.instances.clear()
         FakeHistoryProvider.instances.clear()
         FakeTradeAccountClient.instances.clear()
+
+    def test_engine_can_override_schedule_trigger_time_from_cli(self) -> None:
+        quote_config = load_quote_config_from_text(
+            json.dumps(
+                {
+                    "realtime_broker": {
+                        "type": "schedule_us",
+                        "trigger_time": "09:30",
+                        "timezone": "America/New_York",
+                        "market_calendar": "XNYS",
+                        "catch_up_missed_session": True,
+                    },
+                    "runtime": {"config_reload_interval_seconds": 10},
+                }
+            )
+        )
+        history_config = load_history_config_from_text(json.dumps(build_history_payload(history_type="local")))
+        pool_config = load_pool_config_from_text(json.dumps(build_pool_payload()))
+        trade_config = load_trade_account_config_from_text(
+            json.dumps(
+                build_trade_payload(
+                    [
+                        build_mock_trade_account_payload(
+                            account_id="notify_only",
+                            execution={"executor": "notify"},
+                        )
+                    ]
+                )
+            )
+        )
+        config = build_livetrading_config(quote_config, trade_config, history_config, pool_config)
+
+        engine = LiveTradingEngine("quote.json", "trade.json", schedule_trigger_time="09:20")
+
+        overridden = engine._apply_runtime_overrides(config)
+
+        self.assertEqual(overridden.realtime_broker.trigger_time, "09:20")
+        self.assertEqual(overridden.realtime_broker.timezone, "America/New_York")
 
     def test_engine_accepts_mock_account_baseline_during_apply_config(self) -> None:
         # 验证engine 接受 mock 账户基线 在...期间 应用 配置这个场景的行为。

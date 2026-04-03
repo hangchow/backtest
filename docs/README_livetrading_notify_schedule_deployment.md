@@ -93,6 +93,17 @@ export LIVETRADING_NOTIFY_EMAIL_PASSWORD='your-smtp-password'
   --trade-config config/livetrading.trade_account.notify.sample.json
 ```
 
+如果你想临时改成开盘前触发，例如美东 `09:20`：
+
+```bash
+./.venv/bin/python -m livetrading \
+  --quote-config config/livetrading.quote.schedule_us.sample.json \
+  --history-config config/livetrading.history.local.sample.json \
+  --pool-config config/livetrading.pool.sample.json \
+  --trade-config config/livetrading.trade_account.notify.sample.json \
+  --schedule-trigger-time 09:20
+```
+
 如果你想从 Polygon 拉 warm-up：
 
 ```bash

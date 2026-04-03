@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 import logging
 from pathlib import Path
@@ -70,11 +71,13 @@ class LiveTradingEngine:
         trade_account_factory: Callable[[TradeAccountConfig, object, logging.Logger], TradeAccountClient] = create_trade_account_client,
         email_sender: Callable[..., None] | None = None,
         logger: logging.Logger | None = None,
+        schedule_trigger_time: str | None = None,
     ) -> None:
         self._quote_config_path = Path(quote_config_path)
         self._trade_config_path = Path(trade_config_path)
         self._history_config_path = Path(history_config_path) if history_config_path is not None else None
         self._pool_config_path = Path(pool_config_path) if pool_config_path is not None else None
+        self._schedule_trigger_time = schedule_trigger_time
         self._logger = logger or logging.getLogger("livetrading")
         self._stop_event = threading.Event()
         self._lock = threading.RLock()
@@ -128,7 +131,10 @@ class LiveTradingEngine:
         return self._runtime_state.warmup_unavailable_codes
 
     def apply_config(self, config: LiveTradingConfig, *, force_warmup_refresh: bool = False) -> None:
-        self._config_applier.apply_config(config, force_warmup_refresh=force_warmup_refresh)
+        self._config_applier.apply_config(
+            self._apply_runtime_overrides(config),
+            force_warmup_refresh=force_warmup_refresh,
+        )
 
     def run(self) -> None:
         """启动实盘引擎主循环，负责首次加载配置和后续热更新。"""
@@ -233,6 +239,19 @@ class LiveTradingEngine:
 
     def on_fill(self, account_id: str, fill: FillEvent) -> None:
         self._trade_event_sink.on_fill(account_id, fill)
+
+    def _apply_runtime_overrides(self, config: LiveTradingConfig) -> LiveTradingConfig:
+        if self._schedule_trigger_time is None:
+            return config
+        if config.realtime_broker.type != "schedule_us":
+            raise ValueError("--schedule-trigger-time requires realtime_broker.type=schedule_us")
+        return replace(
+            config,
+            quote=replace(
+                config.quote,
+                realtime_broker=replace(config.realtime_broker, trigger_time=self._schedule_trigger_time),
+            ),
+        )
 
     def _current_reload_interval(self) -> float:
         with self._lock:
