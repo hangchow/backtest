@@ -17,4 +17,4 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["backtest*", "domain*", "livetrading*", "strategy*"]
+include = ["backtest*", "livetrading*", "strategy*"]

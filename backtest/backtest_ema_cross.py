@@ -23,7 +23,9 @@ It is not a line-by-line reproduction of any published trading system.
 from __future__ import annotations
 
 import argparse
+from time import perf_counter
 
+import numpy as np
 import pandas as pd
 
 from backtest.backtest_common import (
@@ -36,6 +38,7 @@ from backtest.backtest_common import (
     compute_order_fees,
     compute_relative_volume,
     compute_volume_scale,
+    FilesystemLoadTracker,
     load_histories,
     load_history,
     normalize_max_open_positions,
@@ -45,10 +48,14 @@ from backtest.backtest_common import (
     resolve_codes,
     resolve_data_dir,
     resolve_eval_window,
+    sum_trade_fees,
     validate_market_for_symbol,
     validate_market_for_symbols,
     validate_volume_filter,
 )
+from backtest.minute_pool_cache import MinutePoolFeatureCache
+from backtest.reporting import observations_by_code_from_histories, render_single_strategy_report
+from backtest.strategy_config import add_strategy_config_arg, resolve_single_strategy_defaults
 
 
 DEFAULT_INITIAL_CASH = 100_000.0
@@ -60,44 +67,66 @@ DEFAULT_VOLUME_WINDOW = 5
 DEFAULT_MIN_VOLUME_RATIO = 0.6
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    config_defaults = resolve_single_strategy_defaults(
+        "ema_cross",
+        {
+            "fast_span": DEFAULT_FAST_SPAN,
+            "slow_span": DEFAULT_SLOW_SPAN,
+            "position_ratio": DEFAULT_POSITION_RATIO,
+            "max_open_positions": DEFAULT_MAX_OPEN_POSITIONS,
+            "volume_window": DEFAULT_VOLUME_WINDOW,
+            "min_volume_ratio": DEFAULT_MIN_VOLUME_RATIO,
+            "flat_at_close": False,
+        },
+        argv=argv,
+    )
     parser = argparse.ArgumentParser(
         description="Backtest an EMA cross strategy on minute-level K-line data."
     )
+    add_strategy_config_arg(parser)
     add_data_source_args(parser)
     add_fee_args(parser)
     add_market_arg(parser)
     parser.add_argument("--initial-cash", type=float, default=DEFAULT_INITIAL_CASH)
-    parser.add_argument("--fast-span", type=int, default=DEFAULT_FAST_SPAN)
-    parser.add_argument("--slow-span", type=int, default=DEFAULT_SLOW_SPAN)
-    parser.add_argument("--position-ratio", type=float, default=DEFAULT_POSITION_RATIO)
-    parser.add_argument("--max-open-positions", type=int, default=DEFAULT_MAX_OPEN_POSITIONS)
+    parser.add_argument("--fast-span", type=int, default=config_defaults["fast_span"])
+    parser.add_argument("--slow-span", type=int, default=config_defaults["slow_span"])
+    parser.add_argument("--position-ratio", type=float, default=config_defaults["position_ratio"])
+    parser.add_argument("--max-open-positions", type=int, default=config_defaults["max_open_positions"])
     add_eval_start_arg(parser)
     add_eval_end_arg(parser)
     parser.add_argument(
         "--volume-window",
         type=int,
-        default=DEFAULT_VOLUME_WINDOW,
+        default=config_defaults["volume_window"],
         help="Rolling window used to compare current volume against recent average volume.",
     )
     parser.add_argument(
         "--min-volume-ratio",
         type=float,
-        default=DEFAULT_MIN_VOLUME_RATIO,
+        default=config_defaults["min_volume_ratio"],
         help="Relative-volume level above which crossover entries can scale above the base position size.",
     )
     parser.add_argument(
         "--flat-at-close",
+        dest="flat_at_close",
         action="store_true",
         help="Force close any open position on the last minute of each trading day.",
     )
+    parser.add_argument(
+        "--no-flat-at-close",
+        dest="flat_at_close",
+        action="store_false",
+        help="Keep positions open across trading-day boundaries.",
+    )
+    parser.set_defaults(flat_at_close=bool(config_defaults["flat_at_close"]))
     parser.add_argument(
         "--show-trades",
         type=int,
         default=5,
         help="How many head/tail trades to print. Use 0 to suppress trade samples.",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def run_backtest(
@@ -236,6 +265,7 @@ def run_backtest(
         "trade_count": len(trades),
         "buy_count": sum(1 for trade in trades if trade["action"] == "BUY"),
         "sell_count": sum(1 for trade in trades if trade["action"] == "SELL"),
+        "total_fees": sum_trade_fees(trades),
         "ending_cash": cash,
         "ending_shares": shares,
         "last_price": last_price,
@@ -262,89 +292,100 @@ def run_portfolio_backtest(
     *,
     market: str,
     security_type: str = "stock",
+    pool_cache: MinutePoolFeatureCache | None = None,
 ) -> tuple[dict, pd.DataFrame]:
     market = normalize_market(market)
-    max_open_positions = normalize_max_open_positions(max_open_positions, len(histories))
     validate_volume_filter(volume_window, min_volume_ratio)
+    pool = pool_cache or MinutePoolFeatureCache(histories)
+    max_open_positions = normalize_max_open_positions(max_open_positions, len(pool.codes))
 
-    code_frames: dict[str, pd.DataFrame] = {}
-    code_buy: dict[str, pd.Series] = {}
-    code_sell: dict[str, pd.Series] = {}
-    for code, history in histories.items():
-        fast_ema = history["close"].ewm(span=fast_span, adjust=False).mean()
-        slow_ema = history["close"].ewm(span=slow_span, adjust=False).mean()
-        relative_volume = compute_relative_volume(history["volume"], volume_window)
-        frame = history.set_index("time_key", drop=False)
-        frame["fast_ema"] = fast_ema.values
-        frame["slow_ema"] = slow_ema.values
-        frame["volume_ratio"] = relative_volume.values
-        code_frames[code] = frame
-        code_buy[code] = ((fast_ema > slow_ema) & (fast_ema.shift(1) <= slow_ema.shift(1))).set_axis(history["time_key"])
-        code_sell[code] = ((fast_ema < slow_ema) & (fast_ema.shift(1) >= slow_ema.shift(1))).set_axis(history["time_key"])
+    fast_emas = pool.ema(fast_span)
+    slow_emas = pool.ema(slow_span)
+    volume_ratios = pool.volume_ratio(volume_window)
+    buy_signals: list[np.ndarray] = []
+    sell_signals: list[np.ndarray] = []
+    for code_index in range(len(pool.codes)):
+        fast_ema = fast_emas[code_index]
+        slow_ema = slow_emas[code_index]
+        previous_fast = np.empty_like(fast_ema)
+        previous_fast[0] = np.nan
+        previous_fast[1:] = fast_ema[:-1]
+        previous_slow = np.empty_like(slow_ema)
+        previous_slow[0] = np.nan
+        previous_slow[1:] = slow_ema[:-1]
+        buy_signals.append((fast_ema > slow_ema) & (previous_fast <= previous_slow))
+        sell_signals.append((fast_ema < slow_ema) & (previous_fast >= previous_slow))
 
-    timeline = sorted({ts for frame in code_frames.values() for ts in frame.index})
-    eval_mask, warmup_start_time, start_time, end_time = resolve_eval_window(timeline, eval_start, eval_end)
-    eval_timeline = [ts for ts, include in zip(timeline, eval_mask) if include]
+    window = pool.resolve_window(eval_start, eval_end)
     cash = initial_cash
-    positions = {code: 0 for code in histories}
-    last_prices: dict[str, float] = {}
+    positions = np.zeros(len(pool.codes), dtype=np.int64)
+    last_prices = np.zeros(len(pool.codes), dtype=float)
     trades: list[dict] = []
     equity_points: list[dict] = []
+    open_count = 0
 
-    for ts in eval_timeline:
-        for code in sorted(histories):
-            frame = code_frames[code]
-            if ts not in frame.index:
-                continue
-            row = frame.loc[ts]
-            price = float(row["close"])
-            last_prices[code] = price
-            if positions[code] > 0 and (bool(code_sell[code].get(ts, False)) or (flat_at_close and bool(row["is_day_end"]))):
+    for timeline_index in window.row_indices:
+        ts = pool.timeline[timeline_index]
+        row_indices = pool.row_lookup[timeline_index]
+        active_codes = np.flatnonzero(row_indices >= 0)
+        for code_index in active_codes:
+            row_index = int(row_indices[code_index])
+            arrays = pool.code_arrays[code_index]
+            price = float(arrays.close[row_index])
+            last_prices[code_index] = price
+            if positions[code_index] > 0 and (
+                bool(sell_signals[code_index][row_index]) or (flat_at_close and bool(arrays.is_day_end[row_index]))
+            ):
                 fee_total, fee_breakdown = compute_order_fees(
                     fee_account=fee_account,
                     market=market,
                     side="sell",
                     price=price,
-                    shares=positions[code],
+                    shares=int(positions[code_index]),
                     security_type=security_type,
                 )
-                cash += positions[code] * price - fee_total
+                cash += int(positions[code_index]) * price - fee_total
                 trades.append(
                     {
                         "time_key": ts,
-                        "code": code,
+                        "code": pool.codes[code_index],
                         "action": "SELL",
                         "price": price,
-                        "shares": positions[code],
-                        "fast_ema": float(row["fast_ema"]),
-                        "slow_ema": float(row["slow_ema"]),
+                        "shares": int(positions[code_index]),
+                        "fast_ema": float(fast_emas[code_index][row_index]),
+                        "slow_ema": float(slow_emas[code_index][row_index]),
                         "fee": fee_total,
                         "fee_breakdown": fee_breakdown,
                         "cash_after": cash,
                     }
                 )
-                positions[code] = 0
+                positions[code_index] = 0
+                open_count -= 1
 
-        slots_left = max_open_positions - sum(1 for qty in positions.values() if qty > 0)
+        slots_left = max_open_positions - open_count
         if slots_left > 0:
-            buy_candidates: list[tuple[float, float, str, pd.Series]] = []
-            for code in sorted(histories):
-                if positions[code] > 0:
+            buy_candidates: list[tuple[float, float, int, int]] = []
+            for code_index in active_codes:
+                if positions[code_index] > 0:
                     continue
-                frame = code_frames[code]
-                if ts not in frame.index or not bool(code_buy[code].get(ts, False)):
+                row_index = int(row_indices[code_index])
+                if not bool(buy_signals[code_index][row_index]):
                     continue
-                row = frame.loc[ts]
-                volume_ratio = float(row["volume_ratio"])
-                score = float(row["fast_ema"] - row["slow_ema"])
-                buy_candidates.append((score, volume_ratio, code, row))
+                buy_candidates.append(
+                    (
+                        float(fast_emas[code_index][row_index] - slow_emas[code_index][row_index]),
+                        float(volume_ratios[code_index][row_index]),
+                        code_index,
+                        row_index,
+                    )
+                )
 
             buy_candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
-            for _, volume_ratio, code, row in buy_candidates:
+            for _, volume_ratio, code_index, row_index in buy_candidates:
                 if slots_left <= 0:
                     break
-                price = float(row["close"])
-                remaining_slots = max_open_positions - sum(1 for qty in positions.values() if qty > 0)
+                price = float(pool.code_arrays[code_index].close[row_index])
+                remaining_slots = max_open_positions - open_count
                 if remaining_slots <= 0:
                     break
                 volume_scale = compute_volume_scale(volume_ratio, min_volume_ratio, min_scale=1.0, max_scale=1.25)
@@ -359,40 +400,41 @@ def run_portfolio_backtest(
                 if qty <= 0:
                     continue
                 cash -= qty * price + fee_total
-                positions[code] = qty
+                positions[code_index] = qty
                 slots_left -= 1
+                open_count += 1
                 trades.append(
                     {
                         "time_key": ts,
-                        "code": code,
+                        "code": pool.codes[code_index],
                         "action": "BUY",
                         "price": price,
                         "shares": qty,
-                        "fast_ema": float(row["fast_ema"]),
-                        "slow_ema": float(row["slow_ema"]),
-                        "volume_ratio": float(row["volume_ratio"]),
+                        "fast_ema": float(fast_emas[code_index][row_index]),
+                        "slow_ema": float(slow_emas[code_index][row_index]),
+                        "volume_ratio": float(volume_ratios[code_index][row_index]),
                         "fee": fee_total,
                         "fee_breakdown": fee_breakdown,
                         "cash_after": cash,
                     }
                 )
 
-        equity = cash + sum(qty * last_prices.get(code, 0.0) for code, qty in positions.items())
+        equity = cash + float(np.dot(positions, last_prices))
         equity_points.append({"time_key": ts, "equity": equity})
 
-    final_value = cash + sum(qty * last_prices.get(code, 0.0) for code, qty in positions.items())
+    final_value = cash + float(np.dot(positions, last_prices))
     equity_curve = pd.DataFrame(equity_points)
     equity_curve["rolling_peak"] = equity_curve["equity"].cummax()
     equity_curve["drawdown_pct"] = (
         (equity_curve["equity"] - equity_curve["rolling_peak"]) / equity_curve["rolling_peak"] * 100
     )
     summary = {
-        "warmup_start_time": warmup_start_time,
-        "start_time": start_time,
-        "end_time": end_time,
-        "data_end_time": timeline[-1],
+        "warmup_start_time": window.warmup_start_time,
+        "start_time": window.start_time,
+        "end_time": window.end_time,
+        "data_end_time": pool.timeline[-1],
         "initial_cash": initial_cash,
-        "codes": sorted(histories),
+        "codes": pool.codes,
         "fast_span": fast_span,
         "slow_span": slow_span,
         "position_ratio": position_ratio,
@@ -406,8 +448,11 @@ def run_portfolio_backtest(
         "trade_count": len(trades),
         "buy_count": sum(1 for trade in trades if trade["action"] == "BUY"),
         "sell_count": sum(1 for trade in trades if trade["action"] == "SELL"),
+        "total_fees": sum_trade_fees(trades),
         "ending_cash": cash,
-        "ending_positions": {code: qty for code, qty in positions.items() if qty > 0},
+        "ending_positions": {
+            pool.codes[code_index]: int(qty) for code_index, qty in enumerate(positions) if int(qty) > 0
+        },
         "final_value": final_value,
         "total_return_pct": (final_value / initial_cash - 1) * 100,
         "max_drawdown_pct": equity_curve["drawdown_pct"].min(),
@@ -416,6 +461,7 @@ def run_portfolio_backtest(
 
 
 def main() -> int:
+    total_started_at = perf_counter()
     args = parse_args()
     eval_start = parse_eval_start(args.eval_start)
     eval_end = parse_eval_end(args.eval_end)
@@ -424,7 +470,10 @@ def main() -> int:
             raise ValueError("--codes cannot be used with --data-dir")
         codes = resolve_codes(args.data_root, args.codes)
         market = validate_market_for_symbols(codes, args.market, label="--codes")
-        histories = load_histories(args.data_root, codes)
+        load_tracker = FilesystemLoadTracker()
+        histories = load_histories(args.data_root, codes, load_tracker=load_tracker)
+        coverage_sections = [("Minute data coverage", observations_by_code_from_histories(histories))]
+        strategy_started_at = perf_counter()
         summary, trades = run_portfolio_backtest(
             histories=histories,
             initial_cash=args.initial_cash,
@@ -444,7 +493,10 @@ def main() -> int:
     else:
         data_dir = resolve_data_dir(args.data_dir)
         market = validate_market_for_symbol(data_dir.name, args.market, label="--data-dir")
-        history = load_history(data_dir)
+        load_tracker = FilesystemLoadTracker()
+        history = load_history(data_dir, load_tracker=load_tracker)
+        coverage_sections = [("Minute data coverage", observations_by_code_from_histories({data_dir.name: history}))]
+        strategy_started_at = perf_counter()
         summary, trades = run_backtest(
             history=history,
             initial_cash=args.initial_cash,
@@ -461,32 +513,18 @@ def main() -> int:
             security_type=args.security_type,
         )
 
-    data_end_time = summary.get("data_end_time", summary["end_time"])
-    print(f"Data range: {summary['warmup_start_time']} -> {data_end_time}")
-    if summary["warmup_start_time"] != summary["start_time"] or data_end_time != summary["end_time"]:
-        print(f"Evaluation range: {summary['start_time']} -> {summary['end_time']}")
-    print(f"Initial cash: {summary['initial_cash']:.2f}")
-    print(f"Strategy: EMA({summary['fast_span']}) / EMA({summary['slow_span']}) cross")
-    print(f"Position ratio per buy: {summary['position_ratio']:.0%}")
+    strategy_elapsed = perf_counter() - strategy_started_at
+    total_elapsed = perf_counter() - total_started_at
     print(
-        f"Volume sizing: bars above {summary['min_volume_ratio']:.2f}x "
-        f"avg({summary['volume_window']}) can scale orders above the base size"
+        render_single_strategy_report(
+            "ema_cross",
+            summary,
+            strategy_elapsed,
+            total_time_sec=total_elapsed,
+            load_stats=load_tracker.snapshot(),
+            coverage_sections=coverage_sections,
+        )
     )
-    print(f"Flat at close: {summary['flat_at_close']}")
-    print(f"Fee account: {summary['fee_account']}")
-    print(f"Market/Security: {summary['market']} / {summary['security_type']}")
-    print(f"Trades: {summary['trade_count']} (BUY {summary['buy_count']}, SELL {summary['sell_count']})")
-    print(f"Ending cash: {summary['ending_cash']:.2f}")
-    if "ending_shares" in summary:
-        print(f"Ending shares: {summary['ending_shares']}")
-        print(f"Last price: {summary['last_price']:.2f}")
-    else:
-        print(f"Stock pool: {', '.join(summary['codes'])}")
-        print(f"Max open positions: {summary['max_open_positions']}")
-        print(f"Ending positions: {summary['ending_positions']}")
-    print(f"Final value: {summary['final_value']:.2f}")
-    print(f"Total return: {summary['total_return_pct']:.2f}%")
-    print(f"Max drawdown: {summary['max_drawdown_pct']:.2f}%")
 
     if args.show_trades > 0 and not trades.empty:
         sample = min(args.show_trades, len(trades))

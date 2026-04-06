@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from time import perf_counter
 
 import pandas as pd
 
@@ -19,15 +20,24 @@ from backtest.backtest_common import (
     add_fee_args,
     add_market_arg,
     compute_order_fees,
+    FilesystemLoadTracker,
     normalize_market,
     parse_eval_end,
     parse_eval_start,
     resolve_codes,
     resolve_eval_window,
+    sum_trade_fees,
     validate_market_for_symbols,
 )
 from backtest.backtest_dual_momentum import load_daily_data, run_backtest as run_baseline
-from domain.rebalance import (
+from backtest.reporting import (
+    build_strategy_summary_row,
+    build_strategy_summary_table,
+    observations_by_code_from_frame,
+    render_single_strategy_report,
+)
+from backtest.strategy_config import add_strategy_config_arg, resolve_single_strategy_defaults
+from strategy.rebalance import (
     RebalancePolicy,
     build_desired_shares,
     compute_affordable_qty_with_fee,
@@ -41,20 +51,30 @@ DEFAULT_TOP_N = 1
 DEFAULT_REBALANCE_BAND_PCT = 0.02
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    config_defaults = resolve_single_strategy_defaults(
+        "momentum_monthly",
+        {
+            "lookback_days": DEFAULT_LOOKBACK_DAYS,
+            "top_n": DEFAULT_TOP_N,
+            "rebalance_band_pct": DEFAULT_REBALANCE_BAND_PCT,
+        },
+        argv=argv,
+    )
     p = argparse.ArgumentParser(description="Monthly momentum rotation backtest with baseline comparison")
+    add_strategy_config_arg(p)
     p.add_argument("--codes", nargs="+", required=True)
     p.add_argument("--data-root", type=Path, default=Path("kline_day"))
     p.add_argument("--initial-cash", type=float, default=DEFAULT_INITIAL_CASH)
-    p.add_argument("--lookback-days", type=int, default=DEFAULT_LOOKBACK_DAYS)
-    p.add_argument("--top-n", type=int, default=DEFAULT_TOP_N)
-    p.add_argument("--rebalance-band-pct", type=float, default=DEFAULT_REBALANCE_BAND_PCT)
+    p.add_argument("--lookback-days", type=int, default=config_defaults["lookback_days"])
+    p.add_argument("--top-n", type=int, default=config_defaults["top_n"])
+    p.add_argument("--rebalance-band-pct", type=float, default=config_defaults["rebalance_band_pct"])
     p.add_argument("--compare-baseline", type=int, choices=[0, 1], default=1)
     add_eval_start_arg(p)
     add_eval_end_arg(p)
     add_fee_args(p)
     add_market_arg(p)
-    return p.parse_args()
+    return p.parse_args(argv)
 
 
 def run_monthly_momentum(
@@ -176,6 +196,9 @@ def run_monthly_momentum(
         "lookback_days": lookback_days,
         "top_n": top_n,
         "trade_count": len(trades),
+        "buy_count": sum(1 for trade in trades if trade["action"] == "BUY"),
+        "sell_count": sum(1 for trade in trades if trade["action"] == "SELL"),
+        "total_fees": sum_trade_fees(trades),
         "final_value": final_value,
         "total_return_pct": (final_value / initial_cash - 1) * 100,
         "max_drawdown_pct": float(equity_curve["drawdown_pct"].min()),
@@ -184,13 +207,16 @@ def run_monthly_momentum(
 
 
 def main() -> int:
+    total_started_at = perf_counter()
     args = parse_args()
     codes = resolve_codes(args.data_root, args.codes)
     market = validate_market_for_symbols(codes, args.market, label="--codes")
-    prices, volumes = load_daily_data(args.data_root, codes)
+    load_tracker = FilesystemLoadTracker()
+    prices, volumes = load_daily_data(args.data_root, codes, load_tracker=load_tracker)
     eval_start = parse_eval_start(args.eval_start)
     eval_end = parse_eval_end(args.eval_end)
 
+    strategy_started_at = perf_counter()
     summary, _ = run_monthly_momentum(
         prices=prices,
         initial_cash=args.initial_cash,
@@ -203,14 +229,21 @@ def main() -> int:
         market=market,
         security_type=args.security_type,
     )
-
-    print("Monthly momentum result")
+    strategy_elapsed = perf_counter() - strategy_started_at
+    total_elapsed = perf_counter() - total_started_at
     print(
-        f"Return: {summary['total_return_pct']:.2f}% | "
-        f"MDD: {summary['max_drawdown_pct']:.2f}% | Trades: {summary['trade_count']}"
+        render_single_strategy_report(
+            "momentum_monthly",
+            summary,
+            strategy_elapsed,
+            total_time_sec=total_elapsed,
+            load_stats=load_tracker.snapshot(),
+            coverage_sections=[("Daily data coverage", observations_by_code_from_frame(prices))],
+        )
     )
 
     if args.compare_baseline == 1:
+        baseline_started_at = perf_counter()
         baseline, _ = run_baseline(
             prices=prices,
             volumes=volumes,
@@ -232,11 +265,10 @@ def main() -> int:
             market=market,
             security_type=args.security_type,
         )
-        print("Baseline result")
-        print(
-            f"Return: {baseline['total_return_pct']:.2f}% | "
-            f"MDD: {baseline['max_drawdown_pct']:.2f}% | Trades: {baseline['trade_count']}"
-        )
+        baseline_elapsed = perf_counter() - baseline_started_at
+        print()
+        print("Baseline")
+        print(build_strategy_summary_table([build_strategy_summary_row("dual_momentum", baseline, baseline_elapsed)]))
         print(f"Excess return: {summary['total_return_pct'] - baseline['total_return_pct']:.2f}%")
 
     return 0

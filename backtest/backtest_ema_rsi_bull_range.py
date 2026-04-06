@@ -23,6 +23,7 @@ It is not a line-by-line reproduction of any published trading system.
 from __future__ import annotations
 
 import argparse
+from time import perf_counter
 
 from backtest import backtest_ema_rsi_combo as combo
 from backtest.backtest_common import (
@@ -31,6 +32,7 @@ from backtest.backtest_common import (
     add_eval_start_arg,
     add_fee_args,
     add_market_arg,
+    FilesystemLoadTracker,
     load_histories,
     load_history,
     parse_eval_end,
@@ -40,6 +42,8 @@ from backtest.backtest_common import (
     validate_market_for_symbol,
     validate_market_for_symbols,
 )
+from backtest.reporting import observations_by_code_from_histories, render_single_strategy_report
+from backtest.strategy_config import add_strategy_config_arg, resolve_single_strategy_defaults
 
 
 DEFAULT_INITIAL_CASH = combo.DEFAULT_INITIAL_CASH
@@ -55,29 +59,54 @@ DEFAULT_MIN_VOLUME_RATIO = combo.DEFAULT_MIN_VOLUME_RATIO
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    config_defaults = resolve_single_strategy_defaults(
+        "ema_rsi_bull_range",
+        {
+            "fast_span": DEFAULT_FAST_SPAN,
+            "slow_span": DEFAULT_SLOW_SPAN,
+            "rsi_period": DEFAULT_RSI_PERIOD,
+            "buy_threshold": DEFAULT_BUY_THRESHOLD,
+            "sell_threshold": DEFAULT_SELL_THRESHOLD,
+            "position_ratio": DEFAULT_POSITION_RATIO,
+            "max_open_positions": DEFAULT_MAX_OPEN_POSITIONS,
+            "volume_window": DEFAULT_VOLUME_WINDOW,
+            "min_volume_ratio": DEFAULT_MIN_VOLUME_RATIO,
+            "flat_at_close": False,
+        },
+        argv=argv,
+    )
     parser = argparse.ArgumentParser(
         description="Backtest an optimized EMA + RSI bull-range pullback strategy."
     )
+    add_strategy_config_arg(parser)
     add_data_source_args(parser)
     add_fee_args(parser)
     add_market_arg(parser)
     parser.add_argument("--initial-cash", type=float, default=DEFAULT_INITIAL_CASH)
-    parser.add_argument("--fast-span", type=int, default=DEFAULT_FAST_SPAN)
-    parser.add_argument("--slow-span", type=int, default=DEFAULT_SLOW_SPAN)
-    parser.add_argument("--rsi-period", type=int, default=DEFAULT_RSI_PERIOD)
-    parser.add_argument("--buy-threshold", type=float, default=DEFAULT_BUY_THRESHOLD)
-    parser.add_argument("--sell-threshold", type=float, default=DEFAULT_SELL_THRESHOLD)
-    parser.add_argument("--position-ratio", type=float, default=DEFAULT_POSITION_RATIO)
-    parser.add_argument("--max-open-positions", type=int, default=DEFAULT_MAX_OPEN_POSITIONS)
+    parser.add_argument("--fast-span", type=int, default=config_defaults["fast_span"])
+    parser.add_argument("--slow-span", type=int, default=config_defaults["slow_span"])
+    parser.add_argument("--rsi-period", type=int, default=config_defaults["rsi_period"])
+    parser.add_argument("--buy-threshold", type=float, default=config_defaults["buy_threshold"])
+    parser.add_argument("--sell-threshold", type=float, default=config_defaults["sell_threshold"])
+    parser.add_argument("--position-ratio", type=float, default=config_defaults["position_ratio"])
+    parser.add_argument("--max-open-positions", type=int, default=config_defaults["max_open_positions"])
     add_eval_start_arg(parser)
     add_eval_end_arg(parser)
-    parser.add_argument("--volume-window", type=int, default=DEFAULT_VOLUME_WINDOW)
-    parser.add_argument("--min-volume-ratio", type=float, default=DEFAULT_MIN_VOLUME_RATIO)
+    parser.add_argument("--volume-window", type=int, default=config_defaults["volume_window"])
+    parser.add_argument("--min-volume-ratio", type=float, default=config_defaults["min_volume_ratio"])
     parser.add_argument(
         "--flat-at-close",
+        dest="flat_at_close",
         action="store_true",
         help="Force close any open position on the last minute of each trading day.",
     )
+    parser.add_argument(
+        "--no-flat-at-close",
+        dest="flat_at_close",
+        action="store_false",
+        help="Keep positions open across trading-day boundaries.",
+    )
+    parser.set_defaults(flat_at_close=bool(config_defaults["flat_at_close"]))
     parser.add_argument(
         "--show-trades",
         type=int,
@@ -127,6 +156,7 @@ def run_backtest(
 
 
 def main() -> int:
+    total_started_at = perf_counter()
     args = parse_args()
     eval_start = parse_eval_start(args.eval_start)
     eval_end = parse_eval_end(args.eval_end)
@@ -135,7 +165,10 @@ def main() -> int:
             raise ValueError("--codes cannot be used with --data-dir")
         codes = resolve_codes(args.data_root, args.codes)
         market = validate_market_for_symbols(codes, args.market, label="--codes")
-        histories = load_histories(args.data_root, codes)
+        load_tracker = FilesystemLoadTracker()
+        histories = load_histories(args.data_root, codes, load_tracker=load_tracker)
+        coverage_sections = [("Minute data coverage", observations_by_code_from_histories(histories))]
+        strategy_started_at = perf_counter()
         summary, trades = combo.run_portfolio_backtest(
             histories=histories,
             initial_cash=args.initial_cash,
@@ -158,7 +191,10 @@ def main() -> int:
     else:
         data_dir = resolve_data_dir(args.data_dir)
         market = validate_market_for_symbol(data_dir.name, args.market, label="--data-dir")
-        history = load_history(data_dir)
+        load_tracker = FilesystemLoadTracker()
+        history = load_history(data_dir, load_tracker=load_tracker)
+        coverage_sections = [("Minute data coverage", observations_by_code_from_histories({data_dir.name: history}))]
+        strategy_started_at = perf_counter()
         summary, trades = run_backtest(
             history=history,
             initial_cash=args.initial_cash,
@@ -178,37 +214,18 @@ def main() -> int:
             security_type=args.security_type,
         )
 
-    data_end_time = summary.get("data_end_time", summary["end_time"])
-    print(f"Data range: {summary['warmup_start_time']} -> {data_end_time}")
-    if summary["warmup_start_time"] != summary["start_time"] or data_end_time != summary["end_time"]:
-        print(f"Evaluation range: {summary['start_time']} -> {summary['end_time']}")
-    print(f"Initial cash: {summary['initial_cash']:.2f}")
+    strategy_elapsed = perf_counter() - strategy_started_at
+    total_elapsed = perf_counter() - total_started_at
     print(
-        "Strategy: "
-        f"EMA({summary['fast_span']}) > EMA({summary['slow_span']}) bull-range pullback + "
-        f"RSI({summary['rsi_period']}) buy<{summary['buy_threshold']:.0f} "
-        f"sell>{summary['sell_threshold']:.0f}"
+        render_single_strategy_report(
+            "ema_rsi_bull_range",
+            summary,
+            strategy_elapsed,
+            total_time_sec=total_elapsed,
+            load_stats=load_tracker.snapshot(),
+            coverage_sections=coverage_sections,
+        )
     )
-    print(f"Position ratio per buy: {summary['position_ratio']:.0%}")
-    print(
-        f"Volume confirmation: current volume >= {summary['min_volume_ratio']:.2f}x "
-        f"avg({summary['volume_window']})"
-    )
-    print(f"Flat at close: {summary['flat_at_close']}")
-    print(f"Fee account: {summary['fee_account']}")
-    print(f"Market/Security: {summary['market']} / {summary['security_type']}")
-    print(f"Trades: {summary['trade_count']} (BUY {summary['buy_count']}, SELL {summary['sell_count']})")
-    print(f"Ending cash: {summary['ending_cash']:.2f}")
-    if "ending_shares" in summary:
-        print(f"Ending shares: {summary['ending_shares']}")
-        print(f"Last price: {summary['last_price']:.2f}")
-    else:
-        print(f"Stock pool: {', '.join(summary['codes'])}")
-        print(f"Max open positions: {summary['max_open_positions']}")
-        print(f"Ending positions: {summary['ending_positions']}")
-    print(f"Final value: {summary['final_value']:.2f}")
-    print(f"Total return: {summary['total_return_pct']:.2f}%")
-    print(f"Max drawdown: {summary['max_drawdown_pct']:.2f}%")
 
     if args.show_trades > 0 and not trades.empty:
         sample = min(args.show_trades, len(trades))

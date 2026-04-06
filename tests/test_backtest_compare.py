@@ -20,6 +20,12 @@ from backtest.backtest_compare import (
     resolve_requested_strategies,
     run_all,
 )
+from backtest.reporting import (
+    build_data_coverage_table,
+    build_strategy_summary_row,
+    build_strategy_summary_table,
+    render_single_strategy_report,
+)
 
 
 class MarkdownTableTests(unittest.TestCase):
@@ -46,6 +52,79 @@ class MarkdownTableTests(unittest.TestCase):
         self.assertIn("| strategy      | final_value | trade_count |", table)
         self.assertIn("| EMA cross     |   101000.00 |          10 |", table)
         self.assertIn("| RSI reversion |        9.50 |           2 |", table)
+
+    def test_build_strategy_summary_table_uses_shared_backtest_columns(self) -> None:
+        row = build_strategy_summary_row(
+            "dual_momentum",
+            {
+                "final_value": 110000.0,
+                "total_return_pct": 10.0,
+                "max_drawdown_pct": -5.0,
+                "trade_count": 8,
+                "total_fees": 12.5,
+            },
+            1.234,
+        )
+
+        table = build_strategy_summary_table([row])
+
+        self.assertIn("| strategy      | frequency | final_value | return_pct | max_drawdown_pct | trade_count | total_fees | strategy_time_sec |", table)
+        self.assertIn("| Dual momentum | daily     |   110000.00 |      10.00 |            -5.00 |           8 |      12.50 |              1.23 |", table)
+
+    def test_build_data_coverage_table_marks_incomplete_codes_as_error(self) -> None:
+        table = build_data_coverage_table(
+            {
+                "US.AAPL": [pd.Timestamp("2026-01-01"), pd.Timestamp("2026-01-02"), pd.Timestamp("2026-01-03")],
+                "US.META": [pd.Timestamp("2026-01-01"), pd.Timestamp("2026-01-03")],
+            }
+        )
+
+        self.assertIn("| code    | start      | end        | status", table)
+        self.assertIn("full_start", table)
+        self.assertIn("full_end", table)
+        self.assertIn("full_status", table)
+        self.assertIn("| US.AAPL | 2026-01-01 | 2026-01-03 | ok", table)
+        self.assertIn("| 2026-01-01 | 2026-01-03 | ok", table)
+        self.assertIn("US.META", table)
+        self.assertIn("error: missing 1 session(s) inside shared span, first 2026-01-02", table)
+
+    def test_render_single_strategy_report_includes_table_and_per_code_coverage(self) -> None:
+        report = render_single_strategy_report(
+            "momentum_monthly",
+            {
+                "start_time": pd.Timestamp("2026-01-01"),
+                "end_time": pd.Timestamp("2026-03-06 23:59:59.999999"),
+                "final_value": 101000.0,
+                "total_return_pct": 1.0,
+                "max_drawdown_pct": -2.0,
+                "trade_count": 3,
+                "total_fees": 5.5,
+            },
+            0.456,
+            total_time_sec=0.789,
+            coverage_sections=[
+                (
+                    "Daily data coverage",
+                    {
+                        "US.AAPL": [
+                            pd.Timestamp("2026-01-02"),
+                            pd.Timestamp("2026-01-03"),
+                            pd.Timestamp("2026-03-05"),
+                        ],
+                        "US.META": [pd.Timestamp("2026-01-03"), pd.Timestamp("2026-03-05")],
+                    },
+                )
+            ],
+        )
+
+        self.assertIn("| Momentum monthly | daily", report)
+        self.assertIn("Backtest total time: 0.79s", report)
+        self.assertIn("Evaluation window: 2026-01-01 00:00:00 -> 2026-03-06 23:59:59.999999", report)
+        self.assertIn("Daily data coverage", report)
+        self.assertIn("| US.AAPL | 2026-01-02 | 2026-03-05 | ok", report)
+        self.assertIn("| 2026-01-02 | 2026-03-05 | ok", report)
+        self.assertIn("US.META", report)
+        self.assertIn("error: late start (1 missing before start)", report)
 
 
 class BuildReportTests(unittest.TestCase):

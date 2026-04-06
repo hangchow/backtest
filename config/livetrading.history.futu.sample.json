@@ -2,6 +2,7 @@
   "history_broker": {
     "type": "futu",
     "host": "127.0.0.1",
-    "port": 11111
+    "port": 11111,
+    "data_root": ".kline_day"
   }
 }

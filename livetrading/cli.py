@@ -1,12 +1,21 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import logging
 
 from .engine import LiveTradingEngine
 
 
-def parse_args() -> argparse.Namespace:
+def _parse_hhmm(value: str) -> str:
+    try:
+        datetime.strptime(value, "%H:%M")
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must use HH:MM format") from exc
+    return value
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """解析 CLI 参数，定位实时行情、历史 warm-up、股票池和交易账户配置文件。"""
     parser = argparse.ArgumentParser(
         description="Run live trading with split quote/history/pool/trade configs, strategy signals, configurable executors, and config hot reload."
@@ -15,7 +24,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--history-config", help="Optional path to the history-broker JSON config file.")
     parser.add_argument("--pool-config", help="Optional path to the stock-pool JSON config file.")
     parser.add_argument("--trade-config", required=True, help="Path to the trade-account JSON config file.")
-    return parser.parse_args()
+    parser.add_argument(
+        "--schedule-trigger-time",
+        type=_parse_hhmm,
+        help="Optional HH:MM override for realtime_broker.trigger_time when realtime_broker.type is schedule_us.",
+    )
+    return parser.parse_args(argv)
 
 
 def main() -> int:
@@ -30,6 +44,7 @@ def main() -> int:
         args.trade_config,
         history_config_path=args.history_config,
         pool_config_path=args.pool_config,
+        schedule_trigger_time=args.schedule_trigger_time,
     )
     try:
         engine.run()

@@ -11,9 +11,10 @@ from strategy.dual_momentum import (
     build_dual_momentum_signal,
 )
 from strategy.dual_momentum_state import DualMomentumDailyState
-from domain.rebalance import RebalancePolicy
-from .config import StockPoolConfig
-from .models import PortfolioRebalanceDecision
+from strategy.rebalance import RebalancePolicy
+from .config import DEFAULT_MARKET, StockPoolConfig
+from .market_hours import market_trade_date_for_timestamp
+from .models import PortfolioRebalanceDecision, QuoteUpdate, ScheduledTrigger
 from .pool_strategy_registry import (
     register_pool_strategy,
     resolve_pool_strategy_factory,
@@ -31,9 +32,18 @@ class PoolLiveStrategy(ABC):
     def required_daily_warmup_bars(self) -> int:
         raise NotImplementedError
 
+    def requires_realtime_bars(self) -> bool:
+        return True
+
     @abstractmethod
     def bootstrap(self, histories: dict[str, pd.DataFrame]) -> None:
         raise NotImplementedError
+
+    def on_quote(self, update: QuoteUpdate) -> PortfolioRebalanceDecision | None:
+        return None
+
+    def on_schedule(self, trigger: ScheduledTrigger) -> PortfolioRebalanceDecision | None:
+        return None
 
     @abstractmethod
     def on_bar(self, code: str, bar: pd.Series | dict[str, Any]) -> PortfolioRebalanceDecision | None:
@@ -54,16 +64,42 @@ class DualMomentumPoolStrategy(PoolLiveStrategy):
         """返回 dual momentum 至少需要的 warm-up 日线根数。"""
         return self.signal_params.required_warmup_bars()
 
+    def requires_realtime_bars(self) -> bool:
+        return False
+
     def bootstrap(self, histories: dict[str, pd.DataFrame]) -> None:
         """把 warm-up 日线喂给日频状态机，初始化策略上下文。"""
         # 日频状态机已经下沉到 strategy 层，这里只负责把历史 warm-up 交给它。
         self._state.bootstrap(histories)
+
+    def on_quote(self, update: QuoteUpdate) -> PortfolioRebalanceDecision | None:
+        completed = self._state.on_quote(update.code, update)
+        if completed is None:
+            return None
+        return self._build_rebalance_decision(
+            signal_time=completed.signal_time,
+            current_trade_date=completed.current_trade_date,
+            prices=completed.prices,
+            volumes=completed.volumes,
+        )
+
+    def on_schedule(self, trigger: ScheduledTrigger) -> PortfolioRebalanceDecision | None:
+        prices, volumes = self._state.snapshot_signal_inputs()
+        if prices.empty or volumes.empty:
+            return None
+        return self._build_rebalance_decision(
+            signal_time=trigger.timestamp,
+            current_trade_date=market_trade_date_for_timestamp(trigger.timestamp, DEFAULT_MARKET),
+            prices=prices,
+            volumes=volumes,
+        )
 
     def on_bar(self, code: str, bar: pd.Series | dict[str, Any]) -> PortfolioRebalanceDecision | None:
         """把分钟 bar 交给日频状态机，必要时产出调仓决策。"""
         completed = self._state.on_bar(code, bar)
         if completed is None:
             return None
+        # 只要状态机判定“已经进入新交易日”，就用上一交易日刚刚完成的窗口算一次组合信号。
         return self._build_rebalance_decision(
             signal_time=completed.signal_time,
             current_trade_date=completed.current_trade_date,
@@ -80,6 +116,8 @@ class DualMomentumPoolStrategy(PoolLiveStrategy):
         volumes: pd.DataFrame,
     ) -> PortfolioRebalanceDecision | None:
         """用已完成日线窗口计算信号，并封装成组合调仓决策。"""
+        # 注意 signal_time 是“新交易日第一根分钟 bar 的时间”，
+        # 但 prices / volumes 只包含上一交易日及更早的已完成日线。
         signal = build_dual_momentum_signal(
             prices,
             volumes,

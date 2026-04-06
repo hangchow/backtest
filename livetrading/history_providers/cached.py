@@ -8,6 +8,7 @@ from urllib.error import HTTPError
 
 import pandas as pd
 
+from strategy.kline_lru_adapter import LocalKlineDataCache
 from ..config import DEFAULT_MARKET, HistoryBrokerConfig
 from .common import CSV_COLUMNS, HISTORY_COLUMNS, _market_calendar
 from .local import LocalDataDailyHistoryProvider
@@ -24,13 +25,20 @@ class CachedRemoteDailyHistoryProvider(LocalDataDailyHistoryProvider):
         kline_day_root: Path | str = ".kline_day",
         remote_daily_fetcher: Callable[[str, int], pd.DataFrame] | None = None,
         now_provider: Callable[[], datetime] | None = None,
+        local_cache: LocalKlineDataCache | None = None,
     ) -> None:
+        resolved_local_cache = local_cache or LocalKlineDataCache(
+            kline_day_root=kline_day_root,
+            logger=logger,
+        )
         super().__init__(
             config,
             logger,
             kline_day_root=kline_day_root,
             now_provider=now_provider,
+            local_cache=resolved_local_cache,
         )
+        self._local_cache = resolved_local_cache
         self._remote_daily_fetcher = remote_daily_fetcher
 
     def fetch_daily_histories(
@@ -44,8 +52,8 @@ class CachedRemoteDailyHistoryProvider(LocalDataDailyHistoryProvider):
 
         for code in normalized_codes:
             bars = min(max(int(daily_warmup_bars.get(code, 1)), 1), 1000)
-            full_daily_history = self._load_full_daily_from_kline_day(code)
-            daily_history = self._tail_daily_history(full_daily_history, bars)
+            full_daily_history = self._load_daily_from_kline_day(code, bars)
+            daily_history = full_daily_history
             if self._should_refresh_remote_daily(daily_history, bars):
                 try:
                     remote_daily = self._fetch_remote_daily_history(code, bars)
@@ -118,9 +126,8 @@ class CachedRemoteDailyHistoryProvider(LocalDataDailyHistoryProvider):
                     )
                 self._rewrite_kline_day_weekly_csv(code, exact_daily)
                 daily_history = exact_daily
-            elif full_daily_history is not None and daily_history is not None and len(full_daily_history) != len(daily_history):
+            elif daily_history is not None and not daily_history.empty:
                 self._rewrite_kline_day_weekly_csv(code, daily_history)
-
             if daily_history is None or daily_history.empty:
                 self._logger.error("warm-up daily data unavailable code=%s", code)
                 histories[code] = pd.DataFrame(columns=HISTORY_COLUMNS)
@@ -130,10 +137,11 @@ class CachedRemoteDailyHistoryProvider(LocalDataDailyHistoryProvider):
 
         return histories
 
-    def _load_full_daily_from_kline_day(self, code: str) -> pd.DataFrame | None:
+    def _load_daily_from_kline_day(self, code: str, bars: int) -> pd.DataFrame | None:
         code_dir = self._kline_day_root / code
-        daily = self._load_local_csv_history(code_dir, code, frame_type="daily", dedupe_error=True)
-        if daily is None:
+        try:
+            daily = self._local_cache.get_daily_history_tail_frame(code, bars)
+        except FileNotFoundError:
             return None
         self._logger.info("warm-up loaded from kline_day code=%s rows=%d dir=%s", code, len(daily), code_dir)
         return daily
@@ -159,6 +167,7 @@ class CachedRemoteDailyHistoryProvider(LocalDataDailyHistoryProvider):
         code_dir = self._kline_day_root / code
         code_dir.mkdir(parents=True, exist_ok=True)
         self._rewrite_weekly_csv_exact(code_dir, code, daily)
+        self._local_cache.set_history_frame("day", code, daily)
 
     def _should_refresh_remote_daily(self, daily_history: pd.DataFrame | None, bars: int) -> bool:
         expected_latest_trade_date = self._expected_latest_trade_date()

@@ -14,6 +14,32 @@ from .polygon import PolygonCacheDailyHistoryProvider
 _BUILTINS_REGISTERED = False
 
 
+def _history_cache_root(config: HistoryBrokerConfig) -> str:
+    return config.effective_data_root()
+
+
+def _create_futu_daily_history_provider(
+    config: HistoryBrokerConfig,
+    logger: logging.Logger,
+) -> FutuDailyHistoryProvider:
+    return FutuDailyHistoryProvider(
+        config,
+        logger,
+        kline_day_root=_history_cache_root(config),
+    )
+
+
+def _create_polygon_cache_daily_history_provider(
+    config: HistoryBrokerConfig,
+    logger: logging.Logger,
+) -> PolygonCacheDailyHistoryProvider:
+    return PolygonCacheDailyHistoryProvider(
+        config,
+        logger,
+        kline_day_root=_history_cache_root(config),
+    )
+
+
 def _create_local_data_daily_history_provider(
     config: HistoryBrokerConfig,
     logger: logging.Logger,
@@ -21,7 +47,7 @@ def _create_local_data_daily_history_provider(
     return LocalDataDailyHistoryProvider(
         config,
         logger,
-        kline_day_root=config.data_root or ".kline_day",
+        kline_day_root=_history_cache_root(config),
     )
 
 
@@ -29,8 +55,8 @@ def ensure_builtin_daily_history_provider_registrations() -> None:
     global _BUILTINS_REGISTERED
     if _BUILTINS_REGISTERED:
         return
-    register_daily_history_provider("futu", FutuDailyHistoryProvider)
-    register_daily_history_provider("polygon", PolygonCacheDailyHistoryProvider)
+    register_daily_history_provider("futu", _create_futu_daily_history_provider)
+    register_daily_history_provider("polygon", _create_polygon_cache_daily_history_provider)
     register_daily_history_provider("local", _create_local_data_daily_history_provider)
     _BUILTINS_REGISTERED = True
 

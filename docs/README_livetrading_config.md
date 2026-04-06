@@ -143,6 +143,7 @@ quote 配置里还允许内联：
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `type` | `string` | `futu` | 支持 `polygon`、`futu`、`local` |
+| `data_root` | `string` | `.kline_day` | 本地日线目录；`local` 直接读取这里，`futu` / `polygon` 把这里当 warm-up 缓存目录 |
 
 ### 4.2 `type=futu`
 
@@ -155,6 +156,7 @@ quote 配置里还允许内联：
 
 - `history_host`
 - `history_port`
+- `data_root` 可选；默认 `.kline_day`，用于本地 warm-up 缓存目录
 
 ### 4.3 `type=polygon`
 
@@ -172,12 +174,11 @@ quote 配置里还允许内联：
 
 - `host` / `port` 可以省略
 - 真实的 Polygon 认证通常来自运行环境，而不是这份 JSON
+- `data_root` 可选；默认 `.kline_day`，用于本地 warm-up 缓存目录
 
 ### 4.4 `type=local`
 
-| 字段 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `data_root` | `string` | `.kline_day` | 本地日线目录 |
+`local` 模式下会直接从 `data_root` 读取本地日线，默认 `.kline_day`。
 
 兼容别名：
 
@@ -217,7 +218,7 @@ quote 配置里还允许内联：
 当前 live 侧会把 `stock_pool.strategy.params` 同时喂给：
 
 - [strategy/dual_momentum.py](../strategy/dual_momentum.py) 的 `DualMomentumParams`
-- [domain/rebalance.py](../domain/rebalance.py) 的 `RebalancePolicy`
+- [strategy/rebalance.py](../strategy/rebalance.py) 的 `RebalancePolicy`
 
 也就是说，这里既包含信号参数，也包含调仓带参数。
 
@@ -349,6 +350,8 @@ quote 配置里还允许内联：
 - 可配 `broker.type=mock`
 - 也可配 `broker.type=futu`
 - 不会真的调 Futu `place_order(...)`
+- 可配 `order_session=RTH` / `ETH` / `ALL`
+- 非 `RTH` 时，主要影响 realtime quote 的准入时段和 mock `/push` 的 bar 过滤，不会产生真实券商下单语义
 
 #### `executor=futu_simulate`
 
@@ -370,13 +373,21 @@ quote 配置里还允许内联：
 
 当前限制：
 
-- `order_session != RTH` 只支持 `broker.type=futu`
-- `order_session != RTH` 不能搭配 `executor=mock`
+- `executor=futu_simulate` / `executor=futu_real` 且 `order_session != RTH` 时，仍要求 `broker.type=futu`
+
+补充：
+
+- realtime quote 侧的 `subscribe_extended_time` 会从唯一账户的 `order_session` 派生
+- `mock` quote broker 现在也会按这份派生结果过滤 `/push` 进来的分钟 bar，尽量对齐真实行情订阅的准入行为
+- `executor=mock` 时，`ETH` / `ALL` 都会让 mock quote 入口接受扩展时段 bar；当前 quote 层只区分“RTH”与“非 RTH”，不会再细分 `ETH` 和 `ALL`
 
 常见组合：
 
 - 只做常规时段
   - `order_session=RTH`
+- mock 联调盘前触发
+  - `executor=mock`
+  - `order_session=ETH`
 - 美股实盘默认组合
   - `order_session=ETH`
 
